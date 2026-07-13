@@ -162,13 +162,14 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T007 | 多 entry + `reg/tri` + localparam + enum values 高复用批次 | ACCEPTED |
 | T008 | 单个 `genvar` 的展开归一化、5-token 改写与 formal | ACCEPTED |
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | ACCEPTED |
-| T010 | `instances`、`generate_blocks` | PLANNED |
-| T011 | 多文件基础设施后实现 `modules`、`ports` | PLANNED |
-| T012 | `typedefs`、`struct_types` | PLANNED |
-| T013 | `struct_fields`、`union_fields` | PLANNED |
-| T014 | `interfaces`、`interface_instances` | PLANNED |
-| T015 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
-| T016 | 全部表内类别组合、完整映射和回归 | PLANNED |
+| T010 | 当前 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
+| T011 | `instances`、`generate_blocks` | PLANNED |
+| T012 | 多文件基础设施后实现 `modules`、`ports` | PLANNED |
+| T013 | `typedefs`、`struct_types` | PLANNED |
+| T014 | `struct_fields`、`union_fields` | PLANNED |
+| T015 | `interfaces`、`interface_instances` | PLANNED |
+| T016 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
+| T017 | 全部表内类别组合、完整映射和回归 | PLANNED |
 
 后续阶段中的多个紧密关联类别仍应拆成独立任务单；上表只表示实现顺序，不授权一次性实现整行。
 
@@ -230,3 +231,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T007：[tasks/T007_reusable_single_file_batch.md](tasks/T007_reusable_single_file_batch.md)
 - 已验收 T008：[tasks/T008_genvar_roundtrip.md](tasks/T008_genvar_roundtrip.md)
 - 已验收 T009：[tasks/T009_subroutine_batch.md](tasks/T009_subroutine_batch.md)
+- 已验收 T010：[tasks/T010_supported_categories_integration.md](tasks/T010_supported_categories_integration.md)

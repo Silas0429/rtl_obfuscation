@@ -107,6 +107,7 @@ def _collect_parameters(
     compilation: pyslang.ast.Compilation,
 ) -> tuple[list[Any], set[str]]:
     parameters: list[Any] = []
+    genvars: list[Any] = []
     existing_identifiers: set[str] = set()
 
     def visitor(node: Any) -> None:
@@ -114,13 +115,27 @@ def _collect_parameters(
         if isinstance(name, str) and name and not name.startswith("$"):
             existing_identifiers.add(name)
 
-        if (
-            getattr(node, "kind", None) == pyslang.ast.SymbolKind.Parameter
+        kind = getattr(node, "kind", None)
+        if kind == pyslang.ast.SymbolKind.Genvar:
+            genvars.append(node)
+        elif (
+            kind == pyslang.ast.SymbolKind.Parameter
             and not node.isType
         ):
             parameters.append(node)
 
     compilation.getRoot().visit(visitor)
+
+    parameters = [
+        parameter
+        for parameter in parameters
+        if not any(
+            parameter.name == genvar.name
+            and parameter.location.buffer == genvar.location.buffer
+            and parameter.location.offset == genvar.location.offset
+            for genvar in genvars
+        )
+    ]
 
     unique_parameters: dict[tuple[str, int, str], Any] = {}
     for parameter in parameters:

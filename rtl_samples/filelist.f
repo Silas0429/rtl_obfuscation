@@ -8,3 +8,4 @@
 08_memory_array.sv
 09_function_call.sv
 10_systemverilog_fsm.sv
+11_supported_obfuscation.sv

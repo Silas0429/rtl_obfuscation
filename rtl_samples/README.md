@@ -1,6 +1,6 @@
 # RTL syntax samples
 
-This directory contains ten small, independent SystemVerilog RTL syntax samples
+This directory contains eleven independent SystemVerilog RTL syntax samples
 for parser and signal-renaming experiments. The examples progress from simple
 continuous assignments to a finite-state machine. Each numbered file has one
 documented top module and at least one internal signal. Sample 06 also contains
@@ -18,6 +18,7 @@ a child module to exercise instance and named-port handling.
 | 08 | `08_memory_array.sv` | `sample08_memory_array` | Unpacked memory, indexed read/write | SystemVerilog |
 | 09 | `09_function_call.sv` | `sample09_function_call` | Automatic function, typed argument, local loop variable | SystemVerilog |
 | 10 | `10_systemverilog_fsm.sv` | `sample10_systemverilog_fsm` | Enum, `always_comb`, `always_ff`, asynchronous reset | SystemVerilog |
+| 11 | `11_supported_obfuscation.sv` | `sample11_supported_obfuscation` | Combined currently supported rename categories: signals, parameters, enum values, genvar, function, task, and arguments | SystemVerilog |
 
 ## File list
 
@@ -33,7 +34,7 @@ syntax result rather than hidden.
 Run the checks from this directory and inside the project Conda environment:
 
 ```sh
-for file in 0[1-9]_*.sv 10_systemverilog_fsm.sv; do
+for file in 0[1-9]_*.sv 1[01]_*.sv; do
     conda run -n rtl_obfuscation iverilog -g2012 -t null "$file" || exit 1
 done
 conda run -n rtl_obfuscation iverilog -g2012 -t null -f filelist.f
