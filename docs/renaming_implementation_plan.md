@@ -164,13 +164,14 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | ACCEPTED |
 | T010 | 当前 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
 | T011 | 当前 7 个 category 的单次全量加密、单 mapping 和单次恢复 | ACCEPTED |
-| T012 | `instances`、`generate_blocks` | PLANNED |
-| T013 | 多文件基础设施后实现 `modules`、`ports` | PLANNED |
-| T014 | `typedefs`、`struct_types` | PLANNED |
-| T015 | `struct_fields`、`union_fields` | PLANNED |
-| T016 | `interfaces`、`interface_instances` | PLANNED |
-| T017 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
-| T018 | 全部表内类别组合、完整映射和回归 | PLANNED |
+| T012 | 单文件 `instances`、`generate_blocks` | PLANNED |
+| T013 | 单文件 `type_parameters`、`typedefs`、`struct_types` | PLANNED |
+| T014 | 单文件 `struct_fields`、`union_fields` | PLANNED |
+| T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | PLANNED |
+| T016 | 多文件非 top `modules`、child `ports` | PLANNED |
+| T017 | `interfaces`、`interface_instances` | PLANNED |
+| T018 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
+| T019 | 全类别组合、默认/显式 ABI 类别和完整项目回归 | PLANNED |
 
 后续阶段中的多个紧密关联类别仍应拆成独立任务单；上表只表示实现顺序，不授权一次性实现整行。
 
@@ -234,3 +235,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T009：[tasks/T009_subroutine_batch.md](tasks/T009_subroutine_batch.md)
 - 已验收 T010：[tasks/T010_supported_categories_integration.md](tasks/T010_supported_categories_integration.md)
 - 已验收 T011：[tasks/T011_one_pass_all_categories.md](tasks/T011_one_pass_all_categories.md)
+- 后续架构设计：[multifile_interface_port_struct_design.md](multifile_interface_port_struct_design.md)
