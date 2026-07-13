@@ -181,6 +181,8 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
             "functions",
             "tasks",
             "arguments",
+            "instances",
+            "generate_blocks",
         ):
             raise ValueError("unsupported mapping category")
         if not all(
@@ -209,8 +211,8 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
 
         if not isinstance(entry["declaration"], dict):
             raise ValueError("invalid mapping declaration")
-        if not isinstance(entry["references"], list) or not entry["references"]:
-            raise ValueError("mapping must contain at least one reference")
+        if not isinstance(entry["references"], list):
+            raise ValueError("mapping references must be a list")
         range_records = _entry_ranges(entry)
         for record in range_records:
             if not isinstance(record, dict) or set(record) != {"file", "start", "end"}:
@@ -309,6 +311,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "functions",
             "tasks",
             "arguments",
+            "instances",
+            "generate_blocks",
             "all",
         ),
     )

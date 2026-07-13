@@ -23,6 +23,8 @@ _SUPPORTED_CATEGORIES = (
     "functions",
     "tasks",
     "arguments",
+    "instances",
+    "generate_blocks",
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
@@ -306,6 +308,52 @@ def _collect_arguments(
     return ordered_arguments, existing_identifiers
 
 
+def _collect_hierarchy_names(
+    compilation: pyslang.ast.Compilation, category: str
+) -> tuple[list[Any], set[str]]:
+    targets: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        kind = getattr(node, "kind", None)
+        syntax = getattr(node, "syntax", None)
+        syntax_kind = getattr(syntax, "kind", None)
+        if (
+            category == "instances"
+            and kind == pyslang.ast.SymbolKind.Instance
+            and syntax_kind == pyslang.syntax.SyntaxKind.HierarchicalInstance
+            and node.isModule
+            and not syntax.decl.dimensions
+        ) or (
+            category == "generate_blocks"
+            and kind == pyslang.ast.SymbolKind.GenerateBlockArray
+            and syntax_kind == pyslang.syntax.SyntaxKind.LoopGenerate
+            and name
+            and getattr(syntax.parent, "kind", None)
+            == pyslang.syntax.SyntaxKind.ModuleDeclaration
+        ):
+            targets.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_targets: dict[tuple[str, int, str], Any] = {}
+    for target in targets:
+        definition = target.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(target, compilation.sourceManager)
+        unique_targets.setdefault(key, target)
+
+    ordered_targets = [unique_targets[key] for key in sorted(unique_targets)]
+    return ordered_targets, existing_identifiers
+
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -325,6 +373,8 @@ def _collect_targets(
         return _collect_subroutines(compilation, pyslang.ast.SubroutineKind.Task)
     if category == "arguments":
         return _collect_arguments(compilation)
+    if category in ("instances", "generate_blocks"):
+        return _collect_hierarchy_names(compilation, category)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -449,7 +499,14 @@ def _add_ranges(
     generic_targets = [
         target
         for target, category in zip(targets, categories, strict=True)
-        if category not in ("genvars", "functions", "tasks")
+        if category
+        not in (
+            "genvars",
+            "functions",
+            "tasks",
+            "instances",
+            "generate_blocks",
+        )
     ]
 
     def visitor(node: Any) -> None:
@@ -598,6 +655,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "functions",
             "tasks",
             "arguments",
+            "instances",
+            "generate_blocks",
         ),
     )
     parser.add_argument(

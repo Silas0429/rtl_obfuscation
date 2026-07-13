@@ -2,21 +2,22 @@
 
 ## 1. 当前结论
 
-当前实现能够对一个 SystemVerilog 文件中的 7 个已验收 category 执行一次全量重命名：
+当前实现能够对一个 SystemVerilog 文件中的 9 个已验收 category 执行一次全量重命名：
 
 ```text
 signals parameters enum_values genvars functions tasks arguments
+instances generate_blocks
 ```
 
 它不是“单文件全部名称类型”。`docs/systemverilog_renaming_table.md` 中仍未实现的类别包括：
 
 ```text
-modules type_parameters ports instances generate_blocks
+modules type_parameters ports
 interfaces interface_instances interface_ports modports modport_ports
 typedefs struct_types struct_fields union_fields
 ```
 
-其中 `instances`、`generate_blocks`、type/field 类别可以先在单文件 Compilation 中实现；module、port 和 interface 的完整同步修改天然涉及定义与使用点，必须建立多文件 Compilation 后再作为正式能力交付。
+其中 `instances`、`generate_blocks` 已完成 declaration-only 的单文件小步；type/field 类别仍可先在单文件 Compilation 中实现。module、port 和 interface 的完整同步修改天然涉及定义与使用点，必须建立多文件 Compilation 后再作为正式能力交付。
 
 ## 2. 当前单文件架构不能直接扩展到多文件的原因
 
@@ -213,7 +214,7 @@ equiv_status -assert
 
 | 任务 | 内容 | 主要复用 |
 | --- | --- | --- |
-| T012 | 单文件 `instances`、`generate_blocks` | hierarchy/source-range、现有 one-pass all |
+| T012 | 单文件 `instances`、`generate_blocks`（已验收） | hierarchy/source-range、现有 one-pass all |
 | T013 | 单文件 `type_parameters`、`typedefs`、`struct_types` | type symbol/reference collector |
 | T014 | 单文件 `struct_fields`、`union_fields` | owner type identity、member access |
 | T015 | 多文件基础设施，只对现有已验收 category 做跨文件回归 | Compilation、per-file edits、mapping v2、project formal |

@@ -4,7 +4,7 @@
 
 ## 1. 当前支持表
 
-| CLI category | 当前支持内容 | 综合样例结果 | 当前边界 |
+| CLI category | 当前支持内容 | 验收结果 | 当前边界 |
 | --- | --- | ---: | --- |
 | `signals` | module 内部、非 port 的 `VariableSymbol`/`NetSymbol`；源码可为 `logic`、`reg`、`wire`、`tri` | 7 entries / 24 tokens | 不含 port、interface member、subroutine argument、aggregate field |
 | `parameters` | module value parameter 与普通 module localparam 的声明和普通表达式引用 | 4 / 10 | 不含 type parameter、type-dimension 引用、generate iteration parameter |
@@ -13,8 +13,10 @@
 | `functions` | module function 声明、普通调用；T009 另覆盖传统返回赋值 | 1 / 2 | 不含 extern、DPI、recursive、package/class function |
 | `tasks` | module task 声明和普通 ordered call | 1 / 2 | 不含 extern、DPI、层次调用和命名实参 |
 | `arguments` | module function/task 形式参数声明及 subroutine 内部引用 | 4 / 9 | ordered actual expressions 不改名；不含命名实参和 prototype |
+| `instances` | 单个具名 module instance 的声明 | T012 fixture 1 / 1 | 不含层次引用、instance array、primitive/checker/interface instance |
+| `generate_blocks` | module 直属、显式命名的 generate-for block label | 综合样例 1 / 1 | 不含层次引用、嵌套/conditional generate、implicit `genblkN` |
 
-综合样例总计 21 个 mapping entries、60 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
+综合样例总计 22 个 mapping entries、61 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
 
 正常使用时选择 `--category all`，一次解析并直接生成最终 RTL、单一混合 mapping 和全局 metrics。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
 
@@ -46,7 +48,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
 预期 stdout：
 
 ```json
-{"files": 1, "mapping_entries": 21, "modified_tokens": 60}
+{"files": 1, "mapping_entries": 22, "modified_tokens": 61}
 ```
 
 三个输出分别为：
@@ -112,5 +114,5 @@ echo $?
 
 - final gate 与 gold 的功能一致性由 Yosys formal 证明。
 - mapping 中每个 entry 保留真实 category，并提供相对原始输入的双向名称关系和 source ranges。
-- metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 40/61 个有效代码行、21/21 个符号和 60/60 个 occurrences。
+- metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 40/61 个有效代码行、22/22 个符号和 61/61 个 occurrences。
 - 当前不支持 module/port 重命名，因此不能把 top 或外部接口名称的保留视为遗漏。

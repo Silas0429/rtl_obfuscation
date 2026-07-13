@@ -1,6 +1,6 @@
 # T012：单文件 instance 与显式 generate block label
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T011 已达到 `ACCEPTED`
@@ -250,24 +250,69 @@ docs/tasks/T012_instance_generate_block_roundtrip.md
 ## 13. Formal verification（子 Agent 完成时填写）
 
 ```text
-formal_verification: PENDING
-instances: gold/gate/top/command/exit_code/result
-generate_blocks: gold/gate/top/command/exit_code/result
-all_demo: gold/gate/top/command/exit_code/result
+formal_verification: PASS
+instances:
+  gold: rtl_samples/06_module_instance.sv
+  gate: /tmp/rtl_obfuscation_t012/instances/gate.sv
+  top: sample06_module_instance
+  command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold rtl_samples/06_module_instance.sv --gate /tmp/rtl_obfuscation_t012/instances/gate.sv --top sample06_module_instance
+  exit_code: 0
+  result: {"formal_equivalence":"pass","seq":5,"top":"sample06_module_instance"}
+generate_blocks:
+  gold: rtl_samples/07_generate_loop.sv
+  gate: /tmp/rtl_obfuscation_t012/generate_blocks/gate.sv
+  top: sample07_generate_loop
+  command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold rtl_samples/07_generate_loop.sv --gate /tmp/rtl_obfuscation_t012/generate_blocks/gate.sv --top sample07_generate_loop
+  exit_code: 0
+  result: {"formal_equivalence":"pass","seq":5,"top":"sample07_generate_loop"}
+all_demo:
+  gold: rtl_samples/11_supported_obfuscation.sv
+  gate: /tmp/rtl_obfuscation_t012/all_demo/gate.sv
+  top: sample11_supported_obfuscation
+  command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold rtl_samples/11_supported_obfuscation.sv --gate /tmp/rtl_obfuscation_t012/all_demo/gate.sv --top sample11_supported_obfuscation
+  exit_code: 0
+  result: {"formal_equivalence":"pass","seq":5,"top":"sample11_supported_obfuscation"}
 ```
 
 ## 14. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-13：子 Agent 开始执行；将先核对 PySlang 11 的
+  `InstanceSymbol`、`GenerateBlockArraySymbol` 及 syntax/location API，再按合同实现。
+- 实际 API：源码 module instance 为 `InstanceSymbol`，`syntax.kind` 为
+  `HierarchicalInstance`，`isModule=true`，名称 location 为 `[437,454)`；top instance
+  的 `syntax=None`。显式循环标签为 `GenerateBlockArraySymbol`，`syntax.kind` 为
+  `LoopGenerate`，名称 location 为 `[371,384)`；4 个展开实体为无名
+  `GenerateBlockSymbol`。
+- 实现：新增两个 declaration-only collector；module instance 同时要求无 instance
+  dimensions，generate loop 同时要求直接位于 module；两个 category 加入 `all`；
+  mapping validator 允许空 reference list，但仍拒绝非 list。
+- 修改文件：`rtl_obfuscator/inventory.py`、`rtl_obfuscator/rewrite.py`、
+  `tests/test_all_category_rewrite.py`、`tests/test_hierarchy_name_rewrite.py`、本任务文档。
 
 ## 15. 偏差或阻塞（子 Agent 更新）
 
-- 无。
+- 无偏差、无阻塞。合同外 array/interface/primitive instance、嵌套或 conditional
+  generate、层次引用仍未实现。
 
 ## 16. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 13 模块统一回归命令按第 8 节原样执行，exit code `0`：
+  `Ran 15 tests in 2.987s`，`OK`。
+- 三组 encrypt/decrypt stdout 分别为 `1/1`、`1/1`、`22/61`，exit code 均为
+  `0`；三次 `cmp` exit code 均为 `0`。mapping 精确得到
+  `inverter_instance [437,454)`、`generate_mask [371,384)` 和 all 最后一项
+  `generate_input [1210,1224)`，三项 `references=[]`；metrics 与第 5、7 节完全一致。
+- 每组 gate 均运行 PySlang Compilation、`verible-verilog-syntax --lang=sv`、
+  `iverilog -g2012 -t null -s <top>`；九条检查 exit code 均为 `0`。
+- 三次 Yosys formal 的命令、输入、top、exit code 和 JSON 结果见第 13 节，均为
+  `formal_equivalence: pass`。
+- `git diff --check` exit code `0`；`git status --short` 仅包含第 11 节允许文件。
 
 ## 17. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-13 17:18 CST：主 Agent 使用独立目录 `/tmp/rtl_obfuscation_t012_main` 完成黑盒验收，状态设置为 `ACCEPTED`。
+- 13 个回归模块共运行 15 tests，退出码 `0`，结果 `OK`。
+- instances 和 generate_blocks 的 encrypt/decrypt 均输出 `1 entry / 1 token`；all demo 均输出 `22 entries / 61 tokens`。三组 mapping、空 references、metrics 和 restored 字节结果均与第 3—7 节一致。
+- 三组 gate 的 PySlang、Verible、Icarus 共 9 个检查全部退出码 `0`。
+- 主 Agent 独立重跑三次 Yosys formal，全部退出码 `0`、`formal_equivalence=pass`、`seq=5`；gate 分别为 `/private/tmp/rtl_obfuscation_t012_main/{instances,generate_blocks,all}/gate.sv`。
+- `git diff --check` 退出码 `0`；实现和测试变更均在第 11 节授权范围内。

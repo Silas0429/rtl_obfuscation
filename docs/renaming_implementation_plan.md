@@ -164,7 +164,7 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | ACCEPTED |
 | T010 | 当前 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
 | T011 | 当前 7 个 category 的单次全量加密、单 mapping 和单次恢复 | ACCEPTED |
-| T012 | 单文件 `instances`、`generate_blocks` | READY |
+| T012 | 单文件 `instances`、`generate_blocks` | ACCEPTED |
 | T013 | 单文件 `type_parameters`、`typedefs`、`struct_types` | PLANNED |
 | T014 | 单文件 `struct_fields`、`union_fields` | PLANNED |
 | T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | PLANNED |
@@ -236,4 +236,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T010：[tasks/T010_supported_categories_integration.md](tasks/T010_supported_categories_integration.md)
 - 已验收 T011：[tasks/T011_one_pass_all_categories.md](tasks/T011_one_pass_all_categories.md)
 - 后续架构设计：[multifile_interface_port_struct_design.md](multifile_interface_port_struct_design.md)
-- 当前可执行 T012：[tasks/T012_instance_generate_block_roundtrip.md](tasks/T012_instance_generate_block_roundtrip.md)
+- 已验收 T012：[tasks/T012_instance_generate_block_roundtrip.md](tasks/T012_instance_generate_block_roundtrip.md)

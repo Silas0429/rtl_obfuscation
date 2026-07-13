@@ -132,6 +132,7 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                 "arguments",
                 ["function_data", "task_data", "task_mode", "task_result"],
             ),
+            ("generate_blocks", ["generate_input"]),
         ]
 
         with TemporaryDirectory() as temporary_directory:
@@ -139,7 +140,7 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                 repository,
                 gold,
                 Path(temporary_directory) / "demo",
-                {"files": 1, "mapping_entries": 21, "modified_tokens": 60},
+                {"files": 1, "mapping_entries": 22, "modified_tokens": 61},
             )
 
         expected_categories = [
@@ -153,7 +154,7 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
             [entry["original_name"] for entry in entries], expected_names
         )
         renamed_names = [entry["renamed_name"] for entry in entries]
-        self.assertEqual(len(set(renamed_names)), 21)
+        self.assertEqual(len(set(renamed_names)), 22)
         self.assertTrue(
             all(
                 re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{7}", name)
@@ -178,10 +179,10 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                     "total": 61,
                     "rate": 0.6557377049180327,
                 },
-                "symbols": {"renamed": 21, "eligible": 21, "coverage": 1.0},
+                "symbols": {"renamed": 22, "eligible": 22, "coverage": 1.0},
                 "occurrences": {
-                    "renamed": 60,
-                    "eligible": 60,
+                    "renamed": 61,
+                    "eligible": 61,
                     "coverage": 1.0,
                 },
                 "plaintext_leakage_rate": 0.0,
