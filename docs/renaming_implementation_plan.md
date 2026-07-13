@@ -157,7 +157,7 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T002 | `signals` 的 VariableSymbol 声明与引用 range（当时 CLI 名为 `variables`） | ACCEPTED |
 | T003 | `signals` 的 VariableSymbol 正向改写、恢复和文本往返（当时 CLI 名为 `variables`） | ACCEPTED |
 | T004 | 公开类别迁移为 `signals`，加入内部 NetSymbol 并保持端到端流程 | ACCEPTED |
-| T005 | 单个 module value parameter 的端到端流程 | READY |
+| T005 | 单个 module value parameter 的端到端流程 | ACCEPTED |
 | T006 | `type_parameters` | PLANNED |
 | T007 | `enum_values`、`genvars` | PLANNED |
 | T008 | `functions`、`tasks`、`arguments` | PLANNED |
@@ -224,4 +224,5 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T002：[tasks/T002_variable_source_ranges.md](tasks/T002_variable_source_ranges.md)
 - 已验收 T003：[tasks/T003_variable_rewrite_roundtrip.md](tasks/T003_variable_rewrite_roundtrip.md)
 - 已验收 T004：[tasks/T004_internal_net_roundtrip.md](tasks/T004_internal_net_roundtrip.md)
-- 当前可执行任务：[tasks/T005_value_parameter_roundtrip.md](tasks/T005_value_parameter_roundtrip.md)
+- 已验收 T005：[tasks/T005_value_parameter_roundtrip.md](tasks/T005_value_parameter_roundtrip.md)
+- 下一阶段：T006 单个 type parameter，任务合同待主 Agent 冻结。

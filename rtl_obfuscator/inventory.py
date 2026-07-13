@@ -1,4 +1,4 @@
-"""Emit a random-name inventory for internal SystemVerilog signals."""
+"""Emit a random-name inventory for SystemVerilog rename targets."""
 
 from __future__ import annotations
 
@@ -103,6 +103,52 @@ def _collect_signals(
     return ordered_signals, existing_identifiers
 
 
+def _collect_parameters(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    parameters: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if (
+            getattr(node, "kind", None) == pyslang.ast.SymbolKind.Parameter
+            and not node.isType
+            and not node.isLocalParam
+        ):
+            parameters.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_parameters: dict[tuple[str, int, str], Any] = {}
+    for parameter in parameters:
+        definition = parameter.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(parameter, compilation.sourceManager)
+        unique_parameters.setdefault(key, parameter)
+
+    ordered_parameters = [
+        unique_parameters[key] for key in sorted(unique_parameters)
+    ]
+    return ordered_parameters, existing_identifiers
+
+
+def _collect_targets(
+    compilation: pyslang.ast.Compilation, category: str
+) -> tuple[list[Any], set[str]]:
+    if category == "signals":
+        return _collect_signals(compilation)
+    if category == "parameters":
+        return _collect_parameters(compilation)
+    raise ValueError(f"unsupported category: {category}")
+
+
 def _new_name(name_length: int, unavailable: set[str]) -> str:
     for _ in range(1000):
         candidate = secrets.choice(_FIRST_NAME_CHARS) + "".join(
@@ -134,33 +180,33 @@ def _range_record(
 
 def _add_ranges(
     entries: list[dict[str, Any]],
-    signals: list[Any],
+    targets: list[Any],
     compilation: pyslang.ast.Compilation,
     input_file: Path,
 ) -> None:
-    references: dict[Any, list[Any]] = {signal: [] for signal in signals}
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
             return
-        for signal in signals:
-            if node.symbol is signal:
-                references[signal].append(node.syntax.identifier)
+        for target in targets:
+            if node.symbol is target:
+                references[target].append(node.syntax.identifier)
                 return
 
     compilation.getRoot().visit(visitor)
     source_bytes = input_file.read_bytes()
     all_ranges: list[tuple[int, int]] = []
 
-    for entry, signal in zip(entries, signals, strict=True):
+    for entry, target in zip(entries, targets, strict=True):
         declaration = _range_record(
             input_file,
             compilation.sourceManager,
-            signal.location,
-            len(signal.name),
+            target.location,
+            len(target.name),
         )
         reference_records = []
-        for token in references[signal]:
+        for token in references[target]:
             reference_records.append(
                 _range_record(
                     input_file,
@@ -180,7 +226,7 @@ def _add_ranges(
         entry["declaration"] = declaration
         entry["references"] = ordered_references
 
-        expected_bytes = signal.name.encode("utf-8")
+        expected_bytes = target.name.encode("utf-8")
         for record in [declaration, *ordered_references]:
             start = record["start"]
             end = record["end"]
@@ -201,7 +247,10 @@ def _add_ranges(
 
 
 def _build_inventory(
-    input_file: Path, name_length: int, include_ranges: bool = False
+    input_file: Path,
+    name_length: int,
+    category: str,
+    include_ranges: bool = False,
 ) -> dict[str, Any]:
     syntax_tree = pyslang.syntax.SyntaxTree.fromFile(str(input_file))
     compilation = pyslang.ast.Compilation()
@@ -211,31 +260,33 @@ def _build_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    signals, existing_identifiers = _collect_signals(compilation)
+    targets, existing_identifiers = _collect_targets(compilation, category)
     unavailable = set(existing_identifiers)
     entries = []
-    for signal in signals:
+    for target in targets:
         entries.append(
             {
-                "category": "signals",
-                "scope": signal.declaringDefinition.name,
-                "original_name": signal.name,
+                "category": category,
+                "scope": target.declaringDefinition.name,
+                "original_name": target.name,
                 "renamed_name": _new_name(name_length, unavailable),
             }
         )
 
     if include_ranges:
-        _add_ranges(entries, signals, compilation, input_file)
+        _add_ranges(entries, targets, compilation, input_file)
 
     return {"version": 1, "name_length": name_length, "entries": entries}
 
 
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="List random-name mappings for internal SystemVerilog signals."
+        description="List random-name mappings for SystemVerilog identifiers."
     )
     parser.add_argument("--input", required=True, type=Path, dest="input_file")
-    parser.add_argument("--category", required=True, choices=("signals",))
+    parser.add_argument(
+        "--category", required=True, choices=("signals", "parameters")
+    )
     parser.add_argument(
         "--name-length", required=True, type=_positive_name_length, dest="name_length"
     )
@@ -248,7 +299,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         inventory = _build_inventory(
-            args.input_file, args.name_length, args.include_ranges
+            args.input_file, args.name_length, args.category, args.include_ranges
         )
     except (OSError, RuntimeError, ValueError) as error:
         parser.exit(1, f"error: {error}\n")

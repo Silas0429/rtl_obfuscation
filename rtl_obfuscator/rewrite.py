@@ -1,4 +1,4 @@
-"""Rewrite and restore internal SystemVerilog signal identifiers."""
+"""Rewrite and restore selected SystemVerilog identifiers."""
 
 from __future__ import annotations
 
@@ -113,7 +113,10 @@ def _summary(mapping_entries: int, modified_tokens: int) -> dict[str, int]:
 
 def _encrypt(args: argparse.Namespace) -> dict[str, int]:
     mapping = inventory._build_inventory(
-        args.input_file, args.name_length, include_ranges=True
+        args.input_file,
+        args.name_length,
+        args.category,
+        include_ranges=True,
     )
     entries = mapping["entries"]
     source = args.input_file.read_bytes()
@@ -159,7 +162,7 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
     entry = entries[0]
     if not isinstance(entry, dict) or set(entry) != required_entry_fields:
         raise ValueError("invalid mapping entry schema")
-    if entry["category"] != "signals":
+    if entry["category"] not in ("signals", "parameters"):
         raise ValueError("unsupported mapping category")
     if not all(
         isinstance(entry[field], str)
@@ -167,9 +170,11 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
     ):
         raise ValueError("invalid mapping identifier")
 
+    if not isinstance(entry["declaration"], dict):
+        raise ValueError("invalid mapping declaration")
+    if not isinstance(entry["references"], list) or not entry["references"]:
+        raise ValueError("mapping must contain at least one reference")
     range_records = _entry_ranges(entry)
-    if len(range_records) != 3:
-        raise ValueError("mapping must contain three identifier ranges")
     for record in range_records:
         if not isinstance(record, dict) or set(record) != {"file", "start", "end"}:
             raise ValueError("invalid mapping range schema")
@@ -192,15 +197,15 @@ def _gate_ranges(
     if any(diagnostic.isError() for diagnostic in compilation.getAllDiagnostics()):
         raise ValueError("gate contains SystemVerilog errors")
 
-    signals, _ = inventory._collect_signals(compilation)
+    targets, _ = inventory._collect_targets(compilation, entry["category"])
     matches = [
-        signal
-        for signal in signals
-        if signal.name == entry["renamed_name"]
-        and signal.declaringDefinition.name == entry["scope"]
+        target
+        for target in targets
+        if target.name == entry["renamed_name"]
+        and target.declaringDefinition.name == entry["scope"]
     ]
     if len(matches) != 1:
-        raise ValueError("mapped signal was not found uniquely in gate RTL")
+        raise ValueError("mapped target was not found uniquely in gate RTL")
 
     range_entry: dict[str, Any] = {}
     inventory._add_ranges(
@@ -235,7 +240,7 @@ def _decrypt(args: argparse.Namespace) -> dict[str, int]:
 
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Rewrite or restore internal SystemVerilog signals."
+        description="Rewrite or restore selected SystemVerilog identifiers."
     )
     operations = parser.add_subparsers(dest="operation", required=True)
 
@@ -244,7 +249,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt.add_argument("--output", required=True, type=Path, dest="output_file")
     encrypt.add_argument("--map", required=True, type=Path, dest="map_file")
     encrypt.add_argument("--metrics", required=True, type=Path, dest="metrics_file")
-    encrypt.add_argument("--category", required=True, choices=("signals",))
+    encrypt.add_argument(
+        "--category", required=True, choices=("signals", "parameters")
+    )
     encrypt.add_argument(
         "--name-length",
         required=True,
