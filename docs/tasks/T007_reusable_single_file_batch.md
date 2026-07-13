@@ -1,6 +1,6 @@
 # T007：高复用单文件批次
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T005 已达到 `ACCEPTED`；T006 按开发者要求暂缓
@@ -174,24 +174,71 @@ docs/tasks/T007_reusable_single_file_batch.md
 ## 11. Formal verification（子 Agent 完成时填写）
 
 ```text
-formal_verification: PENDING
-signals: pending
-localparams: pending
-enum_values: pending
+formal_verification: PASS
+
+signals:
+gold: tests/fixtures/t007_multi_signal.sv
+gate: /tmp/rtl_obfuscation_t007/signals/gate.sv
+top: t007_multi_signal
+command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold tests/fixtures/t007_multi_signal.sv --gate /tmp/rtl_obfuscation_t007/signals/gate.sv --top t007_multi_signal
+exit_code: 0
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t007/signals/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t007_multi_signal.sv", "seq": 5, "top": "t007_multi_signal"}
+
+localparams:
+gold: rtl_samples/05_case_statement.sv
+gate: /tmp/rtl_obfuscation_t007/localparams/gate.sv
+top: sample05_case_statement
+command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold rtl_samples/05_case_statement.sv --gate /tmp/rtl_obfuscation_t007/localparams/gate.sv --top sample05_case_statement
+exit_code: 0
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t007/localparams/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/rtl_samples/05_case_statement.sv", "seq": 5, "top": "sample05_case_statement"}
+
+enum_values:
+gold: tests/fixtures/t007_enum_values.sv
+gate: /tmp/rtl_obfuscation_t007/enums/gate.sv
+top: t007_enum_values
+command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold tests/fixtures/t007_enum_values.sv --gate /tmp/rtl_obfuscation_t007/enums/gate.sv --top t007_enum_values
+exit_code: 0
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t007/enums/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t007_enum_values.sv", "seq": 5, "top": "t007_enum_values"}
 ```
 
 ## 12. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-13 14:21:28 CST：子 Agent 已完整阅读 T007 合同、任务流程与 formal 验证规范；任务由 `READY` 更新为 `IN_PROGRESS`，开始实施 T007-A/B/C。
+- 2026-07-13 14:28:14 CST：完成三子项实现与全部统一门禁；任务更新为 `READY_FOR_REVIEW`，未 commit、未 push。
 
 ## 13. 偏差或阻塞（子 Agent 更新）
 
-- 无。
+- 无阻塞。PySlang 11 实际 API 与合同一致：collection root 提供 `TransparentMemberSymbol`，其 `wrapped` 为表达式引用绑定的 `EnumValueSymbol`。
+- 未扩展合同边界；多文件、T006、genvar、function/task、named override、dimension/defparam 与 enum scope/pattern 均未实现。
 
 ## 14. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 变更文件：`rtl_obfuscator/inventory.py`、`rtl_obfuscator/rewrite.py`、三份 T007 测试以及本任务单；未修改 fixtures、RTL 样例、规划或 formal 脚本。
+- 第 7 节八项联合回归：退出码 `0`，`Ran 8 tests in 0.896s`，`OK`。
+- 三组 encrypt stdout：依次为 `{"files": 1, "mapping_entries": 4, "modified_tokens": 12}`、`4/8`、`3/7`；三组 decrypt stdout 与其分别相同。
+- 三组 restored 与 gold 的 `cmp -s` 均退出码 `0`；固定 ranges、entry 顺序和 metrics 由三份黑盒测试逐项断言通过，gate 期望值按 mapping ranges 全局倒序构造。
+- 三组 PySlang、`verible-verilog-syntax --lang=sv`、`iverilog -g2012 -t null -s <top>` 均退出码 `0`，无 stdout/stderr。
+- 三组 Yosys formal 均退出码 `0` 且 JSON 为 `formal_equivalence=pass`，完整记录见第 11 节。
+- mapping 负测由 `tests.test_multi_signal_rewrite.MultiSignalRewriteCliTest.test_multi_signal_encrypt_decrypt_and_mapping_validation` 执行真实 decrypt：第二个 entry 缺少 `references` 与最后一个 entry 复用首个 `renamed_name` 均断言非零退出；目标测试 `Ran 1 test`，`OK`。
+- `git diff --check` 退出码 `0`；工作区仅包含第 9 节允许文件，未 commit、未 push。
 
 ## 15. 主 Agent 验收结果
+
+- 2026-07-13 主 Agent 对整个批次独立验收通过，状态设为 `ACCEPTED`。
+- 8 项联合回归退出码为 `0`，`Ran 8 tests`，结果 `OK`；mapping 负测目标用例独立重跑通过。
+- 三组 encrypt/decrypt 计数分别精确为 `4/12`、`4/8`、`3/7`。
+- signals mapping 顺序、12 个 ranges、全局 edit gate 字节、`9/17` metrics 和 restored 字节均符合合同。
+- localparams mapping 顺序、8 个 ranges、全局 edit gate 字节、`8/22` metrics 和 restored 字节均符合合同。
+- enum values mapping 顺序、7 个 ranges、全局 edit gate 字节、`7/19` metrics 和 restored 字节均符合合同。
+- 三组 PySlang、Verible、Icarus 均退出码 `0`；三组 `cmp -s` 均退出码 `0`。
+- 主 Agent 独立运行三次 Yosys formal，均退出码 `0` 且 JSON `formal_equivalence` 为 `pass`：
+
+  ```json
+  {"formal_equivalence": "pass", "top": "t007_multi_signal", "seq": 5}
+  {"formal_equivalence": "pass", "top": "sample05_case_statement", "seq": 5}
+  {"formal_equivalence": "pass", "top": "t007_enum_values", "seq": 5}
+  ```
+
+- 冻结 fixtures、RTL 样例和 formal 脚本均未修改；批次边界外的 T006、genvar、subroutine 和多文件能力仍未实现。
 
 - 尚未验收。

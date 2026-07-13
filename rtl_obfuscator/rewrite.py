@@ -31,13 +31,13 @@ def _entry_ranges(entry: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _apply_edits(
     source: bytes,
-    ranges: list[dict[str, Any]],
-    expected: str,
-    replacement: str,
+    edits: list[tuple[dict[str, Any], str, str]],
 ) -> bytes:
-    expected_bytes = expected.encode("utf-8")
-    replacement_bytes = replacement.encode("utf-8")
-    positions = sorted((item["start"], item["end"]) for item in ranges)
+    ordered_edits = sorted(edits, key=lambda edit: (edit[0]["start"], edit[0]["end"]))
+    positions = [
+        (record["start"], record["end"])
+        for record, _, _ in ordered_edits
+    ]
 
     if len(positions) != len(set(positions)):
         raise ValueError("duplicate source edits")
@@ -48,12 +48,18 @@ def _apply_edits(
         )
     ):
         raise ValueError("overlapping source edits")
-    for start, end in positions:
+    for record, expected, _ in ordered_edits:
+        start = record["start"]
+        end = record["end"]
+        expected_bytes = expected.encode("utf-8")
         if source[start:end] != expected_bytes:
             raise ValueError("source edit does not match the expected identifier")
 
     rewritten = source
-    for start, end in reversed(positions):
+    for record, _, replacement in reversed(ordered_edits):
+        start = record["start"]
+        end = record["end"]
+        replacement_bytes = replacement.encode("utf-8")
         rewritten = rewritten[:start] + replacement_bytes + rewritten[end:]
     return rewritten
 
@@ -120,17 +126,14 @@ def _encrypt(args: argparse.Namespace) -> dict[str, int]:
     )
     entries = mapping["entries"]
     source = args.input_file.read_bytes()
-    gate = source
-    modified_tokens = 0
+    edits: list[tuple[dict[str, Any], str, str]] = []
     for entry in entries:
-        ranges = _entry_ranges(entry)
-        gate = _apply_edits(
-            gate,
-            ranges,
-            entry["original_name"],
-            entry["renamed_name"],
+        edits.extend(
+            (record, entry["original_name"], entry["renamed_name"])
+            for record in _entry_ranges(entry)
         )
-        modified_tokens += len(ranges)
+    gate = _apply_edits(source, edits)
+    modified_tokens = len(edits)
 
     _write_bytes(args.output_file, gate)
     _write_json(args.map_file, mapping)
@@ -145,11 +148,18 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
         "entries",
     }:
         raise ValueError("invalid mapping schema")
-    if mapping["version"] != 1 or not isinstance(mapping["name_length"], int):
+    if (
+        not isinstance(mapping["version"], int)
+        or isinstance(mapping["version"], bool)
+        or mapping["version"] != 1
+        or not isinstance(mapping["name_length"], int)
+        or isinstance(mapping["name_length"], bool)
+        or mapping["name_length"] < 4
+    ):
         raise ValueError("unsupported mapping version or name length")
     entries = mapping["entries"]
-    if not isinstance(entries, list) or len(entries) != 1:
-        raise ValueError("mapping must contain exactly one entry")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("mapping must contain at least one entry")
 
     required_entry_fields = {
         "category",
@@ -159,62 +169,90 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
         "declaration",
         "references",
     }
-    entry = entries[0]
-    if not isinstance(entry, dict) or set(entry) != required_entry_fields:
-        raise ValueError("invalid mapping entry schema")
-    if entry["category"] not in ("signals", "parameters"):
-        raise ValueError("unsupported mapping category")
-    if not all(
-        isinstance(entry[field], str)
-        for field in ("scope", "original_name", "renamed_name")
-    ):
-        raise ValueError("invalid mapping identifier")
-
-    if not isinstance(entry["declaration"], dict):
-        raise ValueError("invalid mapping declaration")
-    if not isinstance(entry["references"], list) or not entry["references"]:
-        raise ValueError("mapping must contain at least one reference")
-    range_records = _entry_ranges(entry)
-    for record in range_records:
-        if not isinstance(record, dict) or set(record) != {"file", "start", "end"}:
-            raise ValueError("invalid mapping range schema")
-        if (
-            not isinstance(record["file"], str)
-            or not isinstance(record["start"], int)
-            or not isinstance(record["end"], int)
-            or record["start"] >= record["end"]
+    renamed_names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != required_entry_fields:
+            raise ValueError("invalid mapping entry schema")
+        if entry["category"] not in ("signals", "parameters", "enum_values"):
+            raise ValueError("unsupported mapping category")
+        if not all(
+            isinstance(entry[field], str)
+            for field in ("scope", "original_name", "renamed_name")
         ):
-            raise ValueError("invalid mapping range")
+            raise ValueError("invalid mapping identifier")
+
+        renamed_name = entry["renamed_name"]
+        if (
+            not renamed_name
+            or len(renamed_name) != mapping["name_length"]
+            or not renamed_name[0].isalpha()
+            or not all(
+                character.isascii()
+                and (character.isalpha() or character.isdigit() or character == "_")
+                for character in renamed_name[1:]
+            )
+            or not renamed_name[0].isascii()
+            or renamed_name in inventory._SYSTEMVERILOG_KEYWORDS
+        ):
+            raise ValueError("invalid renamed identifier")
+        if renamed_name in renamed_names:
+            raise ValueError("duplicate renamed identifier")
+        renamed_names.add(renamed_name)
+
+        if not isinstance(entry["declaration"], dict):
+            raise ValueError("invalid mapping declaration")
+        if not isinstance(entry["references"], list) or not entry["references"]:
+            raise ValueError("mapping must contain at least one reference")
+        range_records = _entry_ranges(entry)
+        for record in range_records:
+            if not isinstance(record, dict) or set(record) != {"file", "start", "end"}:
+                raise ValueError("invalid mapping range schema")
+            if (
+                not isinstance(record["file"], str)
+                or not isinstance(record["start"], int)
+                or isinstance(record["start"], bool)
+                or not isinstance(record["end"], int)
+                or isinstance(record["end"], bool)
+                or record["start"] < 0
+                or record["start"] >= record["end"]
+            ):
+                raise ValueError("invalid mapping range")
     return entries
 
 
 def _gate_ranges(
-    input_file: Path, entry: dict[str, Any]
-) -> list[dict[str, Any]]:
+    input_file: Path, entries: list[dict[str, Any]]
+) -> list[list[dict[str, Any]]]:
     syntax_tree = pyslang.syntax.SyntaxTree.fromFile(str(input_file))
     compilation = pyslang.ast.Compilation()
     compilation.addSyntaxTree(syntax_tree)
     if any(diagnostic.isError() for diagnostic in compilation.getAllDiagnostics()):
         raise ValueError("gate contains SystemVerilog errors")
 
-    targets, _ = inventory._collect_targets(compilation, entry["category"])
-    matches = [
-        target
-        for target in targets
-        if target.name == entry["renamed_name"]
-        and target.declaringDefinition.name == entry["scope"]
-    ]
-    if len(matches) != 1:
-        raise ValueError("mapped target was not found uniquely in gate RTL")
+    targets_by_category: dict[str, list[Any]] = {}
+    matches = []
+    for entry in entries:
+        targets = targets_by_category.get(entry["category"])
+        if targets is None:
+            targets, _ = inventory._collect_targets(compilation, entry["category"])
+            targets_by_category[entry["category"]] = targets
+        entry_matches = [
+            target
+            for target in targets
+            if target.name == entry["renamed_name"]
+            and target.declaringDefinition.name == entry["scope"]
+        ]
+        if len(entry_matches) != 1:
+            raise ValueError("mapped target was not found uniquely in gate RTL")
+        matches.append(entry_matches[0])
 
-    range_entry: dict[str, Any] = {}
-    inventory._add_ranges(
-        [range_entry], matches, compilation, input_file
-    )
-    ranges = _entry_ranges(range_entry)
-    if len(ranges) != len(_entry_ranges(entry)):
-        raise ValueError("gate occurrence count does not match mapping")
-    return ranges
+    range_entries: list[dict[str, Any]] = [{} for _ in entries]
+    inventory._add_ranges(range_entries, matches, compilation, input_file)
+    all_ranges = [_entry_ranges(range_entry) for range_entry in range_entries]
+    for entry, ranges in zip(entries, all_ranges, strict=True):
+        if len(ranges) != len(_entry_ranges(entry)):
+            raise ValueError("gate occurrence count does not match mapping")
+    return all_ranges
 
 
 def _decrypt(args: argparse.Namespace) -> dict[str, int]:
@@ -222,17 +260,14 @@ def _decrypt(args: argparse.Namespace) -> dict[str, int]:
         mapping = json.load(stream)
     entries = _validate_mapping(mapping)
     gate = args.input_file.read_bytes()
-    restored = gate
-    modified_tokens = 0
-    for entry in entries:
-        ranges = _gate_ranges(args.input_file, entry)
-        restored = _apply_edits(
-            restored,
-            ranges,
-            entry["renamed_name"],
-            entry["original_name"],
-        )
-        modified_tokens += len(ranges)
+    all_ranges = _gate_ranges(args.input_file, entries)
+    edits = [
+        (record, entry["renamed_name"], entry["original_name"])
+        for entry, ranges in zip(entries, all_ranges, strict=True)
+        for record in ranges
+    ]
+    restored = _apply_edits(gate, edits)
+    modified_tokens = len(edits)
 
     _write_bytes(args.output_file, restored)
     return _summary(len(entries), modified_tokens)
@@ -250,7 +285,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt.add_argument("--map", required=True, type=Path, dest="map_file")
     encrypt.add_argument("--metrics", required=True, type=Path, dest="metrics_file")
     encrypt.add_argument(
-        "--category", required=True, choices=("signals", "parameters")
+        "--category",
+        required=True,
+        choices=("signals", "parameters", "enum_values"),
     )
     encrypt.add_argument(
         "--name-length",

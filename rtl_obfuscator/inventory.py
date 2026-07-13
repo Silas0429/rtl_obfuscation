@@ -117,7 +117,6 @@ def _collect_parameters(
         if (
             getattr(node, "kind", None) == pyslang.ast.SymbolKind.Parameter
             and not node.isType
-            and not node.isLocalParam
         ):
             parameters.append(node)
 
@@ -139,6 +138,40 @@ def _collect_parameters(
     return ordered_parameters, existing_identifiers
 
 
+def _collect_enum_values(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    enum_values: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.TransparentMember:
+            wrapped = node.wrapped
+            if wrapped.kind == pyslang.ast.SymbolKind.EnumValue:
+                enum_values.append(wrapped)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_enum_values: dict[tuple[str, int, str], Any] = {}
+    for enum_value in enum_values:
+        definition = enum_value.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(enum_value, compilation.sourceManager)
+        unique_enum_values.setdefault(key, enum_value)
+
+    ordered_enum_values = [
+        unique_enum_values[key] for key in sorted(unique_enum_values)
+    ]
+    return ordered_enum_values, existing_identifiers
+
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -146,6 +179,8 @@ def _collect_targets(
         return _collect_signals(compilation)
     if category == "parameters":
         return _collect_parameters(compilation)
+    if category == "enum_values":
+        return _collect_enum_values(compilation)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -285,7 +320,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--input", required=True, type=Path, dest="input_file")
     parser.add_argument(
-        "--category", required=True, choices=("signals", "parameters")
+        "--category",
+        required=True,
+        choices=("signals", "parameters", "enum_values"),
     )
     parser.add_argument(
         "--name-length", required=True, type=_positive_name_length, dest="name_length"
