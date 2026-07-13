@@ -8,8 +8,7 @@
 | `parameters` | value parameter、`localparam` | `parameter int WIDTH = 8`、`localparam int DEPTH = 16` | 声明；所有表达式引用；命名参数覆盖左侧 `.WIDTH(...)`；层次引用和 `defparam`（若支持） | `true`。顶层公开 parameter 建议通过 preserve 规则排除 |
 | `type_parameters` | type parameter | `parameter type T = logic [7:0]` 中的 `T` | 声明；所有类型引用；命名参数覆盖左侧 `.T(...)`；作用域和层次引用 | `true`。公开 module/interface 的 type parameter 可保留 |
 | `ports` | module 的 input/output/inout/ref port | `input logic data_i` 中的 `data_i` | port 声明；模块内部引用；所有实例化处命名端口连接左侧 `.data_i(...)`；层次引用 | `false`。port 通常属于外部接口 ABI |
-| `nets` | wire、tri 等 net | `wire ready;` 中的 `ready` | 声明；驱动和读取；bit/part select；连续赋值；层次引用；alias 或连接表达式 | `true` |
-| `variables` | 模块变量、过程变量、循环变量 | `logic masked_data;`、`int index;` | 声明；赋值和读取；bit/part select；数组索引；层次引用；assignment pattern 中对该变量的引用 | `true` |
+| `signals` | module 作用域内、非 port 的具名 variable 和 net | `logic masked_data;`、`reg stored_data;`、`wire ready;`、`tri shared_bus;` | 声明；驱动、赋值和读取；bit/part select；数组索引；连续或过程赋值；层次引用；alias 或连接表达式 | `true`。公开选项统一为 `signals`；实现内部同时收集 PySlang `VariableSymbol` 和 `NetSymbol` |
 | `functions` | function 名 | `function automatic logic calc_crc(...);` 中的 `calc_crc` | 声明；所有函数调用；作用域引用 `pkg::calc_crc`；对象或层次引用；function prototype/extern 定义对应关系 | `true`。DPI、export、extern 或工具脚本依赖的 function 应保留 |
 | `tasks` | task 名 | `task automatic drive_bus(...);` 中的 `drive_bus` | 声明；所有 task 调用；作用域或层次引用；task prototype/extern 定义对应关系 | `true`。DPI、export、extern 或验证环境公开 task 应保留 |
 | `arguments` | function/task 形式参数 | `function f(input logic value);` 中的 `value` | 形式参数声明；subroutine 内所有引用；命名实参连接左侧 `.value(...)`；prototype 与实现中的对应声明 | `true` |
@@ -30,6 +29,8 @@
 ## 使用说明
 
 - “同步修改”必须依据 PySlang 的符号绑定关系完成，不能对同名字符串做全局替换。
+- `logic` 是数据类型，不直接决定对象是 net 还是 variable；重命名器必须依据 PySlang 语义 symbol kind，而不是依据 `logic`、`reg`、`wire`、`tri` 关键字做文本分类。
+- `signals` 第一阶段只包含 module 作用域内的内部 `VariableSymbol` 和 `NetSymbol`。module port、function/task argument、parameter、genvar、interface member 和 struct/union field 仍属于各自独立类别。
 - 命名参数和命名端口连接的左右两侧可能文本相同，但分别属于被实例化单元和当前作用域中的不同符号。例如 `.WIDTH(WIDTH)` 左右两个 `WIDTH` 不一定应得到同一个新名字。
 - ANSI port 在 PySlang 语义 AST 中可能同时表现为 `PortSymbol` 和底层的 `VariableSymbol`/`NetSymbol`。它们应作为同一个源码声明协调处理，不能生成两次重命名。
 - interface signal、modport port 和普通变量可能指向同一底层语义对象；应用配置时应先解析对象关系，再决定最终名字。

@@ -4,6 +4,8 @@
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 
+> 历史说明：T004 的定义调整将公开类别 `variables` 与 `nets` 合并为 `signals`。本任务保留原 CLI 和输出名称作为当时的验收证据。
+
 ## 1. 单一目标
 
 读取一个合法 SystemVerilog 文件，使用 PySlang 找出 module 内部的 `variables`，根据 `name_length` 为它们生成随机合法名称，并把映射 JSON 输出到 stdout。

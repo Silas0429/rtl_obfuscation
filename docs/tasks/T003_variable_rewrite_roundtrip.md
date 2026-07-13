@@ -5,6 +5,8 @@
 - 实现负责人：子 Agent
 - 前置任务：T002 必须先达到 `ACCEPTED`
 
+> 历史说明：T004 的定义调整将公开类别 `variables` 与 `nets` 合并为 `signals`。本任务保留原 CLI、mapping 和验收输出作为当时的证据；T004 接受后应使用 `signals` 重新生成 mapping。
+
 > T002 已验收通过，本任务边界已经由主 Agent复核，可以开始执行。
 
 ## 1. 单一目标

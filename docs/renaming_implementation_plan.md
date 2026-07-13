@@ -69,6 +69,12 @@ SourceEdit
 
 新增类别时只扩展第 2、3、6 步的“类别规则”，不得复制整条流水线。
 
+### 4.1 内部信号统一定义
+
+公开重命名类别使用单一 `signals`，不再分别暴露 `variables` 和 `nets`。`signals` 只收集 module 作用域内、非 port 的具名 PySlang `VariableSymbol` 与 `NetSymbol`；源码可以写成 `logic`、`reg`、`wire` 或 `tri`。两种 symbol kind 只影响内部收集，不影响 mapping、source edit、metrics 或反向恢复流程。
+
+端口的 `internalSymbol` 必须从集合中排除。parameter、genvar、subroutine argument、interface member 和 aggregate field 不并入 `signals`。
+
 ## 5. 名称和映射格式
 
 第一版使用由 `name_length` 控制的随机合法名称：
@@ -97,7 +103,7 @@ SourceEdit
   "name_length": 8,
   "entries": [
     {
-      "category": "variables",
+      "category": "signals",
       "scope": "sample01_continuous_assign",
       "original_name": "and_result",
       "renamed_name": "Q7m2_xAa",
@@ -112,6 +118,8 @@ SourceEdit
 ```
 
 JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 1 或重复的新名称都直接报错。
+
+本项目尚未发布外部 mapping 格式，因此此次类别合并直接用 `signals` 替换旧的 `variables` 值，schema 版本仍为 1，不增加旧值兼容分支。T004 完成后应重新生成临时 mapping；T001—T003 文档中的旧值只保留为历史验收证据。
 
 测试不得依赖真实随机输出的具体字符串。名称生成器的单元测试可以注入或 mock 随机字符选择；CLI 黑盒测试只检查长度、字符集合、关键字、冲突和映射数量。
 
@@ -145,10 +153,10 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| T001 | 单文件内部 `variables` 映射清单，只输出 JSON，不改 RTL | ACCEPTED |
-| T002 | `variables` 声明与引用 range 清单，仍不改 RTL | ACCEPTED |
-| T003 | `variables` 正向改写、反向恢复和文本往返 | ACCEPTED |
-| T004 | `nets` | PLANNED |
+| T001 | `signals` 的 VariableSymbol 子集映射清单（当时 CLI 名为 `variables`） | ACCEPTED |
+| T002 | `signals` 的 VariableSymbol 声明与引用 range（当时 CLI 名为 `variables`） | ACCEPTED |
+| T003 | `signals` 的 VariableSymbol 正向改写、恢复和文本往返（当时 CLI 名为 `variables`） | ACCEPTED |
+| T004 | 公开类别迁移为 `signals`，加入内部 NetSymbol 并保持端到端流程 | READY |
 | T005 | `parameters`、`type_parameters` | PLANNED |
 | T006 | `enum_values`、`genvars` | PLANNED |
 | T007 | `functions`、`tasks`、`arguments` | PLANNED |
@@ -214,4 +222,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T001：[tasks/T001_variable_mapping_inventory.md](tasks/T001_variable_mapping_inventory.md)
 - 已验收 T002：[tasks/T002_variable_source_ranges.md](tasks/T002_variable_source_ranges.md)
 - 已验收 T003：[tasks/T003_variable_rewrite_roundtrip.md](tasks/T003_variable_rewrite_roundtrip.md)
-- 下一阶段：T004 `nets`，任务合同尚未创建，当前无可执行实现任务。
+- 当前可执行任务：[tasks/T004_internal_net_roundtrip.md](tasks/T004_internal_net_roundtrip.md)
