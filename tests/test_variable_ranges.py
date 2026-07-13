@@ -21,7 +21,7 @@ class VariableRangeCliTest(unittest.TestCase):
                 "--input",
                 str(relative_input),
                 "--category",
-                "variables",
+                "signals",
                 "--name-length",
                 "8",
                 "--include-ranges",

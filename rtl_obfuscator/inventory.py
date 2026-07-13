@@ -1,4 +1,4 @@
-"""Emit a random-name inventory for internal SystemVerilog variables."""
+"""Emit a random-name inventory for internal SystemVerilog signals."""
 
 from __future__ import annotations
 
@@ -67,11 +67,11 @@ def _symbol_sort_key(symbol: Any, source_manager: Any) -> tuple[str, int, str]:
     )
 
 
-def _collect_variables(
+def _collect_signals(
     compilation: pyslang.ast.Compilation,
 ) -> tuple[list[Any], set[str]]:
-    variables: list[Any] = []
-    port_variables: set[Any] = set()
+    signals: list[Any] = []
+    port_signals: set[Any] = set()
     existing_identifiers: set[str] = set()
 
     def visitor(node: Any) -> None:
@@ -83,24 +83,24 @@ def _collect_variables(
         if kind == pyslang.ast.SymbolKind.Port:
             internal_symbol = node.internalSymbol
             if internal_symbol is not None:
-                port_variables.add(internal_symbol)
-        elif kind == pyslang.ast.SymbolKind.Variable:
-            variables.append(node)
+                port_signals.add(internal_symbol)
+        elif kind in (pyslang.ast.SymbolKind.Variable, pyslang.ast.SymbolKind.Net):
+            signals.append(node)
 
     compilation.getRoot().visit(visitor)
 
-    unique_variables: dict[tuple[str, int, str], Any] = {}
-    for variable in variables:
-        definition = variable.declaringDefinition
-        if variable in port_variables or definition is None:
+    unique_signals: dict[tuple[str, int, str], Any] = {}
+    for signal in signals:
+        definition = signal.declaringDefinition
+        if signal in port_signals or definition is None:
             continue
         if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
             continue
-        key = _symbol_sort_key(variable, compilation.sourceManager)
-        unique_variables.setdefault(key, variable)
+        key = _symbol_sort_key(signal, compilation.sourceManager)
+        unique_signals.setdefault(key, signal)
 
-    ordered_variables = [unique_variables[key] for key in sorted(unique_variables)]
-    return ordered_variables, existing_identifiers
+    ordered_signals = [unique_signals[key] for key in sorted(unique_signals)]
+    return ordered_signals, existing_identifiers
 
 
 def _new_name(name_length: int, unavailable: set[str]) -> str:
@@ -134,33 +134,33 @@ def _range_record(
 
 def _add_ranges(
     entries: list[dict[str, Any]],
-    variables: list[Any],
+    signals: list[Any],
     compilation: pyslang.ast.Compilation,
     input_file: Path,
 ) -> None:
-    references: dict[Any, list[Any]] = {variable: [] for variable in variables}
+    references: dict[Any, list[Any]] = {signal: [] for signal in signals}
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
             return
-        for variable in variables:
-            if node.symbol is variable:
-                references[variable].append(node.syntax.identifier)
+        for signal in signals:
+            if node.symbol is signal:
+                references[signal].append(node.syntax.identifier)
                 return
 
     compilation.getRoot().visit(visitor)
     source_bytes = input_file.read_bytes()
     all_ranges: list[tuple[int, int]] = []
 
-    for entry, variable in zip(entries, variables, strict=True):
+    for entry, signal in zip(entries, signals, strict=True):
         declaration = _range_record(
             input_file,
             compilation.sourceManager,
-            variable.location,
-            len(variable.name),
+            signal.location,
+            len(signal.name),
         )
         reference_records = []
-        for token in references[variable]:
+        for token in references[signal]:
             reference_records.append(
                 _range_record(
                     input_file,
@@ -180,7 +180,7 @@ def _add_ranges(
         entry["declaration"] = declaration
         entry["references"] = ordered_references
 
-        expected_bytes = variable.name.encode("utf-8")
+        expected_bytes = signal.name.encode("utf-8")
         for record in [declaration, *ordered_references]:
             start = record["start"]
             end = record["end"]
@@ -211,31 +211,31 @@ def _build_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    variables, existing_identifiers = _collect_variables(compilation)
+    signals, existing_identifiers = _collect_signals(compilation)
     unavailable = set(existing_identifiers)
     entries = []
-    for variable in variables:
+    for signal in signals:
         entries.append(
             {
-                "category": "variables",
-                "scope": variable.declaringDefinition.name,
-                "original_name": variable.name,
+                "category": "signals",
+                "scope": signal.declaringDefinition.name,
+                "original_name": signal.name,
                 "renamed_name": _new_name(name_length, unavailable),
             }
         )
 
     if include_ranges:
-        _add_ranges(entries, variables, compilation, input_file)
+        _add_ranges(entries, signals, compilation, input_file)
 
     return {"version": 1, "name_length": name_length, "entries": entries}
 
 
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="List random-name mappings for internal SystemVerilog variables."
+        description="List random-name mappings for internal SystemVerilog signals."
     )
     parser.add_argument("--input", required=True, type=Path, dest="input_file")
-    parser.add_argument("--category", required=True, choices=("variables",))
+    parser.add_argument("--category", required=True, choices=("signals",))
     parser.add_argument(
         "--name-length", required=True, type=_positive_name_length, dest="name_length"
     )

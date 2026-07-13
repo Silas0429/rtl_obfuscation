@@ -1,23 +1,24 @@
-"""Black-box round-trip test for the T003 variable rewrite CLI."""
+"""Black-box round-trip test for the T004 internal net rewrite."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
 
 
-class VariableRewriteCliTest(unittest.TestCase):
-    def test_encrypt_decrypt_round_trip(self) -> None:
+class SignalNetRewriteCliTest(unittest.TestCase):
+    def test_internal_net_encrypt_decrypt_round_trip(self) -> None:
         repository = Path(__file__).resolve().parents[1]
-        relative_gold = Path("rtl_samples/01_continuous_assign.sv")
+        relative_gold = Path("tests/fixtures/t004_internal_net.sv")
         gold_bytes = (repository / relative_gold).read_bytes()
 
         with TemporaryDirectory() as temporary_directory:
-            output_directory = Path(temporary_directory) / "nested" / "t003"
+            output_directory = Path(temporary_directory) / "nested" / "t004"
             gate = output_directory / "gate.sv"
             restored = output_directory / "restored.sv"
             mapping_file = output_directory / "mapping.json"
@@ -54,30 +55,44 @@ class VariableRewriteCliTest(unittest.TestCase):
             )
 
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
-            self.assertEqual(mapping["version"], 1)
-            self.assertEqual(mapping["name_length"], 8)
             self.assertEqual(len(mapping["entries"]), 1)
             entry = mapping["entries"][0]
             self.assertEqual(entry["category"], "signals")
-            self.assertEqual(entry["original_name"], "and_result")
+            self.assertEqual(entry["scope"], "t004_internal_net")
+            self.assertEqual(entry["original_name"], "combined_net")
+            self.assertRegex(entry["renamed_name"], r"^[A-Za-z][A-Za-z0-9_]{7}$")
+            input_identifiers = set(
+                re.findall(
+                    rb"[A-Za-z_][A-Za-z0-9_$]*",
+                    gold_bytes,
+                )
+            )
+            self.assertNotIn(entry["renamed_name"].encode("utf-8"), input_identifiers)
             self.assertEqual(
                 entry["declaration"],
-                {"file": str(relative_gold), "start": 202, "end": 212},
+                {"file": str(relative_gold), "start": 170, "end": 182},
             )
             self.assertEqual(
                 entry["references"],
                 [
-                    {"file": str(relative_gold), "start": 226, "end": 236},
-                    {"file": str(relative_gold), "start": 280, "end": 290},
+                    {"file": str(relative_gold), "start": 196, "end": 208},
+                    {"file": str(relative_gold), "start": 252, "end": 264},
                 ],
+            )
+            for item in [entry["declaration"], *entry["references"]]:
+                self.assertEqual(
+                    gold_bytes[item["start"] : item["end"]], b"combined_net"
+                )
+            self.assertNotIn(
+                "output_y",
+                {item["original_name"] for item in mapping["entries"]},
             )
 
             renamed_name = entry["renamed_name"].encode("utf-8")
-            self.assertEqual(
-                gate.read_bytes(), gold_bytes.replace(b"and_result", renamed_name)
-            )
+            expected_gate = gold_bytes.replace(b"combined_net", renamed_name)
+            self.assertEqual(gate.read_bytes(), expected_gate)
             self.assertEqual(gate.read_bytes().count(renamed_name), 3)
-            self.assertNotIn(b"and_result", gate.read_bytes())
+            self.assertNotIn(b"combined_net", gate.read_bytes())
 
             self.assertEqual(
                 json.loads(metrics_file.read_text(encoding="utf-8")),

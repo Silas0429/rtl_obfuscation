@@ -24,7 +24,7 @@ class VariableInventoryCliTest(unittest.TestCase):
                 "--input",
                 "rtl_samples/01_continuous_assign.sv",
                 "--category",
-                "variables",
+                "signals",
                 "--name-length",
                 "8",
             ],
@@ -41,7 +41,7 @@ class VariableInventoryCliTest(unittest.TestCase):
         self.assertEqual(len(payload["entries"]), 1)
 
         entry = payload["entries"][0]
-        self.assertEqual(entry["category"], "variables")
+        self.assertEqual(entry["category"], "signals")
         self.assertEqual(entry["scope"], "sample01_continuous_assign")
         self.assertEqual(entry["original_name"], "and_result")
         self.assertRegex(entry["renamed_name"], r"^[A-Za-z][A-Za-z0-9_]{7}$")
