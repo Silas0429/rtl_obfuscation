@@ -25,6 +25,8 @@ _SUPPORTED_CATEGORIES = (
     "arguments",
     "instances",
     "generate_blocks",
+    "typedefs",
+    "struct_types",
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
@@ -354,6 +356,52 @@ def _collect_hierarchy_names(
     return ordered_targets, existing_identifiers
 
 
+
+def _collect_type_aliases(
+    compilation: pyslang.ast.Compilation, category: str
+) -> tuple[list[Any], set[str]]:
+    type_aliases: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.TypeAlias:
+            if category == "typedefs":
+                if not (
+                    node.isStruct
+                    or node.isPackedUnion
+                    or node.isUnpackedStruct
+                    or node.isUnpackedUnion
+                ):
+                    type_aliases.append(node)
+            elif category == "struct_types":
+                if (
+                    node.isStruct
+                    or node.isPackedUnion
+                    or node.isUnpackedStruct
+                    or node.isUnpackedUnion
+                ):
+                    type_aliases.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_targets: dict[tuple[str, int, str], Any] = {}
+    for target in type_aliases:
+        definition = target.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(target, compilation.sourceManager)
+        unique_targets.setdefault(key, target)
+
+    ordered_targets = [unique_targets[key] for key in sorted(unique_targets)]
+    return ordered_targets, existing_identifiers
+
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -375,6 +423,8 @@ def _collect_targets(
         return _collect_arguments(compilation)
     if category in ("instances", "generate_blocks"):
         return _collect_hierarchy_names(compilation, category)
+    if category in ("typedefs", "struct_types"):
+        return _collect_type_aliases(compilation, category)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -488,6 +538,40 @@ def _subroutine_reference_tokens(
     return references
 
 
+
+def _type_alias_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        for node in semantic_nodes:
+            kind = getattr(node, "kind", None)
+            if kind not in (
+                pyslang.ast.SymbolKind.Variable,
+                pyslang.ast.SymbolKind.Net,
+                pyslang.ast.SymbolKind.FormalArgument,
+            ):
+                continue
+            declared_type = getattr(node, "declaredType", None)
+            if declared_type is None:
+                continue
+            resolved_type = getattr(declared_type, "type", None)
+            if resolved_type is not target:
+                continue
+            type_syntax = getattr(declared_type, "typeSyntax", None)
+            if type_syntax is None:
+                continue
+            source_range = getattr(type_syntax, "sourceRange", None)
+            if source_range is None:
+                continue
+            references[target].append(source_range)
+
+    return references
+
+
 def _add_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -536,6 +620,15 @@ def _add_ranges(
         subroutine_targets, compilation
     ).items():
         references[target].extend(tokens)
+    type_alias_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("typedefs", "struct_types")
+    ]
+    for target, tokens in _type_alias_reference_tokens(
+        type_alias_targets, compilation
+    ).items():
+        references[target].extend(tokens)
 
     source_bytes = input_file.read_bytes()
     all_ranges: list[tuple[int, int]] = []
@@ -549,14 +642,30 @@ def _add_ranges(
         )
         reference_records = []
         for token in references[target]:
-            reference_records.append(
-                _range_record(
-                    input_file,
-                    compilation.sourceManager,
-                    token.location,
-                    len(token.rawText.encode("utf-8")),
+            if hasattr(token, "location"):
+                reference_records.append(
+                    _range_record(
+                        input_file,
+                        compilation.sourceManager,
+                        token.location,
+                        len(token.rawText.encode("utf-8")),
+                    )
                 )
-            )
+            else:
+                start_loc = token.start
+                end_loc = token.end
+                source_path = compilation.sourceManager.getFullPath(
+                    start_loc.buffer
+                ).resolve()
+                if source_path != input_file.resolve():
+                    raise ValueError("range is outside the input file")
+                reference_records.append(
+                    {
+                        "file": str(input_file),
+                        "start": start_loc.offset,
+                        "end": end_loc.offset,
+                    }
+                )
 
         unique_references = {
             (record["start"], record["end"]): record
@@ -657,6 +766,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "arguments",
             "instances",
             "generate_blocks",
+            "typedefs",
+            "struct_types",
         ),
     )
     parser.add_argument(

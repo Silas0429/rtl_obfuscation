@@ -15,8 +15,10 @@
 | `arguments` | module function/task 形式参数声明及 subroutine 内部引用 | 4 / 9 | ordered actual expressions 不改名；不含命名实参和 prototype |
 | `instances` | 单个具名 module instance 的声明 | T012 fixture 1 / 1 | 不含层次引用、instance array、primitive/checker/interface instance |
 | `generate_blocks` | module 直属、显式命名的 generate-for block label | 综合样例 1 / 1 | 不含层次引用、嵌套/conditional generate、implicit `genblkN` |
+| `typedefs` | module 内普通 typedef 名（非 struct/union）的声明和类型引用 | 综合样例 1 / 2 | 不含 package/class typedef、forward declaration、port 类型引用、cast 表达式 |
+| `struct_types` | module 内 typedef struct/union 类型名的声明和类型引用 | T013 fixture 1 / 3 | 不含 struct_fields、union_fields、package/class scope |
 
-综合样例总计 22 个 mapping entries、61 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
+综合样例总计 23 个 mapping entries、63 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
 
 正常使用时选择 `--category all`，一次解析并直接生成最终 RTL、单一混合 mapping 和全局 metrics。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
 
@@ -48,7 +50,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
 预期 stdout：
 
 ```json
-{"files": 1, "mapping_entries": 22, "modified_tokens": 61}
+{"files": 1, "mapping_entries": 23, "modified_tokens": 63}
 ```
 
 三个输出分别为：
@@ -114,5 +116,5 @@ echo $?
 
 - final gate 与 gold 的功能一致性由 Yosys formal 证明。
 - mapping 中每个 entry 保留真实 category，并提供相对原始输入的双向名称关系和 source ranges。
-- metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 40/61 个有效代码行、22/22 个符号和 61/61 个 occurrences。
+- metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 41/61 个有效代码行、23/23 个符号和 63/63 个 occurrences。
 - 当前不支持 module/port 重命名，因此不能把 top 或外部接口名称的保留视为遗漏。
