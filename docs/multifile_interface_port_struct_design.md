@@ -215,7 +215,7 @@ equiv_status -assert
 | 任务 | 内容 | 主要复用 |
 | --- | --- | --- |
 | T012 | 单文件 `instances`、`generate_blocks`（已验收） | hierarchy/source-range、现有 one-pass all |
-| T013 | 单文件 `type_parameters`、`typedefs`、`struct_types` | type symbol/reference collector |
+| T013 | 单文件 `typedefs`、`struct_types`；不包含暂缓的 `type_parameters` | type symbol/reference collector |
 | T014 | 单文件 `struct_fields`、`union_fields` | owner type identity、member access |
 | T015 | 多文件基础设施，只对现有已验收 category 做跨文件回归 | Compilation、per-file edits、mapping v2、project formal |
 | T016 | 多文件非 top `modules`、child `ports` | definition-instance binding、named connection |
@@ -224,6 +224,10 @@ equiv_status -assert
 | T019 | 全类别组合、默认/显式 ABI category、完整项目回归 | 全部现有 pipeline |
 
 每个任务仍应保持一个最小 fixture 集和一个唯一 `READY` 合同；不能在 T015 尚未验收前实现正式的跨文件 port/interface 重命名。
+
+`type_parameters` 继续由 T006 单独管理。当前 Yosys 0.53 frontend 无法读取
+T006 的 `parameter type` fixture，因此在 formal 策略没有更新前，T006 保持
+`DRAFT`，不得通过跳过 formal 的方式并入任何产生 rewritten RTL 的任务。
 
 ## 9. 项目级验收标准
 

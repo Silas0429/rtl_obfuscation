@@ -240,5 +240,3 @@ result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t00
   ```
 
 - 冻结 fixtures、RTL 样例和 formal 脚本均未修改；批次边界外的 T006、genvar、subroutine 和多文件能力仍未实现。
-
-- 尚未验收。

@@ -1,0 +1,158 @@
+# RTL obfuscation 项目交接入口
+
+本文记录新主 Agent 接手时必须保持的当前目标、真实状态和恢复步骤。功能范围与
+验收规则仍以本文链接的各事实来源为准；本文不替代任务合同。
+
+## 1. 当前暂停点
+
+- 分支：`main`。
+- 已验收能力停在 T012。
+- T001—T005、T007—T012 状态均为 `ACCEPTED`。
+- T006 是暂缓的 `DRAFT`，不得启动。
+- T013 尚未创建任务文件，当前没有活动任务。
+- 新 Agent 接手后不得直接编辑实现；先完成第 7 节的恢复检查，再由主 Agent
+  创建并冻结唯一的 T013 合同。
+
+## 2. 不变目标
+
+- 只处理 SystemVerilog `.sv`。
+- 使用 PySlang semantic AST 判断符号身份和引用绑定，不做字符串全局替换。
+- 新名称由显式 `--name-length` 控制，长度至少为 4；示例统一使用 8。
+- 使用 `secrets` 生成合法且不与现有标识符、关键字或本次新名称冲突的名字。
+- 单文件 mapping 使用 schema v1，并能将 gate 恢复为与 gold 字节完全一致的文件。
+- rewritten RTL 必须通过 PySlang、Verible、Icarus 和 Yosys formal。
+- 不引入当前任务不需要的兼容层、fallback、框架或额外配置。
+
+## 3. 环境和真实测试入口
+
+所有项目命令通过 Conda 环境 `rtl_obfuscation` 执行：
+
+```sh
+conda run -n rtl_obfuscation <command>
+```
+
+已核对版本：Python 3.12.13、PySlang 11.0.0、Pyverilog 1.3.0、Yosys
+0.53、Icarus Verilog 12.0、Verible v0.0-3946-g851d3ff4。当前环境没有
+`pytest`；完整回归使用：
+
+```sh
+conda run -n rtl_obfuscation python -m unittest discover -s tests -v
+```
+
+Pyverilog 只保留为已安装工具。当前产品实现以 PySlang 为语义和 source range
+事实来源。
+
+## 4. 当前已支持能力
+
+单文件 rewrite 支持九个 category：
+
+```text
+signals parameters enum_values genvars functions tasks arguments
+instances generate_blocks
+```
+
+`rewrite encrypt --category all` 是一次解析、一次全局分配名称、一次应用全部 edits
+的直接输出模式，不是按 category 串联中间 RTL。单 category 仅作为 debug 入口。
+
+综合样例 `rtl_samples/11_supported_obfuscation.sv` 的固定结果为 22 个 mapping
+entries、61 个 modified tokens；metrics 为 40/61 个有效代码行、22/22 个符号、
+61/61 个 occurrences、原名残留率 0、有效覆盖率 1。该样例覆盖八类；
+`instances` 由 `rtl_samples/06_module_instance.sv` 单独验收。
+
+T012 的 `instances` 和 `generate_blocks` 目前只支持无层次引用的 declaration-only
+边界，mapping 中允许 `references=[]`。这不代表完整层次路径已支持。
+
+## 5. 仍未实现的类别
+
+```text
+modules type_parameters ports
+interfaces interface_instances interface_ports modports modport_ports
+typedefs struct_types struct_fields union_fields
+```
+
+当前仍是单输入、单输出、mapping v1、单文件 formal。module/port/interface 的正式
+能力必须等多文件 Compilation、per-file edits、mapping v2 和 project formal 完成后
+再进入。
+
+## 6. 强制角色和 Git 流程
+
+主 Agent 负责范围、fixture、输入输出、边界和黑盒验收；子 Agent 只实现唯一活动
+任务。状态固定流转为：
+
+```text
+DRAFT -> READY -> IN_PROGRESS -> READY_FOR_REVIEW -> ACCEPTED
+```
+
+子 Agent 不得设置 `ACCEPTED`、commit 或 push。主 Agent 独立重跑任务合同中的
+全部命令和 Yosys formal，验收通过后才执行：
+
+```sh
+git add .
+git commit -m "[TYPE] concise description"
+git push
+```
+
+不得在失败或未验收状态提交，不得自行 amend、rebase、force-push 或改写历史。
+
+## 7. 新主 Agent 的恢复检查
+
+从仓库根目录依次执行：
+
+```sh
+git status --short --branch
+conda run -n rtl_obfuscation python -m unittest discover -s tests -v
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
+  --input rtl_samples/11_supported_obfuscation.sv \
+  --output /tmp/rtl_obfuscation_handoff/gate.sv \
+  --map /tmp/rtl_obfuscation_handoff/mapping.json \
+  --metrics /tmp/rtl_obfuscation_handoff/metrics.json \
+  --category all \
+  --name-length 8
+conda run -n rtl_obfuscation python -c \
+  'import pyslang; t=pyslang.syntax.SyntaxTree.fromFile("/tmp/rtl_obfuscation_handoff/gate.sv"); c=pyslang.ast.Compilation(); c.addSyntaxTree(t); raise SystemExit(any(d.isError() for d in c.getAllDiagnostics()))'
+conda run -n rtl_obfuscation verible-verilog-syntax \
+  --lang=sv /tmp/rtl_obfuscation_handoff/gate.sv
+conda run -n rtl_obfuscation iverilog -g2012 -t null \
+  -s sample11_supported_obfuscation \
+  /tmp/rtl_obfuscation_handoff/gate.sv
+conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
+  --gold rtl_samples/11_supported_obfuscation.sv \
+  --gate /tmp/rtl_obfuscation_handoff/gate.sv \
+  --top sample11_supported_obfuscation
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt \
+  --input /tmp/rtl_obfuscation_handoff/gate.sv \
+  --output /tmp/rtl_obfuscation_handoff/restored.sv \
+  --map /tmp/rtl_obfuscation_handoff/mapping.json
+cmp -s rtl_samples/11_supported_obfuscation.sv \
+  /tmp/rtl_obfuscation_handoff/restored.sv
+```
+
+预期：15 tests 全部通过；encrypt/decrypt 均报告 `22/61`；三个前端检查退出码
+均为 0；formal JSON 为 `formal_equivalence=pass`；`cmp` 退出码为 0。
+
+## 8. 推荐下一任务
+
+T013 只规划单文件 `typedefs` 和 `struct_types`，继续复用现有 mapping、随机名称、
+source edit、metrics、decrypt 和 formal 流水线。所有权必须唯一：普通 typedef 名归
+`typedefs`，`typedef struct/union` 的类型名归 `struct_types`，不能为同一声明生成
+两个 entries。
+
+主 Agent 在把 T013 设置为 `READY` 前，必须先验证 PySlang 的类型声明/类型引用
+API，并用冻结的最小 fixtures 手工确认 PySlang、Verible、Icarus 和 Yosys 均可
+接受 gold 和仅改类型名的 gate。任务合同必须写明精确 ranges、entries、tokens、
+允许文件、formal 命令和不支持边界。
+
+T006 `type_parameters` 继续保持 `DRAFT`。当前 Yosys 0.53 无法解析
+`tests/fixtures/t006_type_parameter.sv` 中的 `parameter type`；在获得可执行且不降低
+门禁的 formal 策略前，不得将 type parameter RTL rewrite 并入 T013。
+
+## 9. 事实来源
+
+- `AGENTS.md`：环境、角色、任务和 Git 强制规则。
+- `docs/systemverilog_renaming_table.md`：唯一类别范围。
+- `docs/renaming_implementation_plan.md`：架构、边界、指标和任务顺序。
+- `docs/formal_verification.md`：Yosys 强制流程。
+- `docs/tasks/README.md`：任务状态流程。
+- `docs/current_supported_features.md`：已经验收的黑盒能力和演示命令。
+- `docs/multifile_interface_port_struct_design.md`：后续多文件和类型/interface 设计。
+- `docs/tasks/TNNN_*.md`：每个历史任务的合同和验收证据。

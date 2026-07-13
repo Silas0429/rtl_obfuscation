@@ -86,7 +86,7 @@ SourceEdit
 
 例如名称长度为 8 时，可能生成 `Q7m2_xAa`。约束如下：
 
-- `name_length >= 4`，默认值为 8。
+- `name_length >= 4`；当前 CLI 要求显式传入 `--name-length`，项目示例统一使用 8。
 - 输出长度必须严格等于 `name_length`。
 - 使用 Python 标准库 `secrets` 作为生产随机源，不暴露随机 seed 参数。
 - 新名称不得是 SystemVerilog 关键字。
@@ -162,10 +162,10 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T007 | 多 entry + `reg/tri` + localparam + enum values 高复用批次 | ACCEPTED |
 | T008 | 单个 `genvar` 的展开归一化、5-token 改写与 formal | ACCEPTED |
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | ACCEPTED |
-| T010 | 当前 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
-| T011 | 当前 7 个 category 的单次全量加密、单 mapping 和单次恢复 | ACCEPTED |
+| T010 | 当时已支持的 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
+| T011 | 当时已支持的 7 个 category 的单次全量加密、单 mapping 和单次恢复 | ACCEPTED |
 | T012 | 单文件 `instances`、`generate_blocks` | ACCEPTED |
-| T013 | 单文件 `type_parameters`、`typedefs`、`struct_types` | PLANNED |
+| T013 | 单文件 `typedefs`、`struct_types`；`type_parameters` 继续由 T006 暂缓 | PLANNED |
 | T014 | 单文件 `struct_fields`、`union_fields` | PLANNED |
 | T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | PLANNED |
 | T016 | 多文件非 top `modules`、child `ports` | PLANNED |
@@ -173,7 +173,15 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T018 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
 | T019 | 全类别组合、默认/显式 ABI 类别和完整项目回归 | PLANNED |
 
-后续阶段中的多个紧密关联类别仍应拆成独立任务单；上表只表示实现顺序，不授权一次性实现整行。
+后续阶段只有在类别共享同一 collector、source-range 机制和验证 fixture 时，才允许在
+一个任务合同中列成可独立验收的子项；否则必须拆分。上表只表示实现顺序，不授权
+一次性实现整行。
+
+恢复开发时不得直接启动 T013 实现。主 Agent 必须先为 `typedefs` 和
+`struct_types` 完成 PySlang API/Yosys 预探测，再创建唯一的 T013 任务合同并冻结
+fixtures、精确 ranges、输出计数和 formal 命令。T006 保持 `DRAFT`；Yosys 0.53
+不能读取当前 `parameter type` fixture，在没有新的可执行 formal 策略前不得把
+type parameter RTL 改写并入 T013。
 
 ## 8. 黑盒验收标准
 
@@ -237,3 +245,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T011：[tasks/T011_one_pass_all_categories.md](tasks/T011_one_pass_all_categories.md)
 - 后续架构设计：[multifile_interface_port_struct_design.md](multifile_interface_port_struct_design.md)
 - 已验收 T012：[tasks/T012_instance_generate_block_roundtrip.md](tasks/T012_instance_generate_block_roundtrip.md)
+- 当前交接入口：[project_handoff.md](project_handoff.md)

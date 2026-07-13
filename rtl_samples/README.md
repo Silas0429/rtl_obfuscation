@@ -18,7 +18,12 @@ a child module to exercise instance and named-port handling.
 | 08 | `08_memory_array.sv` | `sample08_memory_array` | Unpacked memory, indexed read/write | SystemVerilog |
 | 09 | `09_function_call.sv` | `sample09_function_call` | Automatic function, typed argument, local loop variable | SystemVerilog |
 | 10 | `10_systemverilog_fsm.sv` | `sample10_systemverilog_fsm` | Enum, `always_comb`, `always_ff`, asynchronous reset | SystemVerilog |
-| 11 | `11_supported_obfuscation.sv` | `sample11_supported_obfuscation` | Combined currently supported rename categories: signals, parameters, enum values, genvar, function, task, and arguments | SystemVerilog |
+| 11 | `11_supported_obfuscation.sv` | `sample11_supported_obfuscation` | Combined supported categories: signals, parameters, enum values, genvar, function, task, arguments, and generate block label | SystemVerilog |
+
+The combined sample currently exercises eight of the nine supported categories.
+`instances` is covered separately by `06_module_instance.sv`. A one-pass
+`--category all` run on sample 11 produces 22 mapping entries and 61 modified
+tokens.
 
 ## File list
 

@@ -331,5 +331,3 @@ result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t00
 
 - `git status --short -- '*.sv'` 无输出，冻结 fixture 和仓库 RTL 样例均未修改。
 - 验收边界只证明单个 module value parameter 在普通表达式中的声明/引用改写；不代表 dimension、localparam、type parameter 或命名参数覆盖已支持。
-
-- 尚未验收。

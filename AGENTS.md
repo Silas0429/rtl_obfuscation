@@ -11,11 +11,13 @@
 Examples:
 
 ```sh
-conda run -n rtl_obfuscation python -m pytest
+conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 conda run -n rtl_obfuscation iverilog -g2012 -t null design.sv
 conda run -n rtl_obfuscation verible-verilog-syntax design.sv
 conda run -n rtl_obfuscation yosys -V
 ```
+
+- The current environment does not provide `pytest`; the repository test suite uses Python's built-in `unittest` runner shown above.
 
 ## RTL language scope
 

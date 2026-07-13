@@ -350,5 +350,3 @@ result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t00
 
 - `git status --short -- '*.sv'` 无输出，冻结 fixture 和仓库 RTL 样例均未修改。
 - 验收边界只证明 module 内部基本 `logic`/VariableSymbol 与 `wire`/NetSymbol 已统一到 `signals`；不代表 `tri`、复杂 select、层次引用或多 signal 已覆盖。
-
-- 尚未验收。
