@@ -202,6 +202,75 @@ def _collect_genvars(
     return ordered_genvars, existing_identifiers
 
 
+def _collect_subroutines(
+    compilation: pyslang.ast.Compilation, subroutine_kind: Any
+) -> tuple[list[Any], set[str]]:
+    subroutines: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if (
+            getattr(node, "kind", None) == pyslang.ast.SymbolKind.Subroutine
+            and node.subroutineKind == subroutine_kind
+            and node.syntax is not None
+            and node.body is not None
+        ):
+            subroutines.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_subroutines: dict[tuple[str, int, str], Any] = {}
+    for subroutine in subroutines:
+        definition = subroutine.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(subroutine, compilation.sourceManager)
+        unique_subroutines.setdefault(key, subroutine)
+
+    ordered_subroutines = [
+        unique_subroutines[key] for key in sorted(unique_subroutines)
+    ]
+    return ordered_subroutines, existing_identifiers
+
+
+def _collect_arguments(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    arguments: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.FormalArgument:
+            arguments.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_arguments: dict[tuple[str, int, str], Any] = {}
+    for argument in arguments:
+        definition = argument.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(argument, compilation.sourceManager)
+        unique_arguments.setdefault(key, argument)
+
+    ordered_arguments = [
+        unique_arguments[key] for key in sorted(unique_arguments)
+    ]
+    return ordered_arguments, existing_identifiers
+
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -213,6 +282,14 @@ def _collect_targets(
         return _collect_enum_values(compilation)
     if category == "genvars":
         return _collect_genvars(compilation)
+    if category == "functions":
+        return _collect_subroutines(
+            compilation, pyslang.ast.SubroutineKind.Function
+        )
+    if category == "tasks":
+        return _collect_subroutines(compilation, pyslang.ast.SubroutineKind.Task)
+    if category == "arguments":
+        return _collect_arguments(compilation)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -303,6 +380,29 @@ def _genvar_reference_tokens(
     return references
 
 
+def _subroutine_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        for node in semantic_nodes:
+            kind = getattr(node, "kind", None)
+            if kind == pyslang.ast.ExpressionKind.Call:
+                if node.subroutine is target:
+                    references[target].append(node.syntax.left.identifier)
+            elif (
+                target.subroutineKind == pyslang.ast.SubroutineKind.Function
+                and kind == pyslang.ast.ExpressionKind.NamedValue
+                and node.symbol is target.returnValVar
+            ):
+                references[target].append(node.syntax.identifier)
+
+    return references
+
+
 def _add_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -314,7 +414,7 @@ def _add_ranges(
     generic_targets = [
         target
         for target, category in zip(targets, categories, strict=True)
-        if category != "genvars"
+        if category not in ("genvars", "functions", "tasks")
     ]
 
     def visitor(node: Any) -> None:
@@ -333,6 +433,15 @@ def _add_ranges(
     ]
     for target, tokens in _genvar_reference_tokens(
         genvar_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    subroutine_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("functions", "tasks")
+    ]
+    for target, tokens in _subroutine_reference_tokens(
+        subroutine_targets, compilation
     ).items():
         references[target].extend(tokens)
 
@@ -434,7 +543,15 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--category",
         required=True,
-        choices=("signals", "parameters", "enum_values", "genvars"),
+        choices=(
+            "signals",
+            "parameters",
+            "enum_values",
+            "genvars",
+            "functions",
+            "tasks",
+            "arguments",
+        ),
     )
     parser.add_argument(
         "--name-length", required=True, type=_positive_name_length, dest="name_length"

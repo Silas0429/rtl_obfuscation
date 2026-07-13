@@ -178,6 +178,9 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
             "parameters",
             "enum_values",
             "genvars",
+            "functions",
+            "tasks",
+            "arguments",
         ):
             raise ValueError("unsupported mapping category")
         if not all(
@@ -298,7 +301,15 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt.add_argument(
         "--category",
         required=True,
-        choices=("signals", "parameters", "enum_values", "genvars"),
+        choices=(
+            "signals",
+            "parameters",
+            "enum_values",
+            "genvars",
+            "functions",
+            "tasks",
+            "arguments",
+        ),
     )
     encrypt.add_argument(
         "--name-length",
