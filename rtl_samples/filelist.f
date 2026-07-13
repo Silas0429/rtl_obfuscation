@@ -1,0 +1,10 @@
+01_continuous_assign.sv
+02_vector_operations.sv
+03_combinational_always.sv
+04_sequential_counter.sv
+05_case_statement.sv
+06_module_instance.sv
+07_generate_loop.sv
+08_memory_array.sv
+09_function_call.sv
+10_systemverilog_fsm.sv
