@@ -157,16 +157,17 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T002 | `signals` 的 VariableSymbol 声明与引用 range（当时 CLI 名为 `variables`） | ACCEPTED |
 | T003 | `signals` 的 VariableSymbol 正向改写、恢复和文本往返（当时 CLI 名为 `variables`） | ACCEPTED |
 | T004 | 公开类别迁移为 `signals`，加入内部 NetSymbol 并保持端到端流程 | ACCEPTED |
-| T005 | `parameters`、`type_parameters` | PLANNED |
-| T006 | `enum_values`、`genvars` | PLANNED |
-| T007 | `functions`、`tasks`、`arguments` | PLANNED |
-| T008 | `instances`、`generate_blocks` | PLANNED |
-| T009 | `modules`、`ports` | PLANNED |
-| T010 | `typedefs`、`struct_types` | PLANNED |
-| T011 | `struct_fields`、`union_fields` | PLANNED |
-| T012 | `interfaces`、`interface_instances` | PLANNED |
-| T013 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
-| T014 | 全部表内类别组合、完整映射和回归 | PLANNED |
+| T005 | 单个 module value parameter 的端到端流程 | READY |
+| T006 | `type_parameters` | PLANNED |
+| T007 | `enum_values`、`genvars` | PLANNED |
+| T008 | `functions`、`tasks`、`arguments` | PLANNED |
+| T009 | `instances`、`generate_blocks` | PLANNED |
+| T010 | `modules`、`ports` | PLANNED |
+| T011 | `typedefs`、`struct_types` | PLANNED |
+| T012 | `struct_fields`、`union_fields` | PLANNED |
+| T013 | `interfaces`、`interface_instances` | PLANNED |
+| T014 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
+| T015 | 全部表内类别组合、完整映射和回归 | PLANNED |
 
 后续阶段中的多个紧密关联类别仍应拆成独立任务单；上表只表示实现顺序，不授权一次性实现整行。
 
@@ -223,4 +224,4 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T002：[tasks/T002_variable_source_ranges.md](tasks/T002_variable_source_ranges.md)
 - 已验收 T003：[tasks/T003_variable_rewrite_roundtrip.md](tasks/T003_variable_rewrite_roundtrip.md)
 - 已验收 T004：[tasks/T004_internal_net_roundtrip.md](tasks/T004_internal_net_roundtrip.md)
-- 下一阶段：T005 单个 value parameter，任务合同待主 Agent 冻结。
+- 当前可执行任务：[tasks/T005_value_parameter_roundtrip.md](tasks/T005_value_parameter_roundtrip.md)
