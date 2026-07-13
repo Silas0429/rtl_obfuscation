@@ -160,7 +160,7 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T005 | 单个 module value parameter 的端到端流程 | ACCEPTED |
 | T006 | 单个 type parameter 的语义映射与类型引用 range，不改 RTL | DEFERRED |
 | T007 | 多 entry + `reg/tri` + localparam + enum values 高复用批次 | ACCEPTED |
-| T008 | 单个 `genvar` 的展开归一化、5-token 改写与 formal | READY |
+| T008 | 单个 `genvar` 的展开归一化、5-token 改写与 formal | ACCEPTED |
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | DRAFT |
 | T010 | `instances`、`generate_blocks` | PLANNED |
 | T011 | 多文件基础设施后实现 `modules`、`ports` | PLANNED |
@@ -228,5 +228,5 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T005：[tasks/T005_value_parameter_roundtrip.md](tasks/T005_value_parameter_roundtrip.md)
 - 暂缓 T006：[tasks/T006_type_parameter_ranges.md](tasks/T006_type_parameter_ranges.md)
 - 已验收 T007：[tasks/T007_reusable_single_file_batch.md](tasks/T007_reusable_single_file_batch.md)
-- 当前可执行 T008：[tasks/T008_genvar_roundtrip.md](tasks/T008_genvar_roundtrip.md)
+- 已验收 T008：[tasks/T008_genvar_roundtrip.md](tasks/T008_genvar_roundtrip.md)
 - 后续草案 T009：[tasks/T009_subroutine_batch.md](tasks/T009_subroutine_batch.md)

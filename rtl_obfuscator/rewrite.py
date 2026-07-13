@@ -173,7 +173,12 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != required_entry_fields:
             raise ValueError("invalid mapping entry schema")
-        if entry["category"] not in ("signals", "parameters", "enum_values"):
+        if entry["category"] not in (
+            "signals",
+            "parameters",
+            "enum_values",
+            "genvars",
+        ):
             raise ValueError("unsupported mapping category")
         if not all(
             isinstance(entry[field], str)
@@ -247,7 +252,13 @@ def _gate_ranges(
         matches.append(entry_matches[0])
 
     range_entries: list[dict[str, Any]] = [{} for _ in entries]
-    inventory._add_ranges(range_entries, matches, compilation, input_file)
+    inventory._add_ranges(
+        range_entries,
+        matches,
+        [entry["category"] for entry in entries],
+        compilation,
+        input_file,
+    )
     all_ranges = [_entry_ranges(range_entry) for range_entry in range_entries]
     for entry, ranges in zip(entries, all_ranges, strict=True):
         if len(ranges) != len(_entry_ranges(entry)):
@@ -287,7 +298,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt.add_argument(
         "--category",
         required=True,
-        choices=("signals", "parameters", "enum_values"),
+        choices=("signals", "parameters", "enum_values", "genvars"),
     )
     encrypt.add_argument(
         "--name-length",

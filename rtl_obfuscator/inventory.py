@@ -172,6 +172,36 @@ def _collect_enum_values(
     return ordered_enum_values, existing_identifiers
 
 
+def _collect_genvars(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    genvars: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Genvar:
+            genvars.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_genvars: dict[tuple[str, int, str], Any] = {}
+    for genvar in genvars:
+        definition = genvar.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(genvar, compilation.sourceManager)
+        unique_genvars.setdefault(key, genvar)
+
+    ordered_genvars = [unique_genvars[key] for key in sorted(unique_genvars)]
+    return ordered_genvars, existing_identifiers
+
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -181,6 +211,8 @@ def _collect_targets(
         return _collect_parameters(compilation)
     if category == "enum_values":
         return _collect_enum_values(compilation)
+    if category == "genvars":
+        return _collect_genvars(compilation)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -213,23 +245,97 @@ def _range_record(
     }
 
 
+def _same_location(first: Any, second: Any) -> bool:
+    return first.buffer == second.buffer and first.offset == second.offset
+
+
+def _genvar_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    loop_syntaxes: list[Any] = []
+    for syntax_tree in compilation.getSyntaxTrees():
+        syntax_tree.root.visit(
+            lambda node: loop_syntaxes.append(node)
+            if getattr(node, "kind", None) == pyslang.syntax.SyntaxKind.LoopGenerate
+            else None
+        )
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        iteration_parameters = [
+            node
+            for node in semantic_nodes
+            if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Parameter
+            and node.name == target.name
+            and node.isLocalParam
+            and node.isBodyParam
+            and _same_location(node.location, target.location)
+        ]
+        if len(iteration_parameters) != 4:
+            raise ValueError("expected four elaborated genvar iteration parameters")
+
+        for node in semantic_nodes:
+            if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+                continue
+            if any(node.symbol is parameter for parameter in iteration_parameters):
+                references[target].append(node.syntax.identifier)
+
+        matching_loops = [
+            loop
+            for loop in loop_syntaxes
+            if _same_location(loop.identifier.location, target.location)
+            and loop.identifier.rawText == target.name
+        ]
+        if len(matching_loops) != 1:
+            raise ValueError("expected one source loop for genvar")
+        loop = matching_loops[0]
+        header_tokens = [
+            loop.stopExpr.left.identifier,
+            loop.iterationExpr.operand.identifier,
+        ]
+        if any(token.rawText != target.name for token in header_tokens):
+            raise ValueError("genvar header token does not match declaration")
+        references[target].extend(header_tokens)
+
+    return references
+
+
 def _add_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
+    categories: list[str],
     compilation: pyslang.ast.Compilation,
     input_file: Path,
 ) -> None:
     references: dict[Any, list[Any]] = {target: [] for target in targets}
+    generic_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category != "genvars"
+    ]
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
             return
-        for target in targets:
+        for target in generic_targets:
             if node.symbol is target:
                 references[target].append(node.syntax.identifier)
                 return
 
     compilation.getRoot().visit(visitor)
+    genvar_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "genvars"
+    ]
+    for target, tokens in _genvar_reference_tokens(
+        genvar_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+
     source_bytes = input_file.read_bytes()
     all_ranges: list[tuple[int, int]] = []
 
@@ -309,7 +415,13 @@ def _build_inventory(
         )
 
     if include_ranges:
-        _add_ranges(entries, targets, compilation, input_file)
+        _add_ranges(
+            entries,
+            targets,
+            [category] * len(targets),
+            compilation,
+            input_file,
+        )
 
     return {"version": 1, "name_length": name_length, "entries": entries}
 
@@ -322,7 +434,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--category",
         required=True,
-        choices=("signals", "parameters", "enum_values"),
+        choices=("signals", "parameters", "enum_values", "genvars"),
     )
     parser.add_argument(
         "--name-length", required=True, type=_positive_name_length, dest="name_length"
