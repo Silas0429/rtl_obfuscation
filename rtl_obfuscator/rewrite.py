@@ -309,6 +309,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "functions",
             "tasks",
             "arguments",
+            "all",
         ),
     )
     encrypt.add_argument(

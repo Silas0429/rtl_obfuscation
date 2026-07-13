@@ -16,7 +16,7 @@
 
 综合样例总计 21 个 mapping entries、60 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
 
-当前 CLI 一次只接受一个 category，因此“全部当前功能”通过 7 次串联生成；每阶段产生独立 mapping 和 metrics。恢复时必须严格逆序使用这些 mapping。
+正常使用时选择 `--category all`，一次解析并直接生成最终 RTL、单一混合 mapping 和全局 metrics。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
 
 ## 2. 演示输入
 
@@ -34,63 +34,47 @@ module 名和 ports 当前不会改名，因此 formal 的 top 保持不变。
 ```sh
 OUT=/tmp/rtl_obfuscation_supported_demo
 rm -rf "$OUT"
-mkdir -p "$OUT"
-
-CURRENT=rtl_samples/11_supported_obfuscation.sv
-for CATEGORY in signals parameters enum_values genvars functions tasks arguments; do
-    STAGE="$OUT/$CATEGORY"
-    conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
-      --input "$CURRENT" \
-      --output "$STAGE/gate.sv" \
-      --map "$STAGE/mapping.json" \
-      --metrics "$STAGE/metrics.json" \
-      --category "$CATEGORY" \
-      --name-length 8 || exit 1
-    CURRENT="$STAGE/gate.sv"
-done
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
+  --input rtl_samples/11_supported_obfuscation.sv \
+  --output "$OUT/gate.sv" \
+  --map "$OUT/mapping.json" \
+  --metrics "$OUT/metrics.json" \
+  --category all \
+  --name-length 8
 ```
 
-预期 7 行 stdout 的 `mapping_entries / modified_tokens` 依次为：
+预期 stdout：
+
+```json
+{"files": 1, "mapping_entries": 21, "modified_tokens": 60}
+```
+
+三个输出分别为：
 
 ```text
-signals      7 / 24
-parameters   4 / 10
-enum_values  3 / 8
-genvars      1 / 5
-functions    1 / 2
-tasks        1 / 2
-arguments    4 / 9
+/tmp/rtl_obfuscation_supported_demo/gate.sv
+/tmp/rtl_obfuscation_supported_demo/mapping.json
+/tmp/rtl_obfuscation_supported_demo/metrics.json
 ```
 
-最终加密 RTL：
-
-```text
-/tmp/rtl_obfuscation_supported_demo/arguments/gate.sv
-```
-
-每阶段 mapping 和五项指标分别位于：
-
-```text
-/tmp/rtl_obfuscation_supported_demo/<category>/mapping.json
-/tmp/rtl_obfuscation_supported_demo/<category>/metrics.json
-```
-
-例如查看 signals 阶段结果：
+查看混合 mapping 和全局 metrics：
 
 ```sh
 conda run -n rtl_obfuscation python -m json.tool \
-  "$OUT/signals/mapping.json"
+  "$OUT/mapping.json"
 conda run -n rtl_obfuscation python -m json.tool \
-  "$OUT/signals/metrics.json"
+  "$OUT/metrics.json"
 ```
+
+只调试某个类别时，将 `--category all` 改为例如 `--category signals`。
 
 ## 4. 前端检查和 Yosys formal
 
 ```sh
-FINAL_GATE="$OUT/arguments/gate.sv"
+FINAL_GATE="$OUT/gate.sv"
 
 conda run -n rtl_obfuscation python -c \
-  'import pyslang; t=pyslang.syntax.SyntaxTree.fromFile("/tmp/rtl_obfuscation_supported_demo/arguments/gate.sv"); c=pyslang.ast.Compilation(); c.addSyntaxTree(t); raise SystemExit(any(d.isError() for d in c.getAllDiagnostics()))'
+  'import pyslang; t=pyslang.syntax.SyntaxTree.fromFile("/tmp/rtl_obfuscation_supported_demo/gate.sv"); c=pyslang.ast.Compilation(); c.addSyntaxTree(t); raise SystemExit(any(d.isError() for d in c.getAllDiagnostics()))'
 
 conda run -n rtl_obfuscation verible-verilog-syntax \
   --lang=sv "$FINAL_GATE"
@@ -113,19 +97,12 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 ## 5. 使用 mapping 逆向恢复
 
 ```sh
-mkdir -p "$OUT/restored"
-CURRENT="$OUT/arguments/gate.sv"
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt \
+  --input "$OUT/gate.sv" \
+  --output "$OUT/restored.sv" \
+  --map "$OUT/mapping.json"
 
-for CATEGORY in arguments tasks functions genvars enum_values parameters signals; do
-    RESTORED="$OUT/restored/$CATEGORY.sv"
-    conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt \
-      --input "$CURRENT" \
-      --output "$RESTORED" \
-      --map "$OUT/$CATEGORY/mapping.json" || exit 1
-    CURRENT="$RESTORED"
-done
-
-cmp -s rtl_samples/11_supported_obfuscation.sv "$CURRENT"
+cmp -s rtl_samples/11_supported_obfuscation.sv "$OUT/restored.sv"
 echo $?
 ```
 
@@ -134,6 +111,6 @@ echo $?
 ## 6. 结果解释
 
 - final gate 与 gold 的功能一致性由 Yosys formal 证明。
-- mapping 提供每一阶段的双向名称关系和 source ranges。
-- metrics 是每一阶段独立统计，不是 7 阶段的合并指标。
+- mapping 中每个 entry 保留真实 category，并提供相对原始输入的双向名称关系和 source ranges。
+- metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 40/61 个有效代码行、21/21 个符号和 60/60 个 occurrences。
 - 当前不支持 module/port 重命名，因此不能把 top 或外部接口名称的保留视为遗漏。

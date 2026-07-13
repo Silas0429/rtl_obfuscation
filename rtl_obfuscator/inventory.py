@@ -15,6 +15,15 @@ import pyslang
 
 _FIRST_NAME_CHARS = string.ascii_letters
 _REMAINING_NAME_CHARS = string.ascii_letters + string.digits + "_"
+_SUPPORTED_CATEGORIES = (
+    "signals",
+    "parameters",
+    "enum_values",
+    "genvars",
+    "functions",
+    "tasks",
+    "arguments",
+)
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
 # keywords from all language revisions accepted by the current parser.
@@ -72,6 +81,7 @@ def _collect_signals(
 ) -> tuple[list[Any], set[str]]:
     signals: list[Any] = []
     port_signals: set[Any] = set()
+    function_return_variables: set[Any] = set()
     existing_identifiers: set[str] = set()
 
     def visitor(node: Any) -> None:
@@ -84,6 +94,12 @@ def _collect_signals(
             internal_symbol = node.internalSymbol
             if internal_symbol is not None:
                 port_signals.add(internal_symbol)
+        elif (
+            kind == pyslang.ast.SymbolKind.Subroutine
+            and node.subroutineKind == pyslang.ast.SubroutineKind.Function
+            and node.returnValVar is not None
+        ):
+            function_return_variables.add(node.returnValVar)
         elif kind in (pyslang.ast.SymbolKind.Variable, pyslang.ast.SymbolKind.Net):
             signals.append(node)
 
@@ -92,7 +108,11 @@ def _collect_signals(
     unique_signals: dict[tuple[str, int, str], Any] = {}
     for signal in signals:
         definition = signal.declaringDefinition
-        if signal in port_signals or definition is None:
+        if (
+            signal in port_signals
+            or signal in function_return_variables
+            or definition is None
+        ):
             continue
         if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
             continue
@@ -525,13 +545,25 @@ def _build_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    targets, existing_identifiers = _collect_targets(compilation, category)
-    unavailable = set(existing_identifiers)
+    requested_categories = (
+        _SUPPORTED_CATEGORIES if category == "all" else (category,)
+    )
+    targets: list[Any] = []
+    categories: list[str] = []
+    unavailable: set[str] = set()
+    for requested_category in requested_categories:
+        category_targets, existing_identifiers = _collect_targets(
+            compilation, requested_category
+        )
+        targets.extend(category_targets)
+        categories.extend([requested_category] * len(category_targets))
+        unavailable.update(existing_identifiers)
+
     entries = []
-    for target in targets:
+    for target, target_category in zip(targets, categories, strict=True):
         entries.append(
             {
-                "category": category,
+                "category": target_category,
                 "scope": target.declaringDefinition.name,
                 "original_name": target.name,
                 "renamed_name": _new_name(name_length, unavailable),
@@ -542,7 +574,7 @@ def _build_inventory(
         _add_ranges(
             entries,
             targets,
-            [category] * len(targets),
+            categories,
             compilation,
             input_file,
         )
