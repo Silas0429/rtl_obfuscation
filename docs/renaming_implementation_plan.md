@@ -147,7 +147,7 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | --- | --- | --- |
 | T001 | 单文件内部 `variables` 映射清单，只输出 JSON，不改 RTL | ACCEPTED |
 | T002 | `variables` 声明与引用 range 清单，仍不改 RTL | ACCEPTED |
-| T003 | `variables` 正向改写、反向恢复和文本往返 | READY |
+| T003 | `variables` 正向改写、反向恢复和文本往返 | ACCEPTED |
 | T004 | `nets` | PLANNED |
 | T005 | `parameters`、`type_parameters` | PLANNED |
 | T006 | `enum_values`、`genvars` | PLANNED |
@@ -213,4 +213,5 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 任务状态流程：[tasks/README.md](tasks/README.md)
 - 已验收 T001：[tasks/T001_variable_mapping_inventory.md](tasks/T001_variable_mapping_inventory.md)
 - 已验收 T002：[tasks/T002_variable_source_ranges.md](tasks/T002_variable_source_ranges.md)
-- 当前可执行任务：[tasks/T003_variable_rewrite_roundtrip.md](tasks/T003_variable_rewrite_roundtrip.md)
+- 已验收 T003：[tasks/T003_variable_rewrite_roundtrip.md](tasks/T003_variable_rewrite_roundtrip.md)
+- 下一阶段：T004 `nets`，任务合同尚未创建，当前无可执行实现任务。

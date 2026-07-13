@@ -1,6 +1,6 @@
 # T003：内部变量正向改写、反向恢复与等价验证
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T002 必须先达到 `ACCEPTED`
@@ -224,18 +224,19 @@ conda run -n rtl_obfuscation python -m unittest \
 ## 14. Formal verification（子 Agent 完成时填写）
 
 ```text
-formal_verification: PENDING
+formal_verification: PASS
 gold: rtl_samples/01_continuous_assign.sv
 gate: /tmp/rtl_obfuscation_t003/gate.sv
 top: sample01_continuous_assign
-command: see section 8.4
-exit_code: pending
-result: pending
+command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold rtl_samples/01_continuous_assign.sv --gate /tmp/rtl_obfuscation_t003/gate.sv --top sample01_continuous_assign
+exit_code: 0
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t003/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/rtl_samples/01_continuous_assign.sv", "seq": 5, "top": "sample01_continuous_assign"}
 ```
 
 ## 15. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-13 11:37 CST：已阅读新版 `docs/tasks/README.md`、本任务合同及 `docs/formal_verification.md`；确认 T001/T002 已 `ACCEPTED`、T003 是唯一 `READY` 任务，开始按合同实现。已同步“子 Agent 不得 commit/push”以及 rewritten RTL 必须通过完整 Yosys formal 后才能申请验收的要求。
+- 2026-07-13 11:41 CST：完成正向 byte edits、version 1 mapping、效果指标、基于 gate semantic AST 新 ranges 的反向恢复，以及全部合同门禁；Yosys formal 返回 PASS。
 
 ## 16. 偏差或阻塞（子 Agent 更新）
 
@@ -243,8 +244,99 @@ result: pending
 
 ## 17. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 变更文件：
+  - `rtl_obfuscator/rewrite.py`
+  - `tests/test_variable_rewrite.py`
+  - `docs/tasks/T003_variable_rewrite_roundtrip.md`
+- 联合回归：
+
+  ```sh
+  conda run -n rtl_obfuscation python -m unittest \
+    tests.test_variable_inventory \
+    tests.test_variable_ranges \
+    tests.test_variable_rewrite
+  ```
+
+  退出码：`0`。实际输出：
+
+  ```text
+  ...
+  ----------------------------------------------------------------------
+  Ran 3 tests in 0.269s
+
+  OK
+  ```
+
+- 从不存在的 `/tmp/rtl_obfuscation_t003` 开始运行固定 encrypt 命令，目录及四个固定产物均由 CLI 创建。退出码：`0`。stdout：
+
+  ```json
+  {"files": 1, "mapping_entries": 1, "modified_tokens": 3}
+  ```
+
+- 本次随机名称为 `LHA0EKhs`。`mapping.json` 只有 `and_result` 一个 entry，declaration 为 `[202, 212)`，references 为 `[226, 236)`、`[280, 290)`；gate 中只有这三个 token 被替换。
+- `metrics.json` 实际内容：
+
+  ```json
+  {
+    "affected_lines": {
+      "changed": 3,
+      "total": 9,
+      "rate": 0.3333333333333333
+    },
+    "symbols": {
+      "renamed": 1,
+      "eligible": 1,
+      "coverage": 1.0
+    },
+    "occurrences": {
+      "renamed": 3,
+      "eligible": 3,
+      "coverage": 1.0
+    },
+    "plaintext_leakage_rate": 0.0,
+    "effective_coverage": 1.0
+  }
+  ```
+
+- 固定 decrypt 命令退出码：`0`。stdout：
+
+  ```json
+  {"files": 1, "mapping_entries": 1, "modified_tokens": 3}
+  ```
+
+- 文本与工具门禁：
+  - `cmp -s rtl_samples/01_continuous_assign.sv /tmp/rtl_obfuscation_t003/restored.sv`：退出码 `0`。
+  - 第 8.2 节 PySlang 命令：退出码 `0`，无 stdout/stderr。
+  - 第 8.3 节 Verible 命令：退出码 `0`，无 stdout/stderr。
+  - 第 8.3 节 Icarus 命令：退出码 `0`，无 stdout/stderr。
+  - 第 8.4 节 Yosys formal 命令：退出码 `0`，PASS JSON 见第 14 节。
+- `git status --short -- '*.sv'` 无输出；gold 与仓库 RTL fixtures 均未修改。
+- `git diff --check` 退出码为 `0`。子 Agent 未执行 commit 或 push。
+- 未覆盖边界：未实现多文件、其他变量样例或重命名类别、top/module/port 改名、hierarchical/member/macro 引用、preserve/YAML/批处理，也未修改 formal 脚本或预建后续任务。
 
 ## 18. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-13 主 Agent 按固定合同独立验收通过，状态设为 `ACCEPTED`。
+- 联合回归命令退出码为 `0`，共 3 个测试通过：
+
+  ```sh
+  conda run -n rtl_obfuscation python -m unittest \
+    tests.test_variable_inventory \
+    tests.test_variable_ranges \
+    tests.test_variable_rewrite
+  ```
+
+- 独立运行 encrypt/decrypt 均退出码为 `0`，stdout 均为 1 个 mapping entry、3 个 modified tokens；本次随机映射为 `and_result -> N7MOZS4q`，新名称长度为 8。
+- mapping 只有 1 个 `variables` entry；declaration 为 `[202, 212)`，references 为 `[226, 236)`、`[280, 290)`。
+- gate 与 gold 的差异严格等于三个 `and_result` token 替换；module、ports、注释、空白及其他源码字节保持不变。
+- restored 与 gold 通过 `cmp -s` 字节一致性检查。
+- 五项指标与第 7 节固定预期完全一致：代码行覆盖率 `1/3`、符号覆盖率 `1.0`、引用覆盖率 `1.0`、原名残留率 `0.0`、有效覆盖率 `1.0`。
+- PySlang、Verible 和 Icarus 固定验收命令退出码均为 `0`。
+- 主 Agent 独立重跑 Yosys formal equivalence，退出码为 `0`，结果为：
+
+  ```json
+  {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t003/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/rtl_samples/01_continuous_assign.sv", "seq": 5, "top": "sample01_continuous_assign"}
+  ```
+
+- `git status --short -- '*.sv'` 无输出，gold 和仓库 RTL fixtures 未被修改。
+- 验收边界仍严格限定为单文件、单 module、单个内部 `variables` 符号；不代表 `nets` 或后续类别已实现。
