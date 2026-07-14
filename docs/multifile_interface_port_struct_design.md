@@ -219,9 +219,9 @@ equiv_status -assert
 | T014 | 单文件 `struct_fields`、`union_fields` | owner type identity、member access |
 | T015 | 多文件基础设施，只对现有已验收 category 做跨文件回归 | Compilation、per-file edits、mapping v2、project formal |
 | T016 | 多文件非 top `modules`、child `ports` | definition-instance binding、named connection |
-| T017 | `interfaces`、`interface_instances` | interface type/instance binding |
-| T018 | `interface_ports`、`modports`、`modport_ports` | canonical member ownership |
-| T019 | 全类别组合、默认/显式 ABI category、完整项目回归 | 全部现有 pipeline |
+| T017 | `interfaces`（已验收） | interface type binding |
+| T018 | `interface_instances`、`interface_ports`、`modports`（已验收） | canonical member ownership |
+| T019 | 全类别组合、默认/显式 ABI category、完整项目回归（当前 READY） | 全部现有 pipeline |
 
 每个任务仍应保持一个最小 fixture 集和一个唯一 `READY` 合同；不能在 T015 尚未验收前实现正式的跨文件 port/interface 重命名。
 

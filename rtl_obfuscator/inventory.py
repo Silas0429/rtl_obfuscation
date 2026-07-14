@@ -40,7 +40,15 @@ _SUPPORTED_CATEGORIES = (
 _ALL_CATEGORIES = tuple(
     c
     for c in _SUPPORTED_CATEGORIES
-    if c not in ("modules", "ports", "interface_instances", "interface_ports", "modports")
+    if c
+    not in (
+        "modules",
+        "ports",
+        "interfaces",
+        "interface_instances",
+        "interface_ports",
+        "modports",
+    )
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes

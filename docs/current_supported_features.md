@@ -1,6 +1,9 @@
 # 当前支持的重命名功能与综合演示
 
 本文只描述已经通过黑盒测试和 Yosys formal 的功能，不包含计划中尚未实现的类别。
+单文件能力使用 mapping v1；多文件 project 能力使用 filelist、mapping v2 和 project-level
+formal。`interfaces`、`modules`、`ports` 以及其他 interface ABI 类别必须显式指定，
+不属于安全的 `all` 集合。
 
 ## 1. 当前支持表
 
@@ -17,10 +20,25 @@
 | `generate_blocks` | module 直属、显式命名的 generate-for block label | 综合样例 1 / 1 | 不含层次引用、嵌套/conditional generate、implicit `genblkN` |
 | `typedefs` | module 内普通 typedef 名（非 struct/union）的声明和类型引用 | 综合样例 1 / 2 | 不含 package/class typedef、forward declaration、port 类型引用、cast 表达式 |
 | `struct_types` | module 内 typedef struct/union 类型名的声明和类型引用 | T013 fixture 1 / 3 | 不含 struct_fields、union_fields、package/class scope |
+| `modules` | 多文件项目中的非 top module 定义名及已绑定 instance type 引用 | T016：1 / 2 | 只允许 project CLI；top module 必须保留 |
+| `ports` | 多文件项目中的 child port 声明、module body 引用和 named connection 左侧 | T016：2 / 6 | 只允许 project CLI；top ports 必须保留 |
+| `interfaces` | 多文件项目中的 interface 定义名、instance type 和 interface port header 引用 | T017：1 / 3 | 必须显式指定；不含 interface instance/member/modport 名 |
+| `interface_instances` | interface instance 声明和层次/member connection 中的 instance 引用 | T018：1 / 4 | 必须显式指定；不含 virtual interface、外部层次引用 |
+| `interface_ports` | interface header/body member 声明、member access、named connection 左侧和 modport port 引用 | T018：5 / 17 | 必须显式指定；`modport_ports` 不独立生成 entry |
+| `modports` | interface 中 modport 声明名 | T018：2 / 2 | 必须显式指定；当前为 declaration-only |
 
 综合样例总计 23 个 mapping entries、63 个被改写 token。名称长度由 `--name-length` 控制，当前演示使用 8，允许值必须不小于 4。
 
-正常使用时选择 `--category all`，一次解析并直接生成最终 RTL、单一混合 mapping 和全局 metrics。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
+正常使用时选择 `--category all`，一次解析并直接生成最终 RTL、单一混合 mapping 和全局 metrics。
+当前 `all` 只展开以下 13 个安全 category：
+
+```text
+signals parameters enum_values genvars functions tasks arguments instances
+generate_blocks typedefs struct_types struct_fields union_fields
+```
+
+`modules`、`ports`、`interfaces`、`interface_instances`、`interface_ports` 和 `modports`
+必须通过重复的 `--category` 显式加入。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
 
 ## 2. 演示输入
 
@@ -29,7 +47,8 @@ gold: rtl_samples/11_supported_obfuscation.sv
 top:  sample11_supported_obfuscation
 ```
 
-module 名和 ports 当前不会改名，因此 formal 的 top 保持不变。
+本单文件演示中 module 名和 ports 不会改名；多文件 project 中可以显式改写非 top module
+及 child ports，但 top module 和 top ports 始终保留，因此 formal 的 top 保持不变。
 
 ## 3. 生成最终加密 RTL
 
@@ -117,4 +136,35 @@ echo $?
 - final gate 与 gold 的功能一致性由 Yosys formal 证明。
 - mapping 中每个 entry 保留真实 category，并提供相对原始输入的双向名称关系和 source ranges。
 - metrics 直接统计原始 gold 到最终 gate 的全局效果；综合样例为 41/61 个有效代码行、23/23 个符号和 63/63 个 occurrences。
-- 当前不支持 module/port 重命名，因此不能把 top 或外部接口名称的保留视为遗漏。
+- 单文件演示不改写 module/port 是 preserve 策略；多文件 project 已支持显式的非 top
+  `modules`/child `ports` 重命名。top 和外部 ABI 的保留仍是设计边界，不应视为遗漏。
+
+## 7. 多文件 project 验收入口
+
+已通过验收的固定 project fixture：
+
+```text
+tests/fixtures/t015_multi_file       # mapping v2 / project formal 基线
+tests/fixtures/t016_module_port      # modules + ports
+tests/fixtures/t017_interface        # interfaces
+tests/fixtures/t018_interface_member # interface_instances + interface_ports + modports
+```
+
+项目级命令形式为：
+
+```sh
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
+  --filelist tests/fixtures/t018_interface_member/design.f \
+  --source-root tests/fixtures/t018_interface_member \
+  --output-dir /tmp/rtl_obfuscation_project/gate \
+  --map /tmp/rtl_obfuscation_project/mapping.json \
+  --metrics /tmp/rtl_obfuscation_project/metrics.json \
+  --top t018_top \
+  --category interface_instances \
+  --category interface_ports \
+  --category modports \
+  --name-length 8
+```
+
+随后使用 `decrypt-project` 和 `scripts/formal_equivalence.py` 完成逐文件恢复及多文件
+Yosys 等价验证。

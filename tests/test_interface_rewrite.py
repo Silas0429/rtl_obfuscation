@@ -136,6 +136,52 @@ class InterfaceRewriteCliTest(unittest.TestCase):
                 restored_bytes = (restored_dir / f).read_bytes()
                 self.assertEqual(restored_bytes, gold_bytes)
 
+    def test_interface_is_not_implicit_in_project_all(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        filelist = Path("tests/fixtures/t017_interface/design.f")
+        source_root = Path("tests/fixtures/t017_interface")
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            encrypt = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "rtl_obfuscator.rewrite",
+                    "encrypt-project",
+                    "--filelist",
+                    str(filelist),
+                    "--source-root",
+                    str(source_root),
+                    "--output-dir",
+                    str(tmp_path / "gate"),
+                    "--map",
+                    str(tmp_path / "mapping.json"),
+                    "--metrics",
+                    str(tmp_path / "metrics.json"),
+                    "--top",
+                    "t017_top",
+                    "--category",
+                    "all",
+                    "--name-length",
+                    "8",
+                ],
+                cwd=repository,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
+            self.assertEqual(
+                json.loads(encrypt.stdout),
+                {"files": 3, "mapping_entries": 1, "modified_tokens": 1},
+            )
+            mapping = json.loads((tmp_path / "mapping.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [entry["category"] for entry in mapping["entries"]],
+                ["instances"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

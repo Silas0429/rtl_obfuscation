@@ -158,30 +158,30 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T003 | `signals` 的 VariableSymbol 正向改写、恢复和文本往返（当时 CLI 名为 `variables`） | ACCEPTED |
 | T004 | 公开类别迁移为 `signals`，加入内部 NetSymbol 并保持端到端流程 | ACCEPTED |
 | T005 | 单个 module value parameter 的端到端流程 | ACCEPTED |
-| T006 | 单个 type parameter 的语义映射与类型引用 range，不改 RTL | DEFERRED |
+| T006 | 单个 type parameter 的语义映射与类型引用 range，不改 RTL | DRAFT / DEFERRED |
 | T007 | 多 entry + `reg/tri` + localparam + enum values 高复用批次 | ACCEPTED |
 | T008 | 单个 `genvar` 的展开归一化、5-token 改写与 formal | ACCEPTED |
 | T009 | `functions`、`tasks`、`arguments` 单文件批次 | ACCEPTED |
 | T010 | 当时已支持的 7 个 category 的单文件串联、整体 formal 和逆向恢复 | ACCEPTED |
 | T011 | 当时已支持的 7 个 category 的单次全量加密、单 mapping 和单次恢复 | ACCEPTED |
 | T012 | 单文件 `instances`、`generate_blocks` | ACCEPTED |
-| T013 | 单文件 `typedefs`、`struct_types`；`type_parameters` 继续由 T006 暂缓 | READY |
+| T013 | 单文件 `typedefs`、`struct_types`；`type_parameters` 继续由 T006 暂缓 | ACCEPTED |
 | T014 | 单文件 `struct_fields`、`union_fields` | ACCEPTED |
 | T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | ACCEPTED |
 | T016 | 多文件非 top `modules`、child `ports` | ACCEPTED |
-| T017 | `interfaces`（仅 interface 定义名） | READY |
-| T018 | `interface_instances`、`interface_ports`、`modports` | READY |
-| T019 | 全类别组合、默认/显式 ABI 类别和完整项目回归 | PLANNED |
+| T017 | `interfaces`（仅 interface 定义名） | ACCEPTED |
+| T018 | `interface_instances`、`interface_ports`、`modports` | ACCEPTED |
+| T019 | 全类别组合、默认/显式 ABI 类别和完整项目回归 | READY |
 
 后续阶段只有在类别共享同一 collector、source-range 机制和验证 fixture 时，才允许在
 一个任务合同中列成可独立验收的子项；否则必须拆分。上表只表示实现顺序，不授权
 一次性实现整行。
 
-恢复开发时不得直接启动 T013 实现。主 Agent 必须先为 `typedefs` 和
-`struct_types` 完成 PySlang API/Yosys 预探测，再创建唯一的 T013 任务合同并冻结
-fixtures、精确 ranges、输出计数和 formal 命令。T006 保持 `DRAFT`；Yosys 0.53
-不能读取当前 `parameter type` fixture，在没有新的可执行 formal 策略前不得把
-type parameter RTL 改写并入 T013。
+T013、T014、T015、T016、T017 和 T018 已完成并验收。T006 继续保持 `DRAFT`；
+Yosys 0.53 不能读取当前 `parameter type` fixture，在没有新的可执行 formal 策略前
+不得把 type parameter RTL 改写并入其他任务。当前唯一可启动任务为 T019；它只做
+现有类别的 project-level 组合回归、`all` 与显式 ABI category 边界验证，不新增
+重命名类别。
 
 ## 8. 黑盒验收标准
 
@@ -245,4 +245,11 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T011：[tasks/T011_one_pass_all_categories.md](tasks/T011_one_pass_all_categories.md)
 - 后续架构设计：[multifile_interface_port_struct_design.md](multifile_interface_port_struct_design.md)
 - 已验收 T012：[tasks/T012_instance_generate_block_roundtrip.md](tasks/T012_instance_generate_block_roundtrip.md)
+- 已验收 T013：[tasks/T013_typedef_struct_type_roundtrip.md](tasks/T013_typedef_struct_type_roundtrip.md)
+- 已验收 T014：[tasks/T014_struct_union_field_roundtrip.md](tasks/T014_struct_union_field_roundtrip.md)
+- 已验收 T015：[tasks/T015_multifile_infrastructure.md](tasks/T015_multifile_infrastructure.md)
+- 已验收 T016：[tasks/T016_module_port_roundtrip.md](tasks/T016_module_port_roundtrip.md)
+- 已验收 T017：[tasks/T017_interface_roundtrip.md](tasks/T017_interface_roundtrip.md)
+- 已验收 T018：[tasks/T018_interface_member_roundtrip.md](tasks/T018_interface_member_roundtrip.md)
+- 当前 T019：[tasks/T019_project_regression.md](tasks/T019_project_regression.md)
 - 当前交接入口：[project_handoff.md](project_handoff.md)
