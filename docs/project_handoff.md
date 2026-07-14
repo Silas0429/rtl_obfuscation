@@ -6,12 +6,12 @@
 ## 1. 当前暂停点
 
 - 分支：`main`。
-- 已验收能力停在 T012。
-- T001—T005、T007—T012 状态均为 `ACCEPTED`。
+- 已验收能力停在 T017。
+- T001—T005、T007—T017 状态均为 `ACCEPTED`。
 - T006 是暂缓的 `DRAFT`，不得启动。
-- T013 已达到 `READY_FOR_REVIEW`，等待主 Agent 验收。
+- 下一步为 T018（interface_instances），尚未创建任务合同。
 - 新 Agent 接手后不得直接编辑实现；先完成第 7 节的恢复检查，再由主 Agent
-  创建并冻结唯一的 T013 合同。
+  创建并冻结唯一的 T018 合同。
 
 ## 2. 不变目标
 
@@ -66,17 +66,30 @@ T013 的 `typedefs` 和 `struct_types` 支持普通 typedef 名和 typedef struc
 类型名的声明及类型引用（通过 `declaredType.typeSyntax.sourceRange` 收集）。
 不支持 struct_fields、union_fields、package/class scope、port 类型引用或 cast 表达式。
 
+T014 的 `struct_fields` 和 `union_fields` 支持 struct/union 内部字段名的声明及
+引用（通过 `structType.field` 收集）。不支持 packed struct、tagged union 或
+package/class scope。
+
+T015 建立多文件基础设施：filelist 驱动的 Compilation、per-file edits、mapping v2
+（含 `files` 和 `top` 字段）、project-level formal equivalence。
+
+T016 在多文件基础上实现 `modules` 和 `ports` 端到端改写。module 定义名、port
+声明和 port body 内引用全部收集。mapping v2 增加 `top` 字段以支持 decrypt-project
+排除 top module。
+
+T017 实现多文件 `interfaces` category：interface 定义名及其 type 引用（instance
+type 和 InterfacePort header）。`interfaces` 不加入 `all` 的展开集合。
+
 ## 5. 仍未实现的类别
 
 ```text
-modules type_parameters ports
-interfaces interface_instances interface_ports modports modport_ports
-struct_fields union_fields
+modules type_parameters
+interface_instances interface_ports modports modport_ports
 ```
 
-当前仍是单输入、单输出、mapping v1、单文件 formal。module/port/interface 的正式
-能力必须等多文件 Compilation、per-file edits、mapping v2 和 project formal 完成后
-再进入。
+多文件 Compilation、per-file edits、mapping v2 和 project formal 已在 T015 完成。
+T016 已实现 module 和 port 端到端改写。T017 已实现 interface 定义名改写。
+下一步 T018 将实现 interface_instances（interface instance 名的引用收集）。
 
 ## 6. 强制角色和 Git 流程
 
