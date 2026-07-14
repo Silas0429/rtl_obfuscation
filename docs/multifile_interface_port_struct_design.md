@@ -221,9 +221,10 @@ equiv_status -assert
 | T016 | 多文件非 top `modules`、child `ports` | definition-instance binding、named connection |
 | T017 | `interfaces`（已验收） | interface type binding |
 | T018 | `interface_instances`、`interface_ports`、`modports`（已验收） | canonical member ownership |
-| T019 | 全类别组合、默认/显式 ABI category、完整项目回归（当前 READY） | 全部现有 pipeline |
+| T019 | 全类别组合、默认/显式 ABI category、完整项目回归（已验收） | 全部现有 pipeline |
+| T020 | 四文件 FIFO gold、per-file mapping、单类别 debug 和 array source-range 修复（当前 READY） | project mapping projection、现有 collectors、project formal |
 
-每个任务仍应保持一个最小 fixture 集和一个唯一 `READY` 合同；不能在 T015 尚未验收前实现正式的跨文件 port/interface 重命名。
+每个任务仍应保持一个最小 fixture 集和一个唯一 `READY` 合同；不能在前置任务尚未验收前扩大实现范围。T020 的 FIFO gold 位于 `rtl_samples/example_fifo/`，由主 Agent 冻结，子 Agent 不得修改。
 
 `type_parameters` 继续由 T006 单独管理。当前 Yosys 0.53 frontend 无法读取
 T006 的 `parameter type` fixture，因此在 formal 策略没有更新前，T006 保持

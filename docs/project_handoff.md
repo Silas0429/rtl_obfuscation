@@ -6,13 +6,13 @@
 ## 1. 当前暂停点
 
 - 分支：`main`。
-- 已验收能力停在 T018。
-- T001—T005、T007—T018 状态均为 `ACCEPTED`。
+- 已验收能力停在 T019。
+- T001—T005、T007—T019 状态均为 `ACCEPTED`。
 - T006 是暂缓的 `DRAFT`，不得启动。
-- T019 任务合同已创建并处于 `READY`，尚未启动；当前没有 `IN_PROGRESS` 或
+- T020 任务合同已创建并处于 `READY`，尚未启动；当前没有 `IN_PROGRESS` 或
   `READY_FOR_REVIEW` 任务。
 - 新 Agent 接手后不得直接编辑实现；先完成第 7 节的恢复检查，再由主 Agent/子 Agent
-  按唯一的 T019 合同继续工作。
+  按唯一的 T020 合同继续工作。
 
 ## 2. 不变目标
 
@@ -98,7 +98,7 @@ T016 已实现非 top module 和 child port 端到端改写；T017 已实现 int
 T018 已实现 interface instance/member/modport 端到端改写。`modport_ports` 按设计归入
 `interface_ports`，不是遗漏类别。
 
-T019 将验证现有 category 的 project-level 组合、`all` 的安全集合和显式 ABI category
+T019 已验证现有 category 的 project-level 组合、`all` 的安全集合和显式 ABI category
 边界，不新增 category。当前实现的 `all` 已排除 `modules`、`ports`、`interfaces`、
 `interface_instances`、`interface_ports` 和 `modports`。
 
@@ -155,19 +155,19 @@ cmp -s rtl_samples/11_supported_obfuscation.sv \
   /tmp/rtl_obfuscation_handoff/restored.sv
 ```
 
-预期：24 tests 全部通过；encrypt/decrypt 均报告 `23/63`；三个前端检查退出码
+预期：25 tests 全部通过；encrypt/decrypt 均报告 `23/63`；三个前端检查退出码
 均为 0；formal JSON 为 `formal_equivalence=pass`；`cmp` 退出码为 0。
 
 ## 8. 当前下一任务
 
-T019 [project regression](tasks/T019_project_regression.md) 已冻结为 `READY`，只允许
-子 Agent 复核现有多文件 project pipeline：
+T020 [example FIFO/per-file mapping](tasks/T020_example_fifo_per_file_mapping.md) 已冻结为
+`READY`，只允许子 Agent 实现四文件 FIFO 样例的 per-file mapping 输出和既有 FIFO
+array source-range 边界修复。T019 已由主 Agent 独立验收：
 
-- T015 `all` 基线；
-- T016 显式 `modules`/`ports`；
-- T017 验证 `all` 不隐式改写 `interfaces`，以及显式 `interfaces`；
-- T018 同时使用 `all` 与三个显式 interface category 的组合；
-- 每个改写项目都必须完成 decrypt、前端检查和 Yosys formal。
+- 五组 project 组合回归；
+- `all` 与显式 ABI category 边界；
+- 五组 decrypt、前端检查和 Yosys formal；
+- 完整回归共 25 tests。
 
 T006 `type_parameters` 继续保持 `DRAFT`。当前 Yosys 0.53 无法解析
 `tests/fixtures/t006_type_parameter.sv` 中的 `parameter type`，不得通过跳过 formal
