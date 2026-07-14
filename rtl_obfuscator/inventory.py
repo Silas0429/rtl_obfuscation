@@ -27,6 +27,8 @@ _SUPPORTED_CATEGORIES = (
     "generate_blocks",
     "typedefs",
     "struct_types",
+    "struct_fields",
+    "union_fields",
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
@@ -402,6 +404,52 @@ def _collect_type_aliases(
     return ordered_targets, existing_identifiers
 
 
+
+
+def _collect_struct_union_fields(
+    compilation: pyslang.ast.Compilation, category: str
+) -> tuple[list[Any], set[str]]:
+    fields: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.TypeAlias:
+            definition = node.declaringDefinition
+            if definition is None:
+                return
+            if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+                return
+            resolved = node.targetType.type
+            if category == "struct_fields" and not resolved.isStruct:
+                return
+            if (
+                category == "union_fields"
+                and not resolved.isPackedUnion
+                and not resolved.isUnpackedUnion
+            ):
+                return
+            for field in resolved:
+                fields.append(field)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_fields: dict[tuple[str, int, str], Any] = {}
+    for field in fields:
+        definition = field.declaringDefinition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        key = _symbol_sort_key(field, compilation.sourceManager)
+        unique_fields.setdefault(key, field)
+
+    ordered_fields = [unique_fields[key] for key in sorted(unique_fields)]
+    return ordered_fields, existing_identifiers
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -425,6 +473,8 @@ def _collect_targets(
         return _collect_hierarchy_names(compilation, category)
     if category in ("typedefs", "struct_types"):
         return _collect_type_aliases(compilation, category)
+    if category in ("struct_fields", "union_fields"):
+        return _collect_struct_union_fields(compilation, category)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -572,6 +622,30 @@ def _type_alias_reference_tokens(
     return references
 
 
+
+
+def _struct_union_field_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        for node in semantic_nodes:
+            if type(node).__name__ != "MemberAccessExpression":
+                continue
+            member = getattr(node, "member", None)
+            if member is not target:
+                continue
+            syntax = getattr(node, "syntax", None)
+            right = getattr(syntax, "right", None)
+            source_range = getattr(right, "sourceRange", None)
+            if source_range is not None:
+                references[target].append(source_range)
+
+    return references
+
 def _add_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -590,6 +664,8 @@ def _add_ranges(
             "tasks",
             "instances",
             "generate_blocks",
+            "struct_fields",
+            "union_fields",
         )
     ]
 
@@ -627,6 +703,15 @@ def _add_ranges(
     ]
     for target, tokens in _type_alias_reference_tokens(
         type_alias_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    struct_union_field_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("struct_fields", "union_fields")
+    ]
+    for target, tokens in _struct_union_field_reference_tokens(
+        struct_union_field_targets, compilation
     ).items():
         references[target].extend(tokens)
 
@@ -768,6 +853,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "generate_blocks",
             "typedefs",
             "struct_types",
+            "struct_fields",
+            "union_fields",
         ),
     )
     parser.add_argument(

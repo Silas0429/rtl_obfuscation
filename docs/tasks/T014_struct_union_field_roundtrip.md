@@ -1,6 +1,6 @@
 # T014：单文件 struct_fields 与 union_fields 端到端重命名
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T013 已达到 `ACCEPTED`
@@ -155,7 +155,7 @@ entry 1:
 ### 5.1 struct_fields
 
 ```text
-affected_lines: changed=4, total=9, rate=0.444...
+affected_lines: changed=5, total=17, rate=0.29411764705882354
 symbols: renamed=2, eligible=2, coverage=1.0
 occurrences: renamed=6, eligible=6, coverage=1.0
 plaintext_leakage_rate: 0.0
@@ -165,7 +165,7 @@ effective_coverage: 1.0
 ### 5.2 union_fields
 
 ```text
-affected_lines: changed=3, total=9, rate=0.333...
+affected_lines: changed=4, total=16, rate=0.25
 symbols: renamed=2, eligible=2, coverage=1.0
 occurrences: renamed=4, eligible=4, coverage=1.0
 plaintext_leakage_rate: 0.0
@@ -234,7 +234,7 @@ gate: /tmp/rtl_obfuscation_t014/struct_fields/gate.sv
 top: t014_struct_field
 command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold tests/fixtures/t014_struct_field.sv --gate /tmp/rtl_obfuscation_t014/struct_fields/gate.sv --top t014_struct_field
 exit_code: 0
-result: {"formal_equivalence": "pass", "seq": 5, "top": "t014_struct_field"}
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t014/struct_fields/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t014_struct_field.sv", "seq": 5, "top": "t014_struct_field"}
 ```
 
 ```text
@@ -244,7 +244,7 @@ gate: /tmp/rtl_obfuscation_t014/union_fields/gate.sv
 top: t014_union_field
 command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold tests/fixtures/t014_union_field.sv --gate /tmp/rtl_obfuscation_t014/union_fields/gate.sv --top t014_union_field
 exit_code: 0
-result: {"formal_equivalence": "pass", "seq": 5, "top": "t014_union_field"}
+result: {"formal_equivalence": "pass", "gate": "/private/tmp/rtl_obfuscation_t014/union_fields/gate.sv", "gold": "/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t014_union_field.sv", "seq": 5, "top": "t014_union_field"}
 ```
 
 ## 9. 本任务明确不包含
@@ -278,16 +278,70 @@ docs/tasks/T014_struct_union_field_roundtrip.md
 
 ## 12. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-14 10:30 CST：已完整阅读 AGENTS.md、docs/tasks/README.md、docs/formal_verification.md 和 T014 合同；确认 T013 已 ACCEPTED、T014 是唯一 READY 任务。已用 PySlang API 探针确认：TypeAlias.targetType.type 可迭代获取 Field 符号；Field.location.offset 与合同第 4 节精确匹配；MemberAccessExpression.syntax.right.sourceRange 与合同 references 精确匹配。API 与合同第 6 节一致，无偏差。开始实现 struct_fields 和 union_fields 两个 category。
+- 2026-07-14 10:45 CST：完成实现：在 inventory.py 新增 `_collect_struct_union_fields` 和 `_struct_union_field_reference_tokens`；在 `_collect_targets`、`_SUPPORTED_CATEGORIES`、CLI choices 中注册两个 category；在 `_add_ranges` 中排除 struct_fields/union_fields 出 generic_targets 并走专用 reference 收集；在 rewrite.py 的 validator 和 CLI choices 中增加两个 category。新增两个黑盒测试。
+- 2026-07-14 10:50 CST：完成 19 项回归、四组固定 CLI、12 项前端检查和两次 Yosys formal；全部通过。发现 metrics affected_lines 偏差（见第 13 节），已在测试中使用实际值。设置为 READY_FOR_REVIEW。
 
 ## 13. 偏差或阻塞（子 Agent 更新）
 
-- 无。
+- metrics `affected_lines` 偏差：合同第 5 节预期 struct_fields `changed=4, total=9, rate=0.444...`，union_fields `changed=3, total=9, rate=0.333...`。现有 `_metrics` 函数（合同第 6 节要求复用）实际输出 struct_fields `changed=5, total=17, rate=0.29411764705882354`，union_fields `changed=4, total=16, rate=0.25`。差异原因：`_metrics` 的 `changed_lines` 统计所有包含改写 range 的行号（struct 有 5 行：6,7,14,15,17；union 有 4 行：6,7,14,16），`total` 统计所有非空非注释行（struct 17 行，union 16 行）。合同第 6 节明确要求复用现有 metrics 流水线，因此未修改 `_metrics` 函数，测试中使用实际输出值。其余所有 metrics 字段（symbols、occurrences、plaintext_leakage_rate、effective_coverage）均与合同预期一致。
 
 ## 14. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+### 变更文件
+
+- `rtl_obfuscator/inventory.py`：新增 `_collect_struct_union_fields`、`_struct_union_field_reference_tokens`；更新 `_SUPPORTED_CATEGORIES`、`_collect_targets`、`_add_ranges`、CLI choices。
+- `rtl_obfuscator/rewrite.py`：encrypt CLI choices 增加 `struct_fields`、`union_fields`。
+- `tests/test_struct_field_rewrite.py`：新增 struct_fields 端到端测试。
+- `tests/test_union_field_rewrite.py`：新增 union_fields 端到端测试。
+- `docs/tasks/T014_struct_union_field_roundtrip.md`：本任务文档。
+
+### struct_fields 验收结果
+
+- encrypt stdout: `{"files": 1, "mapping_entries": 2, "modified_tokens": 6}`
+- decrypt stdout: `{"files": 1, "mapping_entries": 2, "modified_tokens": 6}`
+- cmp restored vs gold: exit=0
+- mapping declaration/references 精确匹配合同第 4.1 节
+- PySlang errors=0
+- Verible exit=0
+- Icarus exit=0 (sorry messages are warnings)
+- Yosys formal: `{"formal_equivalence": "pass", "seq": 5, "top": "t014_struct_field"}` exit=0
+
+### union_fields 验收结果
+
+- encrypt stdout: `{"files": 1, "mapping_entries": 2, "modified_tokens": 4}`
+- decrypt stdout: `{"files": 1, "mapping_entries": 2, "modified_tokens": 4}`
+- cmp restored vs gold: exit=0
+- mapping declaration/references 精确匹配合同第 4.2 节
+- PySlang errors=0
+- Verible exit=0
+- Icarus exit=0
+- Yosys formal: `{"formal_equivalence": "pass", "seq": 5, "top": "t014_union_field"}` exit=0
+
+### 回归测试
+
+- `python -m unittest discover -s tests -v`：Ran 19 tests, OK
+
+### git diff --check
+
+- exit=0
+
+### 未覆盖边界
+
+- unpacked struct/union（只处理 packed）
+- assignment pattern key（`'{field: value}` 中的 field name）
+- `with` 表达式、`inside` 操作符、assertion 或 constraint 中的 field 引用
+- 多文件、package 作用域、class property
+
 
 ## 15. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-14 主 Agent 独立验收通过，状态设为 `ACCEPTED`。
+- 19 项回归全部通过。
+- 两组 encrypt/decrypt stdout 精确为 2/6 和 2/4。
+- mapping declaration 和 reference ranges 精确匹配第 4 节。
+- metrics affected_lines 与子 Agent 记录的偏差一致，合同第 5 节已修正为实际值；其余 metrics 字段全部一致。
+- 两组 restored 与 gold cmp 退出码 0。
+- 两组 gate 的 PySlang、Verible、Icarus 全部退出码 0。
+- 主 Agent 独立重跑两次 Yosys formal，均退出码 0、formal_equivalence=pass。
+- git diff --check 退出码 0。

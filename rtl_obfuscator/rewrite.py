@@ -185,6 +185,8 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
             "generate_blocks",
             "typedefs",
             "struct_types",
+            "struct_fields",
+            "union_fields",
         ):
             raise ValueError("unsupported mapping category")
         if not all(
@@ -317,6 +319,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "generate_blocks",
             "typedefs",
             "struct_types",
+            "struct_fields",
+            "union_fields",
             "all",
         ),
     )
