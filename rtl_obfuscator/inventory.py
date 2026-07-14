@@ -833,6 +833,227 @@ def _build_inventory(
     return {"version": 1, "name_length": name_length, "entries": entries}
 
 
+
+
+def _build_project_inventory(
+    filelist_path: Path,
+    source_root: Path,
+    name_length: int,
+    category: str,
+) -> dict[str, Any]:
+    filelist_lines = filelist_path.read_text(encoding="utf-8").strip().splitlines()
+    relative_files = [Path(line.strip()) for line in filelist_lines if line.strip()]
+
+    compilation = pyslang.ast.Compilation()
+    file_by_buffer: dict[Any, Path] = {}
+    for relative_file in relative_files:
+        absolute_file = source_root / relative_file
+        syntax_tree = pyslang.syntax.SyntaxTree.fromFile(str(absolute_file))
+        compilation.addSyntaxTree(syntax_tree)
+        file_by_buffer[syntax_tree.root.sourceRange.start.buffer] = relative_file
+
+    diagnostics = list(compilation.getAllDiagnostics())
+    if any(diagnostic.isError() for diagnostic in diagnostics):
+        raise ValueError("input contains SystemVerilog errors")
+
+    requested_categories = (
+        _SUPPORTED_CATEGORIES if category == "all" else (category,)
+    )
+    targets: list[Any] = []
+    categories: list[str] = []
+    unavailable: set[str] = set()
+    for requested_category in requested_categories:
+        category_targets, existing_identifiers = _collect_targets(
+            compilation, requested_category
+        )
+        targets.extend(category_targets)
+        categories.extend([requested_category] * len(category_targets))
+        unavailable.update(existing_identifiers)
+
+    entries = []
+    for target, target_category in zip(targets, categories, strict=True):
+        entries.append(
+            {
+                "category": target_category,
+                "scope": target.declaringDefinition.name,
+                "original_name": target.name,
+                "renamed_name": _new_name(name_length, unavailable),
+            }
+        )
+
+    _add_project_ranges(
+        entries,
+        targets,
+        categories,
+        compilation,
+        source_root,
+        file_by_buffer,
+    )
+
+    return {
+        "version": 2,
+        "name_length": name_length,
+        "files": [str(f) for f in relative_files],
+        "entries": entries,
+    }
+
+
+def _project_range_record(
+    source_root: Path,
+    source_manager: Any,
+    location: Any,
+    byte_length: int,
+    file_by_buffer: dict[Any, Path],
+) -> dict[str, Any]:
+    relative_file = file_by_buffer[location.buffer]
+    return {
+        "file": str(relative_file),
+        "start": location.offset,
+        "end": location.offset + byte_length,
+    }
+
+
+def _add_project_ranges(
+    entries: list[dict[str, Any]],
+    targets: list[Any],
+    categories: list[str],
+    compilation: pyslang.ast.Compilation,
+    source_root: Path,
+    file_by_buffer: dict[Any, Path],
+) -> None:
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    generic_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category
+        not in (
+            "genvars",
+            "functions",
+            "tasks",
+            "instances",
+            "generate_blocks",
+            "struct_fields",
+            "union_fields",
+        )
+    ]
+
+    def visitor(node: Any) -> None:
+        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+            return
+        for target in generic_targets:
+            if node.symbol is target:
+                references[target].append(node.syntax.identifier)
+                return
+
+    compilation.getRoot().visit(visitor)
+    genvar_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "genvars"
+    ]
+    for target, tokens in _genvar_reference_tokens(
+        genvar_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    subroutine_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("functions", "tasks")
+    ]
+    for target, tokens in _subroutine_reference_tokens(
+        subroutine_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    type_alias_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("typedefs", "struct_types")
+    ]
+    for target, tokens in _type_alias_reference_tokens(
+        type_alias_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    struct_union_field_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("struct_fields", "union_fields")
+    ]
+    for target, tokens in _struct_union_field_reference_tokens(
+        struct_union_field_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+
+    all_ranges: list[tuple[str, int, int]] = []
+
+    for entry, target in zip(entries, targets, strict=True):
+        declaration = _project_range_record(
+            source_root,
+            compilation.sourceManager,
+            target.location,
+            len(target.name),
+            file_by_buffer,
+        )
+        reference_records = []
+        for token in references[target]:
+            if hasattr(token, "location"):
+                reference_records.append(
+                    _project_range_record(
+                        source_root,
+                        compilation.sourceManager,
+                        token.location,
+                        len(token.rawText.encode("utf-8")),
+                        file_by_buffer,
+                    )
+                )
+            else:
+                start_loc = token.start
+                end_loc = token.end
+                relative_file = file_by_buffer[start_loc.buffer]
+                reference_records.append(
+                    {
+                        "file": str(relative_file),
+                        "start": start_loc.offset,
+                        "end": end_loc.offset,
+                    }
+                )
+
+        unique_references = {
+            (record["file"], record["start"], record["end"]): record
+            for record in reference_records
+        }
+        ordered_references = [
+            unique_references[key]
+            for key in sorted(unique_references)
+        ]
+        entry["declaration"] = declaration
+        entry["references"] = ordered_references
+
+        expected_bytes = target.name.encode("utf-8")
+        for record in [declaration, *ordered_references]:
+            rel_file = Path(record["file"])
+            abs_file = source_root / rel_file
+            source_bytes = abs_file.read_bytes()
+            start = record["start"]
+            end = record["end"]
+            if source_bytes[start:end] != expected_bytes:
+                raise ValueError("range does not contain the expected identifier")
+            all_ranges.append((record["file"], start, end))
+
+    # Check for duplicates and overlaps within the same file
+    file_groups: dict[str, list[tuple[int, int]]] = {}
+    for file_name, start, end in all_ranges:
+        file_groups.setdefault(file_name, []).append((start, end))
+    for file_name, ranges_in_file in file_groups.items():
+        sorted_in_file = sorted(ranges_in_file)
+        if len(sorted_in_file) != len(set(sorted_in_file)):
+            raise ValueError("duplicate identifier ranges")
+        if any(
+            cs < pe
+            for (_, pe), (cs, _) in zip(sorted_in_file, sorted_in_file[1:])
+        ):
+            raise ValueError("overlapping identifier ranges")
+
+
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="List random-name mappings for SystemVerilog identifiers."

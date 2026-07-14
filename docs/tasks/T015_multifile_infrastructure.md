@@ -1,6 +1,6 @@
 # T015：多文件基础设施与跨文件回归
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T014 已达到 `ACCEPTED`
@@ -257,7 +257,7 @@ gate: /tmp/rtl_obfuscation_t015/gate/design.f (child.sv, top.sv)
 top: t015_top
 command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t015_multi_file/design.f --gold-root tests/fixtures/t015_multi_file --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t015/gate --top t015_top
 exit_code: 0
-result: {"formal_equivalence": "pass", "seq": 5, "top": "t015_top"}
+result: {"formal_equivalence": "pass", "gate": "/tmp/rtl_obfuscation_t015/gate", "gold": "tests/fixtures/t015_multi_file", "seq": 5, "top": "t015_top"}
 ```
 
 ## 9. 本任务明确不包含
@@ -292,16 +292,37 @@ docs/tasks/T015_multifile_infrastructure.md
 
 ## 12. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-14 11:00 CST：已完整阅读 AGENTS.md、docs/tasks/README.md、docs/formal_verification.md 和 T015 合同；确认 T014 已 ACCEPTED、T015 是唯一 READY 任务。已用 PySlang API 探针确认多文件 Compilation 工作正常：一个 Compilation 加入多个 SyntaxTree 后，sourceManager 能正确区分不同文件的 buffer，target 的 location.buffer 可映射回相对 source-root 的路径。4 个 target 的 category/name/offset/file/scope 与合同第 4 节精确匹配。开始实现 encrypt-project、decrypt-project 和多文件 formal。
+- 2026-07-14 11:15 CST：完成实现：在 inventory.py 新增 `_build_project_inventory` 和 `_add_project_ranges`（多文件版 range 收集，range 中 file 字段使用相对 source-root 路径）；在 rewrite.py 新增 `encrypt-project`/`decrypt-project` 子命令、`_project_metrics`（全项目聚合 metrics）、`_validate_project_mapping`（mapping v2 schema 验证）、`_gate_project_ranges`（多文件 gate range 收集）；在 formal_equivalence.py 新增多文件模式（`--gold-filelist`/`--gold-root`/`--gate-filelist`/`--gate-root`），保持单文件模式不变。新增 1 个黑盒测试。
+- 2026-07-14 11:25 CST：完成 20 项回归、四组固定 CLI、前端检查和多文件 Yosys formal；全部通过。发现 mapping references 和 modified_tokens 偏差（见第 13 节）。设置为 READY_FOR_REVIEW。
 
 ## 13. 偏差或阻塞（子 Agent 更新）
 
-- 无。
+- mapping references 和 modified_tokens 偏差：合同第 4 节预期 `stored_value` references=[[163,176),[197,210)]、`temp_value` references=[[179,189)]，汇总 tokens=9。实际 PySlang 多文件 Compilation 正确识别 `stored_value` 有 2 个 references（[229,241),[275,287)）、`temp_value` 有 2 个 references（[199,209),[244,254)），汇总 tokens=10。合同中的 reference offsets 不包含正确的标识符字节（如 offset 163 是 `lue;` 而非 `stored_value`），实际输出经过 source_bytes 验证全部正确。declaration offsets 与合同精确匹配。测试中使用实际输出值。
+- encrypt-project 额外复制 filelist 到输出目录：合同第 3.3 节 formal 命令使用 `--gate-filelist design.f`，需要 gate 目录中存在 filelist。encrypt-project 将输入 filelist 复制到输出目录以支持此命令。
 
 ## 14. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 变更文件：`rtl_obfuscator/inventory.py`、`rtl_obfuscator/rewrite.py`、`scripts/formal_equivalence.py`、`tests/test_multifile_project.py`、`docs/tasks/T015_multifile_infrastructure.md`。`git diff --check` 退出码 `0`；fixtures 无 diff；未 commit、未 push。
+- 20 项回归命令：`conda run -n rtl_obfuscation python -m unittest discover -s tests -v`。退出码 `0`；实际输出：`Ran 20 tests in 3.339s`、`OK`。
+- encrypt-project stdout：`{"files": 2, "mapping_entries": 4, "modified_tokens": 10}`，退出码 `0`。
+- decrypt-project stdout：`{"files": 2, "mapping_entries": 4, "modified_tokens": 10}`，退出码 `0`。
+- 两组 `cmp -s` gold/restored 退出码均为 `0`（child.sv 和 top.sv）。
+- 实际 mapping v2：`version=2, name_length=8, files=["child.sv","top.sv"]`。4 个 entry 的 declaration 与合同第 4 节精确匹配（stored_value [131,143)、temp_value [156,166)、byte_t [111,117)、u_child [100,107)）。references 与合同不匹配（偏差见第 13 节），但全部经过 source_bytes 验证正确。
+- 实际 metrics：`symbols={renamed:4,eligible:4,coverage:1.0}, occurrences={renamed:10,eligible:10,coverage:1.0}, plaintext_leakage_rate=0.0, effective_coverage=1.0`。symbols/occurrences/leakage/effective_coverage 满足合同第 5 节硬约束（occurrences 实际为 10 而非 9，与 mapping 偏差一致）。
+- 前端检查：PySlang 多文件 Compilation（child.sv + top.sv）退出码 `0`；Verible 对 child.sv 和 top.sv 各退出码 `0`；Icarus `iverilog -g2012 -t null -s t015_top child.sv top.sv` 退出码 `0`。
+- 多文件 formal：见第 8 节，`formal_equivalence=pass`、`seq=5`。
+- 单文件 formal 回归：`scripts/formal_equivalence.py --gold tests/formal/variable_rename/gold.sv --gate tests/formal/variable_rename/gate.sv --top formal_variable_rename` 退出码 `0`，`formal_equivalence=pass`。
 
 ## 15. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-14 主 Agent 独立验收通过，状态设为 `ACCEPTED`。
+- 20 项回归全部通过。
+- encrypt-project stdout 为 4 entries / 10 tokens（合同预期 9 tokens 有误，temp_value 实际有 2 个 references）。
+- mapping v2 schema 正确，declaration offsets 精确匹配，references 经 PySlang 验证全部正确。
+- metrics 硬约束全部满足：symbols=4/4, occurrences=10/10, leakage=0.0, effective=1.0。
+- decrypt-project 后 child.sv 和 top.sv 与 gold 逐文件 cmp 退出码 0。
+- 多文件 PySlang、Verible、Icarus 全部退出码 0。
+- 主 Agent 独立重跑多文件 Yosys formal，退出码 0、formal_equivalence=pass。
+- 单文件 formal 回归正常。
+- git diff --check 退出码 0。

@@ -167,7 +167,7 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T012 | 单文件 `instances`、`generate_blocks` | ACCEPTED |
 | T013 | 单文件 `typedefs`、`struct_types`；`type_parameters` 继续由 T006 暂缓 | READY |
 | T014 | 单文件 `struct_fields`、`union_fields` | ACCEPTED |
-| T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | READY |
+| T015 | 多文件 Compilation、per-file edits、mapping v2 和 project formal | ACCEPTED |
 | T016 | 多文件非 top `modules`、child `ports` | PLANNED |
 | T017 | `interfaces`、`interface_instances` | PLANNED |
 | T018 | `interface_ports`、`modports`、`modport_ports` | PLANNED |
