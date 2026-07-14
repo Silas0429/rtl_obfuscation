@@ -32,10 +32,15 @@ _SUPPORTED_CATEGORIES = (
     "modules",
     "ports",
     "interfaces",
+    "interface_instances",
+    "interface_ports",
+    "modports",
 )
 
 _ALL_CATEGORIES = tuple(
-    c for c in _SUPPORTED_CATEGORIES if c not in ("modules", "ports")
+    c
+    for c in _SUPPORTED_CATEGORIES
+    if c not in ("modules", "ports", "interface_instances", "interface_ports", "modports")
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
@@ -567,6 +572,103 @@ def _collect_interfaces(
 
     return ordered_targets, existing_identifiers
 
+
+def _collect_interface_instances(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    """Collect interface instance names (one target per instance)."""
+    instances: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+            return
+        definition = getattr(node, "definition", None)
+        if definition is None:
+            return
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Interface:
+            return
+        instances.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_instances: dict[tuple[str, int, str], Any] = {}
+    for instance in instances:
+        key = _symbol_sort_key(instance, compilation.sourceManager)
+        unique_instances.setdefault(key, instance)
+    ordered_instances = [
+        unique_instances[key] for key in sorted(unique_instances)
+    ]
+    return ordered_instances, existing_identifiers
+
+
+def _collect_interface_ports(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    """Collect interface member variables, deduplicated by declaration."""
+    members: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+            return
+        definition = getattr(node, "definition", None)
+        if definition is None:
+            return
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Interface:
+            return
+        body = getattr(node, "body", None)
+        if body is None:
+            return
+        for child in body:
+            if getattr(child, "kind", None) != pyslang.ast.SymbolKind.Variable:
+                continue
+            declaring_definition = getattr(child, "declaringDefinition", None)
+            if declaring_definition is None:
+                continue
+            if declaring_definition.name != definition.name:
+                continue
+            members.append(child)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_members: dict[tuple[str, int, str], Any] = {}
+    for member in members:
+        key = _symbol_sort_key(member, compilation.sourceManager)
+        unique_members.setdefault(key, member)
+    ordered_members = [unique_members[key] for key in sorted(unique_members)]
+    return ordered_members, existing_identifiers
+
+
+def _collect_modports(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    """Collect modport declarations."""
+    modports: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Modport:
+            modports.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_modports: dict[tuple[str, int, str], Any] = {}
+    for modport in modports:
+        key = _symbol_sort_key(modport, compilation.sourceManager)
+        unique_modports.setdefault(key, modport)
+    ordered_modports = [unique_modports[key] for key in sorted(unique_modports)]
+    return ordered_modports, existing_identifiers
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -598,6 +700,12 @@ def _collect_targets(
         raise ValueError("ports category requires top parameter; use _collect_ports directly")
     if category == "interfaces":
         return _collect_interfaces(compilation)
+    if category == "interface_instances":
+        return _collect_interface_instances(compilation)
+    if category == "interface_ports":
+        return _collect_interface_ports(compilation)
+    if category == "modports":
+        return _collect_modports(compilation)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -793,6 +901,9 @@ def _add_ranges(
             "modules",
             "ports",
             "interfaces",
+            "interface_instances",
+            "interface_ports",
+            "modports",
         )
     ]
 
@@ -855,12 +966,17 @@ def _add_ranges(
         reference_records = []
         for token in references[target]:
             if hasattr(token, "location"):
+                raw_text = getattr(token, "rawText", None)
+                if raw_text is None:
+                    raw_text = getattr(token, "name", None)
+                if not isinstance(raw_text, str):
+                    raise ValueError("reference token has no source text")
                 reference_records.append(
                     _range_record(
                         input_file,
                         compilation.sourceManager,
                         token.location,
-                        len(token.rawText.encode("utf-8")),
+                        len(raw_text.encode("utf-8")),
                     )
                 )
             else:
@@ -1039,6 +1155,15 @@ def _build_project_inventory(
         top=top,
     )
 
+    # Project mappings are stable by declaration location, then category.
+    entries.sort(
+        key=lambda entry: (
+            entry["declaration"]["file"],
+            entry["declaration"]["start"],
+            entry["category"],
+        )
+    )
+
     return {
         "version": 2,
         "name_length": name_length,
@@ -1195,6 +1320,134 @@ def _interface_reference_tokens(
 
     return references
 
+
+def _source_range_matches_name(
+    source_manager: Any, source_range: Any, name: str
+) -> bool:
+    """Check the source bytes covered by a range without relying on syntax APIs."""
+    try:
+        source_path = Path(
+            source_manager.getFullPath(source_range.start.buffer)
+        )
+        source = source_path.read_bytes()
+        return source[source_range.start.offset : source_range.end.offset] == name.encode(
+            "utf-8"
+        )
+    except (OSError, AttributeError, TypeError):
+        return False
+
+
+def _interface_instance_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect arbitrary-symbol and hierarchical instance references."""
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+
+    for target in targets:
+        for node in semantic_nodes:
+            node_type = type(node).__name__
+            if node_type == "ArbitrarySymbolExpression":
+                symbol = getattr(node, "symbol", None)
+                if symbol is not target and not (
+                    getattr(symbol, "kind", None)
+                    == pyslang.ast.SymbolKind.Instance
+                    and getattr(symbol, "name", None) == target.name
+                ):
+                    continue
+                source_range = getattr(node, "sourceRange", None)
+                if source_range is not None:
+                    references[target].append(source_range)
+            elif node_type == "HierarchicalValueExpression":
+                syntax = getattr(node, "syntax", None)
+                if syntax is None or type(syntax).__name__ != "ScopedNameSyntax":
+                    continue
+                left = getattr(syntax, "left", None)
+                source_range = getattr(left, "sourceRange", None)
+                if source_range is None:
+                    continue
+                if _source_range_matches_name(
+                    compilation.sourceManager, source_range, target.name
+                ):
+                    references[target].append(source_range)
+
+    return references
+
+
+def _interface_port_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect member accesses and modport port references for interface members."""
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+
+    for target in targets:
+        target_definition = getattr(target, "declaringDefinition", None)
+        target_definition_name = getattr(target_definition, "name", None)
+        for node in semantic_nodes:
+            node_type = type(node).__name__
+            if node_type == "HierarchicalValueExpression":
+                symbol = getattr(node, "symbol", None)
+                if symbol is not target and not (
+                    getattr(symbol, "kind", None)
+                    == pyslang.ast.SymbolKind.Variable
+                    and getattr(symbol, "name", None) == target.name
+                    and getattr(
+                        getattr(symbol, "declaringDefinition", None),
+                        "name",
+                        None,
+                    )
+                    == target_definition_name
+                ):
+                    continue
+                syntax = getattr(node, "syntax", None)
+                right = getattr(syntax, "right", None)
+                source_range = getattr(right, "sourceRange", None)
+                if source_range is not None:
+                    references[target].append(source_range)
+            elif getattr(node, "kind", None) == pyslang.ast.SymbolKind.ModportPort:
+                internal = getattr(node, "internalSymbol", None)
+                if internal is not target and not (
+                    getattr(internal, "name", None) == target.name
+                    and getattr(
+                        getattr(internal, "declaringDefinition", None),
+                        "name",
+                        None,
+                    )
+                    == target_definition_name
+                ):
+                    continue
+                references[target].append(node)
+
+        # Named interface port connections are represented by the left-hand
+        # name token in each interface instance's HierarchicalInstanceSyntax.
+        # Bind by the instance's resolved interface definition, so a same-name
+        # port on an unrelated interface is never collected.
+        for node in semantic_nodes:
+            if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+                continue
+            definition = getattr(node, "definition", None)
+            if definition is None or definition.definitionKind != pyslang.ast.DefinitionKind.Interface:
+                continue
+            if getattr(definition, "name", None) != target_definition_name:
+                continue
+            syntax = getattr(node, "syntax", None)
+            connections = getattr(syntax, "connections", None)
+            if connections is None:
+                continue
+            for connection in connections:
+                if type(connection).__name__ != "NamedPortConnectionSyntax":
+                    continue
+                name_token = getattr(connection, "name", None)
+                if name_token is None:
+                    continue
+                if getattr(name_token, "rawText", None) == target.name:
+                    references[target].append(name_token)
+
+    return references
+
 def _add_project_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -1220,6 +1473,9 @@ def _add_project_ranges(
             "modules",
             "ports",
             "interfaces",
+            "interface_instances",
+            "interface_ports",
+            "modports",
         )
     ]
 
@@ -1290,6 +1546,24 @@ def _add_project_ranges(
         interface_targets, compilation
     ).items():
         references[target].extend(tokens)
+    interface_instance_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "interface_instances"
+    ]
+    for target, tokens in _interface_instance_reference_tokens(
+        interface_instance_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    interface_port_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "interface_ports"
+    ]
+    for target, tokens in _interface_port_reference_tokens(
+        interface_port_targets, compilation
+    ).items():
+        references[target].extend(tokens)
 
     all_ranges: list[tuple[str, int, int]] = []
 
@@ -1304,12 +1578,17 @@ def _add_project_ranges(
         reference_records = []
         for token in references[target]:
             if hasattr(token, "location"):
+                raw_text = getattr(token, "rawText", None)
+                if raw_text is None:
+                    raw_text = getattr(token, "name", None)
+                if not isinstance(raw_text, str):
+                    raise ValueError("reference token has no source text")
                 reference_records.append(
                     _project_range_record(
                         source_root,
                         compilation.sourceManager,
                         token.location,
-                        len(token.rawText.encode("utf-8")),
+                        len(raw_text.encode("utf-8")),
                         file_by_buffer,
                     )
                 )

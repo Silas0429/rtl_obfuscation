@@ -670,6 +670,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "modules",
             "ports",
             "interfaces",
+            "interface_instances",
+            "interface_ports",
+            "modports",
             "all",
         ),
     )
