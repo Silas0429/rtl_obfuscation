@@ -31,6 +31,7 @@ _SUPPORTED_CATEGORIES = (
     "union_fields",
     "modules",
     "ports",
+    "interfaces",
 )
 
 _ALL_CATEGORIES = tuple(
@@ -528,6 +529,44 @@ def _collect_ports(
     ordered_ports = [unique_ports[key] for key in sorted(unique_ports)]
     return ordered_ports, existing_identifiers
 
+
+
+def _collect_interfaces(
+    compilation: pyslang.ast.Compilation,
+) -> tuple[list[Any], set[str]]:
+    instances: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Instance:
+            definition = node.definition
+            if definition is None:
+                return
+            if definition.definitionKind != pyslang.ast.DefinitionKind.Interface:
+                return
+            instances.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    # Group instances by their definition to deduplicate
+    definition_to_instances: dict[Any, list[Any]] = {}
+    for instance in instances:
+        definition = instance.definition
+        definition_to_instances.setdefault(definition, []).append(instance)
+
+    ordered_targets: list[Any] = []
+    for definition in sorted(
+        definition_to_instances,
+        key=lambda d: _symbol_sort_key(d, compilation.sourceManager),
+    ):
+        ordered_targets.append(definition)
+
+    return ordered_targets, existing_identifiers
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -557,6 +596,8 @@ def _collect_targets(
         raise ValueError("modules category requires top parameter; use _collect_modules directly")
     if category == "ports":
         raise ValueError("ports category requires top parameter; use _collect_ports directly")
+    if category == "interfaces":
+        return _collect_interfaces(compilation)
     raise ValueError(f"unsupported category: {category}")
 
 
@@ -751,6 +792,7 @@ def _add_ranges(
             "union_fields",
             "modules",
             "ports",
+            "interfaces",
         )
     ]
 
@@ -960,6 +1002,10 @@ def _build_project_inventory(
             category_targets, existing_identifiers = _collect_ports(
                 compilation, top
             )
+        elif requested_category == "interfaces":
+            category_targets, existing_identifiers = _collect_interfaces(
+                compilation
+            )
         else:
             category_targets, existing_identifiers = _collect_targets(
                 compilation, requested_category
@@ -970,7 +1016,7 @@ def _build_project_inventory(
 
     entries = []
     for target, target_category in zip(targets, target_categories, strict=True):
-        if target_category == "modules":
+        if target_category in ("modules", "interfaces"):
             scope = target.name
         else:
             scope = target.declaringDefinition.name
@@ -1104,6 +1150,51 @@ def _module_port_reference_tokens(
 
     return references
 
+
+
+def _interface_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        # Instance type references
+        for node in semantic_nodes:
+            if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+                continue
+            if node.definition is not target:
+                continue
+            syntax = getattr(node, "syntax", None)
+            if syntax is None:
+                continue
+            parent = getattr(syntax, "parent", None)
+            if parent is None:
+                continue
+            type_token = getattr(parent, "type", None)
+            if type_token is not None:
+                references[target].append(type_token)
+
+        # InterfacePort header references
+        for node in semantic_nodes:
+            if getattr(node, "kind", None) != pyslang.ast.SymbolKind.InterfacePort:
+                continue
+            syntax = getattr(node, "syntax", None)
+            if syntax is None:
+                continue
+            parent = getattr(syntax, "parent", None)
+            if parent is None:
+                continue
+            header = getattr(parent, "header", None)
+            if header is None:
+                continue
+            source_range = getattr(header, "sourceRange", None)
+            if source_range is not None:
+                references[target].append(source_range)
+
+    return references
+
 def _add_project_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -1128,6 +1219,7 @@ def _add_project_ranges(
             "union_fields",
             "modules",
             "ports",
+            "interfaces",
         )
     ]
 
@@ -1189,6 +1281,15 @@ def _add_project_ranges(
             top,
         ).items():
             references[target].extend(tokens)
+    interface_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "interfaces"
+    ]
+    for target, tokens in _interface_reference_tokens(
+        interface_targets, compilation
+    ).items():
+        references[target].extend(tokens)
 
     all_ranges: list[tuple[str, int, int]] = []
 

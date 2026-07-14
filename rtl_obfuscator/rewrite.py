@@ -525,10 +525,12 @@ def _gate_project_ranges(
                 targets, _ = inventory._collect_modules(compilation, top)
             elif cat == "ports":
                 targets, _ = inventory._collect_ports(compilation, top)
+            elif cat == "interfaces":
+                targets, _ = inventory._collect_interfaces(compilation)
             else:
                 targets, _ = inventory._collect_targets(compilation, cat)
             targets_by_category[cat] = targets
-        if cat == "modules":
+        if cat in ("modules", "interfaces"):
             entry_matches = [
                 target
                 for target in targets
@@ -667,6 +669,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "union_fields",
             "modules",
             "ports",
+            "interfaces",
             "all",
         ),
     )

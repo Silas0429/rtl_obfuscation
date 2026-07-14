@@ -1,6 +1,6 @@
 # T017：多文件 interface 定义名端到端重命名
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T016 已达到 `ACCEPTED`
@@ -161,7 +161,7 @@ gate: /tmp/rtl_obfuscation_t017/gate/design.f (bus_if.sv, child.sv, top.sv)
 top: t017_top
 command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t017_interface/design.f --gold-root tests/fixtures/t017_interface --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t017/gate --top t017_top
 exit_code: 0
-result: {"formal_equivalence": "pass", "seq": 5, "top": "t017_top"}
+result: {"formal_equivalence": "pass", "gate": "/tmp/rtl_obfuscation_t017/gate", "gold": "tests/fixtures/t017_interface", "seq": 5, "top": "t017_top"}
 ```
 
 ## 9. 本任务明确不包含
@@ -194,7 +194,9 @@ docs/tasks/T017_interface_roundtrip.md
 
 ## 12. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-14 13:00 CST：已完整阅读 AGENTS.md、docs/tasks/README.md、docs/formal_verification.md 和 T017 合同；确认 T016 已 ACCEPTED、T017 是唯一 READY 任务。已用 PySlang API 探针确认：Instance.definition 返回 interface definition（DefinitionKind.Interface），definition.location.offset=10 与合同匹配；instance.syntax.parent.type 的 location.offset=138 与合同匹配；InterfacePort 的 syntax.parent.header.sourceRange [24,35) 与合同匹配。API 与合同第 6 节一致，无偏差。开始实现 interfaces category。
+- 2026-07-14 13:15 CST：完成实现：在 inventory.py 新增 `_collect_interfaces`（收集 DefinitionKind.Interface 的 definition，通过 instance.syntax.parent.type 收集 instance type 引用，通过 InterfacePort.syntax.parent.header.sourceRange 收集 interface port header 引用）和 `_interface_reference_tokens`；在 `_collect_targets`、`_SUPPORTED_CATEGORIES`、`_build_project_inventory`、`_add_project_ranges` 中注册 interfaces；在 rewrite.py 的 encrypt-project choices 和 _gate_project_ranges 中增加 interfaces。新增 1 个黑盒测试。
+- 2026-07-14 13:25 CST：完成 22 项回归、四组固定 CLI、前端检查和多文件 Yosys formal；全部通过。无偏差。设置为 READY_FOR_REVIEW。
 
 ## 13. 偏差或阻塞（子 Agent 更新）
 
@@ -202,8 +204,26 @@ docs/tasks/T017_interface_roundtrip.md
 
 ## 14. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 变更文件：`rtl_obfuscator/inventory.py`、`rtl_obfuscator/rewrite.py`、`tests/test_interface_rewrite.py`、`docs/tasks/T017_interface_roundtrip.md`。`git diff --check` 退出码 `0`；fixtures 无 diff；未 commit、未 push。
+- 22 项回归命令：`conda run -n rtl_obfuscation python -m unittest discover -s tests -v`。退出码 `0`；实际输出：`Ran 22 tests in 3.740s`、`OK`。
+- encrypt-project stdout：`{"files": 3, "mapping_entries": 1, "modified_tokens": 3}`，退出码 `0`。
+- decrypt-project stdout：`{"files": 3, "mapping_entries": 1, "modified_tokens": 3}`，退出码 `0`。
+- 三组 `cmp -s` gold/restored 退出码均为 `0`（bus_if.sv、child.sv、top.sv）。
+- 实际 mapping v2：`version=2, name_length=8, files=["bus_if.sv","child.sv","top.sv"], top="t017_top"`。1 个 entry 的 declaration 和 references 与合同第 4 节精确匹配（t017_bus_if declaration=[10,21)、references=[[24,35),[138,149)]）。
+- 实际 metrics：`symbols={renamed:1,eligible:1,coverage:1.0}, occurrences={renamed:3,eligible:3,coverage:1.0}, plaintext_leakage_rate=0.0, effective_coverage=1.0`。全部满足合同第 5 节硬约束。
+- 前端检查：PySlang 多文件 Compilation 退出码 `0`；Verible 对 bus_if.sv、child.sv、top.sv 各退出码 `0`。
+- 多文件 formal：见第 8 节，`formal_equivalence=pass`、`seq=5`。
 
 ## 15. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-14 CST：主 Agent 独立重跑全部验收命令，全部通过。
+- encrypt-project stdout：`{"files": 3, "mapping_entries": 1, "modified_tokens": 3}`，精确匹配合同第 7 节。
+- mapping v2：1 个 entry，declaration [10,21)、references [[24,35),[138,149)]，精确匹配合同第 4 节。
+- metrics：symbols coverage=1.0、occurrences coverage=1.0、plaintext_leakage_rate=0.0、effective_coverage=1.0，全部满足合同第 5 节硬约束。affected_lines: changed=3, total=30。
+- decrypt-project：三个文件 cmp -s 退出码均为 0。
+- PySlang 多文件 Compilation：no errors。
+- Verible：三个 gate 文件退出码均为 0。
+- 多文件 Yosys formal：`{"formal_equivalence": "pass", "seq": 5, "top": "t017_top"}`，退出码 0。
+- 22 项 unittest 全部通过。
+- git diff --check 退出码 0。
+- 无偏差。验收通过。
