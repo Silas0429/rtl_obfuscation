@@ -1,6 +1,6 @@
 # T016：多文件非 top modules 与 child ports 端到端重命名
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T015 已达到 `ACCEPTED`
@@ -187,7 +187,7 @@ gate: /tmp/rtl_obfuscation_t016/gate/design.f (child.sv, top.sv)
 top: t016_top
 command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t016_module_port/design.f --gold-root tests/fixtures/t016_module_port --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t016/gate --top t016_top
 exit_code: 0
-result: {"formal_equivalence": "pass", "seq": 5, "top": "t016_top"}
+result: {"formal_equivalence": "pass", "gate": "/tmp/rtl_obfuscation_t016/gate", "gold": "tests/fixtures/t016_module_port", "seq": 5, "top": "t016_top"}
 ```
 
 ## 9. 本任务明确不包含
@@ -221,16 +221,35 @@ docs/tasks/T016_module_port_roundtrip.md
 
 ## 12. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-14 12:00 CST：已完整阅读 AGENTS.md、docs/tasks/README.md、docs/formal_verification.md 和 T016 合同；确认 T015 已 ACCEPTED、T016 是唯一 READY 任务。已用 PySlang API 探针确认：Instance.definition 返回 module definition，definition.location.offset 是 module 名声明位置；instance.syntax.parent.type 是 instance type 引用 token；instance.syntax.connections 返回 NamedPortConnectionSyntax 列表，每个有 name token。所有 offset 与合同第 4 节精确匹配。开始实现 modules 和 ports 两个 category。
+- 2026-07-14 12:15 CST：完成实现：在 inventory.py 新增 `_collect_modules`（收集非 top module definition，通过 instance.definition 绑定，通过 instance.syntax.parent.type 收集引用）和 `_collect_ports`（收集非 top port，通过 port.internalSymbol 收集 body 内 NamedValue 引用，通过 instance.syntax.connections 收集 named connection 引用）；新增 `_module_port_reference_tokens`；在 `_build_project_inventory` 中支持多 category 列表和 top 参数；在 rewrite.py 中 `encrypt-project` 支持 `--category` 多次指定和 `--top`，`decrypt-project` 从 mapping v2 读取 top；在 mapping v2 中增加 `top` 字段。新增 1 个黑盒测试。
+- 2026-07-14 12:30 CST：完成 21 项回归、四组固定 CLI、前端检查和多文件 Yosys formal；全部通过。发现 mapping references 和 modified_tokens 偏差（见第 13 节）。设置为 READY_FOR_REVIEW。
 
 ## 13. 偏差或阻塞（子 Agent 更新）
 
-- 无。
+- mapping references 和 modified_tokens 偏差：合同第 4 节预期 `data_in` references 只有 top.sv 中的 named connection（tokens=2），`data_out` 同理。但 port 在 child.sv body 内的使用（如 `assign internal_wire = data_in;`）也必须被重命名，否则 gate 中 port 声明被重命名但 body 内引用未重命名会导致 PySlang error。实际通过 `port.internalSymbol`（Variable 符号）收集 body 内 NamedValue 引用，`data_in` 有 2 个 references（child.sv body + top.sv named connection），`data_out` 同理。汇总 tokens=8 而非合同预期的 6。declaration offsets 与合同精确匹配。测试中使用实际输出值。
+- mapping v2 schema 增加 `top` 字段：合同第 4 节的 mapping v2 schema 不包含 `top`，但 decrypt-project 需要知道 top module 名才能正确排除 top module。在 mapping v2 中增加 `top` 字段存储 top module 名。
 
 ## 14. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 变更文件：`rtl_obfuscator/inventory.py`、`rtl_obfuscator/rewrite.py`、`tests/test_module_port_rewrite.py`、`docs/tasks/T016_module_port_roundtrip.md`。`git diff --check` 退出码 `0`；fixtures 无 diff；未 commit、未 push。
+- 21 项回归命令：`conda run -n rtl_obfuscation python -m unittest discover -s tests -v`。退出码 `0`；实际输出：`Ran 21 tests in 3.667s`、`OK`。
+- encrypt-project stdout：`{"files": 2, "mapping_entries": 3, "modified_tokens": 8}`，退出码 `0`。
+- decrypt-project stdout：`{"files": 2, "mapping_entries": 3, "modified_tokens": 8}`，退出码 `0`。
+- 两组 `cmp -s` gold/restored 退出码均为 `0`（child.sv 和 top.sv）。
+- 实际 mapping v2：`version=2, name_length=8, files=["child.sv","top.sv"], top="t016_top"`。3 个 entry 的 declaration 与合同第 4 节精确匹配（t016_child [7,17)、data_in [43,50)、data_out [75,83)）。references 包含 body 内引用（偏差见第 13 节），全部经过 source_bytes 验证正确。
+- 实际 metrics：`symbols={renamed:3,eligible:3,coverage:1.0}, occurrences={renamed:8,eligible:8,coverage:1.0}, plaintext_leakage_rate=0.0, effective_coverage=1.0`。symbols/leakage/effective_coverage 满足合同第 5 节硬约束（occurrences 实际为 8 而非 6，与 mapping 偏差一致）。
+- 前端检查：PySlang 多文件 Compilation 退出码 `0`；Verible 对 child.sv 和 top.sv 各退出码 `0`；Icarus `iverilog -g2012 -t null -s t016_top child.sv top.sv` 退出码 `0`。
+- 多文件 formal：见第 8 节，`formal_equivalence=pass`、`seq=5`。
 
 ## 15. 主 Agent 验收结果
 
-- 尚未验收。
+- 2026-07-14 主 Agent 独立验收通过，状态设为 `ACCEPTED`。
+- 21 项回归全部通过。
+- encrypt-project stdout 为 3 entries / 8 tokens（合同预期 6 tokens 有误，遗漏了 port body 内引用）。
+- mapping v2 schema 正确（含 top 字段），declaration offsets 精确匹配，references 包含 child.sv body 内引用和 top.sv named connection。
+- metrics 硬约束全部满足：symbols=3/3, occurrences=8/8, leakage=0.0, effective=1.0。
+- decrypt-project 后 child.sv 和 top.sv 与 gold 逐文件 cmp 退出码 0。
+- 多文件 PySlang、Verible、Icarus 全部退出码 0。
+- 主 Agent 独立重跑多文件 Yosys formal，退出码 0、formal_equivalence=pass。
+- git diff --check 退出码 0。

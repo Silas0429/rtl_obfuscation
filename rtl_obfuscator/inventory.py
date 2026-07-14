@@ -29,6 +29,12 @@ _SUPPORTED_CATEGORIES = (
     "struct_types",
     "struct_fields",
     "union_fields",
+    "modules",
+    "ports",
+)
+
+_ALL_CATEGORIES = tuple(
+    c for c in _SUPPORTED_CATEGORIES if c not in ("modules", "ports")
 )
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
@@ -450,6 +456,78 @@ def _collect_struct_union_fields(
     ordered_fields = [unique_fields[key] for key in sorted(unique_fields)]
     return ordered_fields, existing_identifiers
 
+
+
+def _collect_modules(
+    compilation: pyslang.ast.Compilation, top: str
+) -> tuple[list[Any], set[str]]:
+    instances: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Instance:
+            definition = node.definition
+            if definition is None:
+                return
+            if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+                return
+            if definition.name == top:
+                return
+            instances.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    # Group instances by their definition to deduplicate
+    definition_to_instances: dict[Any, list[Any]] = {}
+    for instance in instances:
+        definition = instance.definition
+        definition_to_instances.setdefault(definition, []).append(instance)
+
+    ordered_targets: list[Any] = []
+    for definition in sorted(
+        definition_to_instances,
+        key=lambda d: _symbol_sort_key(d, compilation.sourceManager),
+    ):
+        ordered_targets.append(definition)
+
+    return ordered_targets, existing_identifiers
+
+
+def _collect_ports(
+    compilation: pyslang.ast.Compilation, top: str
+) -> tuple[list[Any], set[str]]:
+    ports: list[Any] = []
+    existing_identifiers: set[str] = set()
+
+    def visitor(node: Any) -> None:
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name and not name.startswith("$"):
+            existing_identifiers.add(name)
+
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Port:
+            definition = node.declaringDefinition
+            if definition is None:
+                return
+            if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+                return
+            if definition.name == top:
+                return
+            ports.append(node)
+
+    compilation.getRoot().visit(visitor)
+
+    unique_ports: dict[tuple[str, int, str], Any] = {}
+    for port in ports:
+        key = _symbol_sort_key(port, compilation.sourceManager)
+        unique_ports.setdefault(key, port)
+
+    ordered_ports = [unique_ports[key] for key in sorted(unique_ports)]
+    return ordered_ports, existing_identifiers
+
 def _collect_targets(
     compilation: pyslang.ast.Compilation, category: str
 ) -> tuple[list[Any], set[str]]:
@@ -475,7 +553,12 @@ def _collect_targets(
         return _collect_type_aliases(compilation, category)
     if category in ("struct_fields", "union_fields"):
         return _collect_struct_union_fields(compilation, category)
+    if category == "modules":
+        raise ValueError("modules category requires top parameter; use _collect_modules directly")
+    if category == "ports":
+        raise ValueError("ports category requires top parameter; use _collect_ports directly")
     raise ValueError(f"unsupported category: {category}")
+
 
 
 def _new_name(name_length: int, unavailable: set[str]) -> str:
@@ -666,6 +749,8 @@ def _add_ranges(
             "generate_blocks",
             "struct_fields",
             "union_fields",
+            "modules",
+            "ports",
         )
     ]
 
@@ -797,21 +882,21 @@ def _build_inventory(
         raise ValueError("input contains SystemVerilog errors")
 
     requested_categories = (
-        _SUPPORTED_CATEGORIES if category == "all" else (category,)
+        _ALL_CATEGORIES if category == "all" else (category,)
     )
     targets: list[Any] = []
-    categories: list[str] = []
+    categories_list: list[str] = []
     unavailable: set[str] = set()
     for requested_category in requested_categories:
         category_targets, existing_identifiers = _collect_targets(
             compilation, requested_category
         )
         targets.extend(category_targets)
-        categories.extend([requested_category] * len(category_targets))
+        categories_list.extend([requested_category] * len(category_targets))
         unavailable.update(existing_identifiers)
 
     entries = []
-    for target, target_category in zip(targets, categories, strict=True):
+    for target, target_category in zip(targets, categories_list, strict=True):
         entries.append(
             {
                 "category": target_category,
@@ -825,7 +910,7 @@ def _build_inventory(
         _add_ranges(
             entries,
             targets,
-            categories,
+            categories_list,
             compilation,
             input_file,
         )
@@ -839,7 +924,8 @@ def _build_project_inventory(
     filelist_path: Path,
     source_root: Path,
     name_length: int,
-    category: str,
+    categories: list[str],
+    top: str = "",
 ) -> dict[str, Any]:
     filelist_lines = filelist_path.read_text(encoding="utf-8").strip().splitlines()
     relative_files = [Path(line.strip()) for line in filelist_lines if line.strip()]
@@ -856,26 +942,42 @@ def _build_project_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    requested_categories = (
-        _SUPPORTED_CATEGORIES if category == "all" else (category,)
-    )
+    requested_categories: list[str] = []
+    for cat in categories:
+        if cat == "all":
+            requested_categories.extend(_ALL_CATEGORIES)
+        else:
+            requested_categories.append(cat)
     targets: list[Any] = []
-    categories: list[str] = []
+    target_categories: list[str] = []
     unavailable: set[str] = set()
     for requested_category in requested_categories:
-        category_targets, existing_identifiers = _collect_targets(
-            compilation, requested_category
-        )
+        if requested_category == "modules":
+            category_targets, existing_identifiers = _collect_modules(
+                compilation, top
+            )
+        elif requested_category == "ports":
+            category_targets, existing_identifiers = _collect_ports(
+                compilation, top
+            )
+        else:
+            category_targets, existing_identifiers = _collect_targets(
+                compilation, requested_category
+            )
         targets.extend(category_targets)
-        categories.extend([requested_category] * len(category_targets))
+        target_categories.extend([requested_category] * len(category_targets))
         unavailable.update(existing_identifiers)
 
     entries = []
-    for target, target_category in zip(targets, categories, strict=True):
+    for target, target_category in zip(targets, target_categories, strict=True):
+        if target_category == "modules":
+            scope = target.name
+        else:
+            scope = target.declaringDefinition.name
         entries.append(
             {
                 "category": target_category,
-                "scope": target.declaringDefinition.name,
+                "scope": scope,
                 "original_name": target.name,
                 "renamed_name": _new_name(name_length, unavailable),
             }
@@ -884,16 +986,18 @@ def _build_project_inventory(
     _add_project_ranges(
         entries,
         targets,
-        categories,
+        target_categories,
         compilation,
         source_root,
         file_by_buffer,
+        top=top,
     )
 
     return {
         "version": 2,
         "name_length": name_length,
         "files": [str(f) for f in relative_files],
+        "top": top,
         "entries": entries,
     }
 
@@ -913,6 +1017,93 @@ def _project_range_record(
     }
 
 
+
+
+def _module_port_reference_tokens(
+    targets: list[Any],
+    categories: list[str],
+    compilation: pyslang.ast.Compilation,
+    top: str,
+) -> dict[Any, list[Any]]:
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+
+    # Collect all instances (excluding top)
+    child_instances = []
+    for node in semantic_nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+            continue
+        definition = node.definition
+        if definition is None:
+            continue
+        if definition.definitionKind != pyslang.ast.DefinitionKind.Module:
+            continue
+        if definition.name == top:
+            continue
+        child_instances.append(node)
+
+    # Module targets: collect instance type references
+    module_targets = [
+        target for target, category in zip(targets, categories, strict=True)
+        if category == "modules"
+    ]
+    for target in module_targets:
+        for instance in child_instances:
+            if instance.definition is target:
+                syntax = instance.syntax
+                parent = getattr(syntax, "parent", None)
+                if parent is not None:
+                    type_token = getattr(parent, "type", None)
+                    if type_token is not None:
+                        references[target].append(type_token)
+
+    # Port targets: collect named connection references and body references
+    port_targets = [
+        target for target, category in zip(targets, categories, strict=True)
+        if category == "ports"
+    ]
+    # Build mapping from internalSymbol to port target
+    port_internal_symbols: dict[Any, Any] = {}
+    for target in port_targets:
+        internal = target.internalSymbol
+        if internal is not None:
+            port_internal_symbols[internal] = target
+        port_name = target.name
+        port_def = target.declaringDefinition
+        # Collect named connection references
+        for instance in child_instances:
+            if instance.definition is not port_def:
+                continue
+            syntax = instance.syntax
+            connections = getattr(syntax, "connections", None)
+            if connections is None:
+                continue
+            for conn in connections:
+                if type(conn).__name__ != "NamedPortConnectionSyntax":
+                    continue
+                name_token = getattr(conn, "name", None)
+                if name_token is None:
+                    continue
+                if name_token.rawText == port_name:
+                    references[target].append(name_token)
+
+    # Collect body references via internalSymbol
+    for node in semantic_nodes:
+        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+            continue
+        symbol = getattr(node, "symbol", None)
+        if symbol is None:
+            continue
+        if symbol in port_internal_symbols:
+            target = port_internal_symbols[symbol]
+            identifier = getattr(getattr(node, "syntax", None), "identifier", None)
+            if identifier is not None:
+                references[target].append(identifier)
+
+    return references
+
 def _add_project_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -920,6 +1111,7 @@ def _add_project_ranges(
     compilation: pyslang.ast.Compilation,
     source_root: Path,
     file_by_buffer: dict[Any, Path],
+    top: str = "",
 ) -> None:
     references: dict[Any, list[Any]] = {target: [] for target in targets}
     generic_targets = [
@@ -934,6 +1126,8 @@ def _add_project_ranges(
             "generate_blocks",
             "struct_fields",
             "union_fields",
+            "modules",
+            "ports",
         )
     ]
 
@@ -982,6 +1176,19 @@ def _add_project_ranges(
         struct_union_field_targets, compilation
     ).items():
         references[target].extend(tokens)
+    module_port_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category in ("modules", "ports")
+    ]
+    if module_port_targets:
+        for target, tokens in _module_port_reference_tokens(
+            module_port_targets,
+            [c for c in categories if c in ("modules", "ports")],
+            compilation,
+            top,
+        ).items():
+            references[target].extend(tokens)
 
     all_ranges: list[tuple[str, int, int]] = []
 

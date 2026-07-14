@@ -363,6 +363,7 @@ def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
         args.source_root,
         args.name_length,
         args.category,
+        args.top,
     )
     entries = mapping["entries"]
     relative_files = mapping["files"]
@@ -405,6 +406,7 @@ def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, A
         "name_length",
         "entries",
         "files",
+        "top",
     }:
         raise ValueError("invalid project mapping schema")
     if (
@@ -416,6 +418,8 @@ def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, A
         or mapping["name_length"] < 4
     ):
         raise ValueError("unsupported project mapping version or name length")
+    if not isinstance(mapping["top"], str):
+        raise ValueError("invalid top in project mapping")
     files = mapping["files"]
     if not isinstance(files, list) or not files:
         raise ValueError("project mapping must contain at least one file")
@@ -439,7 +443,9 @@ def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, A
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != required_entry_fields:
             raise ValueError("invalid project mapping entry schema")
-        if entry["category"] not in inventory._SUPPORTED_CATEGORIES:
+        if entry["category"] not in (
+            *inventory._SUPPORTED_CATEGORIES,
+        ):
             raise ValueError("unsupported mapping category")
         if not all(
             isinstance(entry[field], str)
@@ -483,13 +489,14 @@ def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, A
                 or record["start"] >= record["end"]
             ):
                 raise ValueError("invalid mapping range")
-    return files, entries
+    return files, entries, mapping["top"]
 
 
 def _gate_project_ranges(
     gate_dir: Path,
     files: list[str],
     entries: list[dict[str, Any]],
+    top: str = "",
 ) -> list[list[dict[str, Any]]]:
     compilation = pyslang.ast.Compilation()
     file_by_buffer: dict[Any, str] = {}
@@ -502,19 +509,47 @@ def _gate_project_ranges(
     if any(diagnostic.isError() for diagnostic in compilation.getAllDiagnostics()):
         raise ValueError("gate contains SystemVerilog errors")
 
+    # Build module original->renamed name mapping from entries
+    module_name_map: dict[str, str] = {}
+    for entry in entries:
+        if entry["category"] == "modules":
+            module_name_map[entry["scope"]] = entry["renamed_name"]
+
     targets_by_category: dict[str, list[Any]] = {}
     matches = []
     for entry in entries:
-        targets = targets_by_category.get(entry["category"])
+        cat = entry["category"]
+        targets = targets_by_category.get(cat)
         if targets is None:
-            targets, _ = inventory._collect_targets(compilation, entry["category"])
-            targets_by_category[entry["category"]] = targets
-        entry_matches = [
-            target
-            for target in targets
-            if target.name == entry["renamed_name"]
-            and target.declaringDefinition.name == entry["scope"]
-        ]
+            if cat == "modules":
+                targets, _ = inventory._collect_modules(compilation, top)
+            elif cat == "ports":
+                targets, _ = inventory._collect_ports(compilation, top)
+            else:
+                targets, _ = inventory._collect_targets(compilation, cat)
+            targets_by_category[cat] = targets
+        if cat == "modules":
+            entry_matches = [
+                target
+                for target in targets
+                if target.name == entry["renamed_name"]
+            ]
+        elif cat == "ports":
+            # In gate, port's declaringDefinition.name is the renamed module name
+            expected_scope = module_name_map.get(entry["scope"], entry["scope"])
+            entry_matches = [
+                target
+                for target in targets
+                if target.name == entry["renamed_name"]
+                and target.declaringDefinition.name == expected_scope
+            ]
+        else:
+            entry_matches = [
+                target
+                for target in targets
+                if target.name == entry["renamed_name"]
+                and target.declaringDefinition.name == entry["scope"]
+            ]
         if len(entry_matches) != 1:
             raise ValueError("mapped target was not found uniquely in gate RTL")
         matches.append(entry_matches[0])
@@ -527,6 +562,7 @@ def _gate_project_ranges(
         compilation,
         gate_dir,
         file_by_buffer,
+        top=top,
     )
     all_ranges = [_entry_ranges(range_entry) for range_entry in range_entries]
     for entry, ranges in zip(entries, all_ranges, strict=True):
@@ -538,8 +574,8 @@ def _gate_project_ranges(
 def _decrypt_project(args: argparse.Namespace) -> dict[str, int]:
     with args.map_file.open(encoding="utf-8") as stream:
         mapping = json.load(stream)
-    files, entries = _validate_project_mapping(mapping)
-    all_ranges = _gate_project_ranges(args.gate_dir, files, entries)
+    files, entries, top = _validate_project_mapping(mapping)
+    all_ranges = _gate_project_ranges(args.gate_dir, files, entries, top)
 
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry, ranges in zip(entries, all_ranges, strict=True):
@@ -613,6 +649,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt_project.add_argument(
         "--category",
         required=True,
+        action="append",
+        dest="category",
         choices=(
             "signals",
             "parameters",
@@ -627,6 +665,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "struct_types",
             "struct_fields",
             "union_fields",
+            "modules",
+            "ports",
             "all",
         ),
     )
