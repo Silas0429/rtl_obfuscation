@@ -1,6 +1,6 @@
 # T019：多文件项目组合回归与 `all` / 显式 ABI 类别边界
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T018 已达到 `ACCEPTED`
@@ -197,13 +197,23 @@ docs/tasks/T019_project_regression.md
 ## 10. Formal verification
 
 ```text
-formal_verification: PENDING
-reason: T019 尚未由子 Agent 执行；完成后必须记录五组 project formal PASS 证据。
+formal_verification: PASS
+gold/gate/top/command/exit_code/result:
+  t015_all: gold=tests/fixtures/t015_multi_file/design.f; gate=/tmp/rtl_obfuscation_t019/t015_all/gate/design.f; top=t015_top; command=`conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t015_multi_file/design.f --gold-root tests/fixtures/t015_multi_file --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t019/t015_all/gate --top t015_top`; exit_code=0; result={"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t019/t015_all/gate","gold":"tests/fixtures/t015_multi_file","seq":5,"top":"t015_top"}
+  t016_abi: gold=tests/fixtures/t016_module_port/design.f; gate=/tmp/rtl_obfuscation_t019/t016_abi/gate/design.f; top=t016_top; command=`conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t016_module_port/design.f --gold-root tests/fixtures/t016_module_port --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t019/t016_abi/gate --top t016_top`; exit_code=0; result={"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t019/t016_abi/gate","gold":"tests/fixtures/t016_module_port","seq":5,"top":"t016_top"}
+  t017_all: gold=tests/fixtures/t017_interface/design.f; gate=/tmp/rtl_obfuscation_t019/t017_all/gate/design.f; top=t017_top; command=`conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t017_interface/design.f --gold-root tests/fixtures/t017_interface --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t019/t017_all/gate --top t017_top`; exit_code=0; result={"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t019/t017_all/gate","gold":"tests/fixtures/t017_interface","seq":5,"top":"t017_top"}
+  t017_interface: gold=tests/fixtures/t017_interface/design.f; gate=/tmp/rtl_obfuscation_t019/t017_interface/gate/design.f; top=t017_top; command=`conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t017_interface/design.f --gold-root tests/fixtures/t017_interface --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t019/t017_interface/gate --top t017_top`; exit_code=0; result={"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t019/t017_interface/gate","gold":"tests/fixtures/t017_interface","seq":5,"top":"t017_top"}
+  t018_combined: gold=tests/fixtures/t018_interface_member/design.f; gate=/tmp/rtl_obfuscation_t019/t018_combined/gate/design.f; top=t018_top; command=`conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t018_interface_member/design.f --gold-root tests/fixtures/t018_interface_member --gate-filelist design.f --gate-root /tmp/rtl_obfuscation_t019/t018_combined/gate --top t018_top`; exit_code=0; result={"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t019/t018_combined/gate","gold":"tests/fixtures/t018_interface_member","seq":5,"top":"t018_top"}
 ```
 
 ## 11. 执行记录（子 Agent 更新）
 
-- 尚未开始。
+- 2026-07-14 16:00:47 Asia/Shanghai：已完整阅读 AGENTS.md、docs/tasks/README.md 和 T019 任务单；确认仅 T019 为活动任务（READY），开始执行五组 project 回归。
+- 五组 encrypt-project 均退出码 0，stdout 分别为 `{"files":2,"mapping_entries":4,"modified_tokens":10}`、`{"files":2,"mapping_entries":3,"modified_tokens":8}`、`{"files":3,"mapping_entries":1,"modified_tokens":1}`、`{"files":3,"mapping_entries":1,"modified_tokens":3}`、`{"files":3,"mapping_entries":9,"modified_tokens":24}`；mapping category 计数和 source ranges 均符合第 2 节，T017-all 未包含 `interfaces`，T018-combined 为 instances=1/interface_instances=1/interface_ports=5/modports=2。
+- 五组 decrypt-project 均退出码 0，stdout 与各自 encrypt 摘要一致；13 个 gate 文件逐文件恢复比较均为相同字节。五组 metrics 均满足 symbols/occurrences coverage=1.0、plaintext_leakage_rate=0.0、effective_coverage=1.0。
+- PySlang 五组 gate Compilation 均为 `diagnostics 0 errors 0`；Verible 对 13 个 gate `.sv` 文件使用 `conda run -n rtl_obfuscation verible-verilog-syntax --lang=sv ...` 均退出码 0。
+- Icarus：T015-all gold/gate 和 T016-abi gold/gate 均退出码 0；T017-all、T017-interface、T018-combined 的 gold/gate 均退出码 2，stderr 均为 interface child.sv:2 syntax error / Errors in port declarations，符合已知 ANSI-style interface 限制。
+- 回归测试 `conda run -n rtl_obfuscation python -m unittest tests.test_project_regression -v` 退出码 0，1 test OK；完整 `conda run -n rtl_obfuscation python -m unittest discover -s tests -v` 退出码 0，Ran 25 tests，OK；`git diff --check` 退出码 0。
 
 ## 12. 偏差或阻塞（子 Agent 更新）
 
@@ -211,8 +221,8 @@ reason: T019 尚未由子 Agent 执行；完成后必须记录五组 project for
 
 ## 13. 交付证据（子 Agent 更新）
 
-- 尚未交付。
+- 允许修改文件仅为 `tests/test_project_regression.py` 和本任务单；未修改 inventory/rewrite、任何 fixture、formal 脚本或其他规划文档，未 commit/push。五 case 黑盒回归、前端检查、Icarus 矩阵、五组 formal、回归测试和 diff 检查均完成，任务可供主 Agent 验收。
 
 ## 14. 主 Agent 验收结果
 
-- 尚未验收。
+- ACCEPTED（2026-07-14）：主 Agent 独立重跑五组 encrypt/decrypt、mapping/metrics、逐文件 round-trip、PySlang、Verible、Icarus 矩阵和五组 Yosys formal；新增回归测试及完整 unittest 共 25 项通过，`git diff --check` 通过。T017/T018 的 Icarus 双侧退出码 2 符合任务明确的 ANSI-style interface 已知限制。
