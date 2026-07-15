@@ -1,4 +1,4 @@
-"""Black-box T020 FIFO project and per-file mapping regression tests."""
+"""Black-box FIFO project and per-file mapping regression tests."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ CATEGORIES = {
     "parameters": (9, 51),
     "enum_values": (3, 6),
     "genvars": (2, 10),
-    "functions": (1, 4),
+    "functions": (2, 7),
     "tasks": (1, 2),
-    "arguments": (3, 7),
+    "arguments": (4, 9),
     "instances": (2, 2),
     "generate_blocks": (2, 2),
-    "typedefs": (2, 6),
-    "struct_types": (2, 4),
+    "typedefs": (2, 7),
+    "struct_types": (2, 5),
     "struct_fields": (2, 4),
     "union_fields": (2, 6),
     "modules": (2, 4),
@@ -71,6 +71,11 @@ class ExampleFifoProjectTest(unittest.TestCase):
     def test_full_project_and_all_single_category_debug_runs(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         root = repository / "rtl_samples" / "example_fifo"
+        top_source = (root / "fifo_top.sv").read_text(encoding="utf-8")
+        storage_source = (root / "fifo_storage.sv").read_text(encoding="utf-8")
+        self.assertIn("fifo_if fifo_bus", top_source)
+        self.assertIn("fifo_bus.push", top_source)
+        self.assertIn("extract_payload(view.entry)", storage_source)
         with TemporaryDirectory() as tmp:
             base = Path(tmp)
             gate = base / "gate"
@@ -97,13 +102,35 @@ class ExampleFifoProjectTest(unittest.TestCase):
             self.assertEqual(full.returncode, 0, full.stderr)
             self.assertEqual(json.loads(full.stdout), {
                 "files": 4,
-                "mapping_entries": 77,
-                "modified_tokens": 292,
+                "mapping_entries": 79,
+                "modified_tokens": 299,
             })
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
             self.assertEqual(mapping["version"], 2)
             self.assertEqual(mapping["top"], "fifo_top")
             self.assertEqual({e["category"] for e in mapping["entries"]}, set(CATEGORIES))
+            self.assertIn(
+                ("functions", "extract_payload", "fifo_storage.sv"),
+                {
+                    (
+                        entry["category"],
+                        entry["original_name"],
+                        entry["declaration"]["file"],
+                    )
+                    for entry in mapping["entries"]
+                },
+            )
+            self.assertIn(
+                ("arguments", "entry_value", "fifo_storage.sv"),
+                {
+                    (
+                        entry["category"],
+                        entry["original_name"],
+                        entry["declaration"]["file"],
+                    )
+                    for entry in mapping["entries"]
+                },
+            )
 
             all_occurrences = set()
             for entry in mapping["entries"]:
@@ -139,7 +166,7 @@ class ExampleFifoProjectTest(unittest.TestCase):
             metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
             self.assertEqual(metrics["symbols"]["coverage"], 1.0)
             self.assertEqual(metrics["occurrences"], {
-                "renamed": 292, "eligible": 292, "coverage": 1.0,
+                "renamed": 299, "eligible": 299, "coverage": 1.0,
             })
             self.assertEqual(metrics["plaintext_leakage_rate"], 0.0)
             self.assertEqual(metrics["effective_coverage"], 1.0)

@@ -13,6 +13,8 @@ module fifo_top #(
     output logic                  empty,
     output logic                  valid
 );
+    // Keep the external top-level ports unchanged while using fifo_bus as the
+    // internal interface bundle between the top-level adapter and FIFO logic.
     fifo_if fifo_bus (
         .clk(clk),
         .rst_n(rst_n)

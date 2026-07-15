@@ -4,8 +4,9 @@
 同时输出可审计、可逆的 mapping。项目支持单文件和显式 filelist 多文件工程；
 `rtl_samples/example_fifo/` 是当前完整交付样例。
 
-FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、77 个重命名对象、
-292 个被改写 token，PySlang 前端、Yosys formal 和字节级解密恢复均通过。
+FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、79 个重命名对象、
+299 个被改写 token，PySlang 前端、Yosys formal 和字节级解密恢复均通过。样例还展示了
+内部 interface signal bundle 和 packed struct 作为 function argument 的实际使用。
 
 ## 1. 项目结构
 
@@ -171,7 +172,7 @@ SystemVerilog 源文件组成：
 rtl_samples/example_fifo/
 ├── design.f          # 按 compilation 顺序列出下面四个 .sv
 ├── fifo_if.sv       # 工程内部 interface、interface signals 和 modport 声明
-├── fifo_storage.sv  # RAM、parameter、typedef、struct/union、function/task 和 generate
+├── fifo_storage.sv  # RAM、parameter、typedef、struct/union、function/task、struct 传参和 generate
 ├── fifo_ctrl.sv     # FIFO 状态、读写指针、enum、generate 和 storage instance
 └── fifo_top.sv      # 顶层标量/向量 ports、内部 interface instance 和 controller instance
 ```
@@ -186,7 +187,9 @@ fifo_top.sv
 ```
 
 `fifo_top` 对外是普通 ports，`fifo_if` 只在 top 内部实例化。因此本样例可以显式开启 interface 相关
-category；它不代表已支持“顶层 interface port”。
+category；`fifo_bus` 的成员实际承载 top 与 controller 之间的 FIFO 控制、数据和状态连接，
+它不代表已支持“顶层 interface port”。`fifo_storage` 中的 `extract_payload(view.entry)`
+则展示了 `fifo_entry_t` packed struct 作为 function argument 传递。
 
 ### 3.5 多文件完整流程
 
@@ -213,7 +216,7 @@ category；它不代表已支持“顶层 interface port”。
      --name-length 8
    ```
 
-   预期摘要为 `{"files": 4, "mapping_entries": 77, "modified_tokens": 292}`。输出目录与 gold 分开：
+   预期摘要为 `{"files": 4, "mapping_entries": 79, "modified_tokens": 299}`。输出目录与 gold 分开：
 
    ```text
    /tmp/rtl_fifo/

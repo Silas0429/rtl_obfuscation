@@ -30,6 +30,12 @@ module fifo_storage #(
     logic [ADDR_WIDTH-1:0] next_write_addr;
     logic [DEPTH-1:0]      slot_valid;
 
+    function automatic word_t extract_payload(
+        input fifo_entry_t entry_value
+    );
+        extract_payload = entry_value.payload;
+    endfunction
+
     function automatic logic [ADDR_WIDTH-1:0] next_addr(
         input logic [ADDR_WIDTH-1:0] value
     );
@@ -59,7 +65,7 @@ module fifo_storage #(
             q = storage[read_addr];
             view.raw = {1'b1, q};
             if (view.entry.valid) begin
-                q = view.entry.payload;
+                q = extract_payload(view.entry);
             end
         end else begin
             q = '0;
