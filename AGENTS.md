@@ -34,8 +34,9 @@ conda run -n rtl_obfuscation yosys -V
 ## Renaming implementation sources of truth
 
 - `docs/systemverilog_renaming_table.md` defines the only renaming categories in scope.
-- `docs/renaming_implementation_plan.md` defines the minimal architecture, boundaries, implementation order, and black-box acceptance rules.
+- `read.md` defines the current user workflow, implementation overview, and delivered capability boundaries.
 - `docs/formal_verification.md` defines the mandatory Yosys equivalence flow for rewritten RTL.
+- `docs/future_work.md` records unsupported behavior and possible future expansion; it does not authorize implementation.
 - `docs/tasks/README.md` defines the mandatory task status workflow.
 - Implementation work must have exactly one active `docs/tasks/TNNN_*.md` task contract.
 - Do not implement a renaming category or behavior that is not authorized by the active task contract.

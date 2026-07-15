@@ -31,7 +31,8 @@
 - 对产生改写 RTL 的任务独立重跑 Yosys formal equivalence。
 - 对照输入输出而不是只阅读代码。
 - 将状态改成 `ACCEPTED`。
-- 更新实施计划中的状态并创建下一张任务单。
+- 若对外行为发生变化，同步根目录 `read.md`、重命名表或未来事项，
+  然后再创建下一张任务单。
 - 检查 Git diff，执行 `git add .`、带规定类型前缀的 `git commit` 和 `git push`。
 
 ## 3. 任务单必备字段

@@ -37,16 +37,15 @@ syntax result rather than hidden.
 
 ## Syntax check
 
-Run the checks from this directory and inside the project Conda environment:
+PySlang is the primary frontend. Run this check from the sample directory in a
+Python environment where `pyslang` is installed:
 
 ```sh
-for file in 0[1-9]_*.sv 1[01]_*.sv; do
-    conda run -n rtl_obfuscation iverilog -g2012 -t null "$file" || exit 1
-done
-conda run -n rtl_obfuscation iverilog -g2012 -t null -f filelist.f
-conda run -n rtl_obfuscation verible-verilog-syntax *.sv
-conda run -n rtl_obfuscation python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(1 if tree.diagnostics else 0)'
+python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(bool(tree.diagnostics))'
 ```
+
+Verible and Icarus Verilog can be installed for additional syntax checks, but
+they are not the semantic source used by the rewriter.
 
 These files are syntax fixtures only. They do not include testbenches or any
 obfuscation implementation.

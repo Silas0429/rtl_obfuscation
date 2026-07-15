@@ -21,8 +21,7 @@
 8. 补齐嵌套 aggregate member occurrence，并增强内部 state/RAM 改名后的 Yosys formal
    对应关系。
 
-实现设计冻结在 [`../t020_fifo_completion_design.md`](../t020_fifo_completion_design.md)。
-如本任务与设计文档存在冲突，以本任务中的固定输入、摘要和验收命令为准。
+本任务中的固定输入、摘要和验收命令是 T020 的完整历史合同。
 
 本任务不实现新的重命名 category。`modport_ports` 仍不是独立 entry，interface 中的
 modport member 引用继续由 `interface_ports` 负责。参数扩展仍属于 `parameters`，不得
@@ -158,7 +157,7 @@ parameter 的 named override 必须保持不变并记录边界；不得猜测名
 - 宏展开、include 自动发现和未解析的外部 module。
 - 任意完整 SystemVerilog lexical shadow 组合；尤其不保证 aggregate field 与外层 module
   parameter 同名且该 parameter 出现在 field 自身 dimension 的刻意写法。交付边界和替代
-  写法见 `docs/delivery_guide.md` 第 5 节。
+  写法见根目录 `read.md` 的“当前能力边界”。
 
 ### 3.2 既有类别引用闭包
 
@@ -450,8 +449,8 @@ scripts/formal_equivalence.py
 tests/test_parameter_dimension_rewrite.py
 tests/test_example_fifo_project.py
 tests/test_formal_equivalence.py
-docs/current_supported_features.md
-docs/renaming_implementation_plan.md
+read.md
+docs/systemverilog_renaming_table.md
 docs/tasks/T020_example_fifo_per_file_mapping.md
 ```
 
@@ -459,7 +458,6 @@ docs/tasks/T020_example_fifo_per_file_mapping.md
 
 ```text
 rtl_samples/example_fifo/
-docs/t020_fifo_completion_design.md
 docs/formal_verification.md
 ```
 
@@ -537,7 +535,7 @@ the fixed FIFO and all supported-scope positive/negative formal gates pass.
   `union_fields=2/6`、完整组合 `77/292`。另确认 formal 失败由内部 state/RAM 改名后的
   correspondence 和 `$mem_v2` SAT 边界触发；对称执行 `memory_map -formal; opt_clean` 并
   增加 `equiv_struct -icells` 后 FIFO 正例通过，临时功能变更负例仍失败。T020 重新设为
-  `READY`，执行规范见 `docs/t020_fifo_completion_design.md`。
+  `READY`，执行规范已固化在本任务第 3—15 节。
 - 2026-07-15：按当前冻结契约重新执行，修改文件为 `rtl_obfuscator/inventory.py`、
   `rtl_obfuscator/rewrite.py`、`scripts/formal_equivalence.py`、
   `tests/test_parameter_dimension_rewrite.py`、`tests/test_example_fifo_project.py` 和
@@ -639,7 +637,7 @@ the fixed FIFO and all supported-scope positive/negative formal gates pass.
 - 2026-07-15：用户明确决定本次交付不追求完整 module value parameter 遮蔽，只要求常用
   module parameter、dimension、named override 和固定 FIFO 可靠工作。主 Agent 将 aggregate
   field/parameter 刻意同名等复杂遮蔽改列为公开不支持边界，并创建
-  `docs/delivery_guide.md` 给出小例子、替代写法、项目结构和 FIFO 完整/debug 命令。
+  根目录 `read.md` 给出小例子、替代写法、项目结构和 FIFO 完整/debug 命令。
 - 2026-07-15：主 Agent 在全新目录 `/tmp/rtl_obfuscation_fifo_delivery.HsHsLW` 独立复核：
   完整加密为 77 entries / 292 tokens；19 类计数、292 个 gold ranges、global/per-file
   occurrence 并集、metrics、四文件 decrypt、PySlang、Verible、Icarus 和 Yosys formal
@@ -707,7 +705,7 @@ the fixed FIFO and all supported-scope positive/negative formal gates pass.
   保持 `parameters=9/51`、完整 `77/292`。
 - 2026-07-15 范围决议：用户决定本次交付不追求任意完整 module value parameter 遮蔽。
   上述第三次修复要求不再是 T020 验收门禁，该同名 aggregate 写法转为公开 unsupported
-  boundary；常用替代写法和强制 frontend/formal 检查见 `docs/delivery_guide.md` 第 5、10 节。
+  boundary；常用替代写法和 frontend/formal 检查见根目录 `read.md`。
 
 - 2026-07-14：signals 的 `syntax=None` 已可用 `node.sourceRange` fallback，单类别摘要达到 14 entries / 67 tokens；其余 17 个单类别也符合契约。
 - 2026-07-14：完整组合命令退出码 0，但 stdout 为 `{"files":4,"mapping_entries":77,"modified_tokens":257}`，契约要求 261。`interface_instances` 单类别为 1 entry / 15 tokens（`fifo_top.sv` 中 `fifo_bus` 的冻结 gold 文本 occurrence 共 15：1 个 declaration + 14 个 reference），契约要求 17；`interface_ports` 单类别为 9 entries / 39 tokens，契约要求 41。映射 ranges 均必须对应 gold source bytes，不能通过重复 range、伪造 occurrence 或修改 fixture 达到预期计数。
