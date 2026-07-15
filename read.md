@@ -65,7 +65,7 @@ python -c 'import pyslang; print("PySlang import OK")'
 python -m unittest discover -s tests -v
 ```
 
-当前基线为 `Ran 30 tests`、`OK`。
+当前基线为 `Ran 33 tests`、`OK`。
 
 ## 3. 基本操作
 
@@ -86,6 +86,7 @@ python -m unittest discover -s tests -v
 | Gate 输出 | `--output <gate.sv>` | `--output-dir <gate-dir>`，按相对路径镜像多个文件 |
 | Mapping | version 1，一个文件内的声明和引用 | version 2，包含 `files`、`top` 和跨文件 range |
 | Per-file mapping | 不需要 | 可用 `--file-map-dir` 输出全局 mapping 的每文件投影 |
+| `--debug <dir>` | 从同一 gold 自动独立运行 13 个 category | 从同一 filelist 自动独立运行 19 个 category |
 | 适用场景 | 独立 module、最小复现、单 category debug | 真实 RTL 工程、跨文件 module/interface 关系和最终交付 |
 
 只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用多文件
@@ -108,6 +109,8 @@ modules ports interfaces interface_instances interface_ports modports
 
 单文件模式只接受上述 13 类或 `all`。多文件模式可重复传入
 `--category`；例如先传 `all`，再显式加入需要的 ABI 类别。
+`--debug <directory>` 会自动遍历对应模式的全部 category，debug 时不再传
+`--category` 或普通模式的输出参数。
 
 多文件模式始终保留 top module 名和普通 top port 名。若 testbench、SDC、Tcl、
 软件模型或其他工程通过名称访问对象，不应开启对应 ABI category。
@@ -240,26 +243,56 @@ python -m json.tool /tmp/rtl_fifo/metrics.json
 
 FIFO 的 symbol/occurrence coverage 应为 `1.0`，`plaintext_leakage_rate` 应为 `0.0`。
 
-### 3.7 单类别 debug
+### 3.7 自动 debug
 
-每次 debug 都必须从原始 gold 开始，不能以上一次的 gate 作为输入。以下只处理
-`parameters`：
+debug 只生成分 category 加密结果，不提供 debug 解密。每个 category 都重新从
+原始 gold 开始，不会把前一个 category 的 gate 作为下一个输入。
+
+单文件自动运行 13 个默认 category：
+
+```sh
+python -m rtl_obfuscator.rewrite encrypt \
+  --input rtl_samples/11_supported_obfuscation.sv \
+  --debug /tmp/rtl_single/debug \
+  --name-length 8
+```
+
+单文件 debug 输出：
+
+```text
+/tmp/rtl_single/debug/<category>/gate.sv
+/tmp/rtl_single/debug/<category>/mapping.json
+/tmp/rtl_single/debug/<category>/metrics.json
+```
+
+多文件自动运行全部 19 个 category：
 
 ```sh
 python -m rtl_obfuscator.rewrite encrypt-project \
   --filelist rtl_samples/example_fifo/design.f \
   --source-root rtl_samples/example_fifo \
-  --output-dir /tmp/rtl_fifo/debug/parameters/gate \
-  --map /tmp/rtl_fifo/debug/parameters/mapping.json \
-  --metrics /tmp/rtl_fifo/debug/parameters/metrics.json \
-  --file-map-dir /tmp/rtl_fifo/debug/parameters/maps \
   --top fifo_top \
-  --category parameters \
+  --debug /tmp/rtl_fifo/debug \
   --name-length 8
 ```
 
-固定结果为 9 个 parameter、51 个 token。把 `parameters` 换成其他 category 即可观察
-对应的独立改写。完整计数见[重命名表](docs/systemverilog_renaming_table.md)。
+多文件 debug 输出：
+
+```text
+/tmp/rtl_fifo/debug/<category>/gate/
+/tmp/rtl_fifo/debug/<category>/maps/
+/tmp/rtl_fifo/debug/<category>/mapping.json
+/tmp/rtl_fifo/debug/<category>/metrics.json
+```
+
+stdout 是一个汇总 JSON，`runs` 按 category 顺序记录每次的 `files`、
+`mapping_entries` 和 `modified_tokens`。即使单文件中某类没有可替换对象，
+也会生成完整子目录并记录 `0/0`。FIFO 的 19 类固定计数见
+[重命名表](docs/systemverilog_renaming_table.md)。
+
+`--debug` 不能与 `--category`、`--output`、`--output-dir`、`--map`、`--metrics`
+或 `--file-map-dir` 混用。如果只想调试一个 category，仍使用普通模式并只传
+一个 `--category <name>`。
 
 ### 3.8 多文件解密
 

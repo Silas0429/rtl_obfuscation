@@ -104,7 +104,9 @@ def _metrics(
             "eligible": occurrence_count,
             "coverage": occurrence_coverage,
         },
-        "plaintext_leakage_rate": leaked_occurrences / occurrence_count,
+        "plaintext_leakage_rate": (
+            leaked_occurrences / occurrence_count if occurrence_count else 0.0
+        ),
         "effective_coverage": (symbol_coverage * occurrence_coverage) ** 0.5,
     }
 
@@ -139,6 +141,29 @@ def _encrypt(args: argparse.Namespace) -> dict[str, int]:
     _write_json(args.map_file, mapping)
     _write_json(args.metrics_file, _metrics(source, gate, entries))
     return _summary(len(entries), modified_tokens)
+
+
+def _debug_encrypt(args: argparse.Namespace) -> dict[str, Any]:
+    runs: list[dict[str, Any]] = []
+    for category in inventory._ALL_CATEGORIES:
+        category_root = args.debug_dir / category
+        summary = _encrypt(
+            argparse.Namespace(
+                input_file=args.input_file,
+                output_file=category_root / "gate.sv",
+                map_file=category_root / "mapping.json",
+                metrics_file=category_root / "metrics.json",
+                category=category,
+                name_length=args.name_length,
+            )
+        )
+        runs.append({"category": category, **summary})
+    return {
+        "debug": True,
+        "mode": "single-file",
+        "category_count": len(runs),
+        "runs": runs,
+    }
 
 
 def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
@@ -477,6 +502,32 @@ def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
     }
 
 
+def _debug_encrypt_project(args: argparse.Namespace) -> dict[str, Any]:
+    runs: list[dict[str, Any]] = []
+    for category in inventory._SUPPORTED_CATEGORIES:
+        category_root = args.debug_dir / category
+        summary = _encrypt_project(
+            argparse.Namespace(
+                filelist=args.filelist,
+                source_root=args.source_root,
+                output_dir=category_root / "gate",
+                map_file=category_root / "mapping.json",
+                metrics_file=category_root / "metrics.json",
+                file_map_dir=category_root / "maps",
+                top=args.top,
+                category=[category],
+                name_length=args.name_length,
+            )
+        )
+        runs.append({"category": category, **summary})
+    return {
+        "debug": True,
+        "mode": "project",
+        "category_count": len(runs),
+        "runs": runs,
+    }
+
+
 def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, Any]]]:
     if not isinstance(mapping, dict) or set(mapping) != {
         "version",
@@ -680,6 +731,55 @@ def _decrypt_project(args: argparse.Namespace) -> dict[str, int]:
     }
 
 
+def _validate_encrypt_mode(args: argparse.Namespace) -> None:
+    normal_options = {
+        "--output": args.output_file,
+        "--map": args.map_file,
+        "--metrics": args.metrics_file,
+        "--category": args.category,
+    }
+    if args.debug_dir is not None:
+        conflicts = [
+            name for name, value in normal_options.items() if value is not None
+        ]
+        if conflicts:
+            raise ValueError(
+                "--debug cannot be combined with " + ", ".join(conflicts)
+            )
+        return
+    missing = [name for name, value in normal_options.items() if value is None]
+    if missing:
+        raise ValueError(
+            "encrypt requires --debug or all normal options: " + ", ".join(missing)
+        )
+
+
+def _validate_encrypt_project_mode(args: argparse.Namespace) -> None:
+    normal_options = {
+        "--output-dir": args.output_dir,
+        "--map": args.map_file,
+        "--metrics": args.metrics_file,
+        "--category": args.category,
+    }
+    if args.debug_dir is not None:
+        conflicts = [
+            name for name, value in normal_options.items() if value is not None
+        ]
+        if args.file_map_dir is not None:
+            conflicts.append("--file-map-dir")
+        if conflicts:
+            raise ValueError(
+                "--debug cannot be combined with " + ", ".join(conflicts)
+            )
+        return
+    missing = [name for name, value in normal_options.items() if value is None]
+    if missing:
+        raise ValueError(
+            "encrypt-project requires --debug or all normal options: "
+            + ", ".join(missing)
+        )
+
+
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Rewrite or restore selected SystemVerilog identifiers."
@@ -688,12 +788,38 @@ def _create_argument_parser() -> argparse.ArgumentParser:
 
     encrypt = operations.add_parser("encrypt")
     encrypt.add_argument("--input", required=True, type=Path, dest="input_file")
-    encrypt.add_argument("--output", required=True, type=Path, dest="output_file")
-    encrypt.add_argument("--map", required=True, type=Path, dest="map_file")
-    encrypt.add_argument("--metrics", required=True, type=Path, dest="metrics_file")
+    encrypt.add_argument(
+        "--output",
+        required=False,
+        type=Path,
+        dest="output_file",
+        help="Gate file; required unless --debug is used.",
+    )
+    encrypt.add_argument(
+        "--map",
+        required=False,
+        type=Path,
+        dest="map_file",
+        help="Mapping file; required unless --debug is used.",
+    )
+    encrypt.add_argument(
+        "--metrics",
+        required=False,
+        type=Path,
+        dest="metrics_file",
+        help="Metrics file; required unless --debug is used.",
+    )
+    encrypt.add_argument(
+        "--debug",
+        required=False,
+        type=Path,
+        dest="debug_dir",
+        help="Run all 13 single-file categories independently under this directory.",
+    )
     encrypt.add_argument(
         "--category",
-        required=True,
+        required=False,
+        help="One category for normal mode; do not combine with --debug.",
         choices=(
             "signals",
             "parameters",
@@ -722,18 +848,44 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt_project = operations.add_parser("encrypt-project")
     encrypt_project.add_argument("--filelist", required=True, type=Path, dest="filelist")
     encrypt_project.add_argument("--source-root", required=True, type=Path, dest="source_root")
-    encrypt_project.add_argument("--output-dir", required=True, type=Path, dest="output_dir")
-    encrypt_project.add_argument("--map", required=True, type=Path, dest="map_file")
-    encrypt_project.add_argument("--metrics", required=True, type=Path, dest="metrics_file")
+    encrypt_project.add_argument(
+        "--output-dir",
+        required=False,
+        type=Path,
+        dest="output_dir",
+        help="Gate directory; required unless --debug is used.",
+    )
+    encrypt_project.add_argument(
+        "--map",
+        required=False,
+        type=Path,
+        dest="map_file",
+        help="Global mapping file; required unless --debug is used.",
+    )
+    encrypt_project.add_argument(
+        "--metrics",
+        required=False,
+        type=Path,
+        dest="metrics_file",
+        help="Metrics file; required unless --debug is used.",
+    )
+    encrypt_project.add_argument(
+        "--debug",
+        required=False,
+        type=Path,
+        dest="debug_dir",
+        help="Run all 19 project categories independently under this directory.",
+    )
     encrypt_project.add_argument(
         "--file-map-dir", required=False, type=Path, dest="file_map_dir"
     )
     encrypt_project.add_argument("--top", required=True, type=str, dest="top")
     encrypt_project.add_argument(
         "--category",
-        required=True,
+        required=False,
         action="append",
         dest="category",
+        help="Repeatable categories for normal mode; do not combine with --debug.",
         choices=(
             "signals",
             "parameters",
@@ -782,11 +934,19 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.operation == "encrypt":
-            summary = _encrypt(args)
+            _validate_encrypt_mode(args)
+            summary = (
+                _debug_encrypt(args) if args.debug_dir is not None else _encrypt(args)
+            )
         elif args.operation == "decrypt":
             summary = _decrypt(args)
         elif args.operation == "encrypt-project":
-            summary = _encrypt_project(args)
+            _validate_encrypt_project_mode(args)
+            summary = (
+                _debug_encrypt_project(args)
+                if args.debug_dir is not None
+                else _encrypt_project(args)
+            )
         else:
             summary = _decrypt_project(args)
     except (OSError, RuntimeError, ValueError) as error:
