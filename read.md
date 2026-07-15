@@ -69,10 +69,114 @@ python -m unittest discover -s tests -v
 
 ## 3. 基本操作
 
-### 3.1 加密四文件 FIFO
+### 3.1 单文件与多文件模式
 
-下面的命令从 `rtl_samples/example_fifo/design.f` 读取四个文件，同时输出全局 mapping、
-每文件 mapping 和 metrics。输出目录应与 gold 源码目录不同。
+项目提供两套命令：`encrypt` / `decrypt` 处理一个 `.sv`，
+`encrypt-project` / `decrypt-project` 处理一个显式 filelist 工程。
+
+| 对比项 | 单文件模式 | 多文件模式 |
+| --- | --- | --- |
+| 加密命令 | `encrypt` | `encrypt-project` |
+| 解密命令 | `decrypt` | `decrypt-project` |
+| 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` |
+| PySlang 分析 | 只把一个 `.sv` 加入 compilation | filelist 中全部 `.sv` 进入同一 compilation |
+| 跨文件绑定 | 不可用 | 可改写 module type、child port、interface 等已支持跨文件引用 |
+| Category 参数 | 只传一个 `--category`；可用 `all` | `--category` 可重复，用于组合内部类别和 ABI 类别 |
+| Top | 不需要 `--top` | 必须给出 `--top`；保留 top module 和普通 top ports |
+| Gate 输出 | `--output <gate.sv>` | `--output-dir <gate-dir>`，按相对路径镜像多个文件 |
+| Mapping | version 1，一个文件内的声明和引用 | version 2，包含 `files`、`top` 和跨文件 range |
+| Per-file mapping | 不需要 | 可用 `--file-map-dir` 输出全局 mapping 的每文件投影 |
+| 适用场景 | 独立 module、最小复现、单 category debug | 真实 RTL 工程、跨文件 module/interface 关系和最终交付 |
+
+只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用多文件
+模式。两种模式都不会原地修改 gold，输出路径必须与源码路径分开。
+
+### 3.2 Category 选择
+
+`--category all` 只启用 13 个默认内部类别：
+
+```text
+signals parameters enum_values genvars functions tasks arguments instances
+generate_blocks typedefs struct_types struct_fields union_fields
+```
+
+下面 6 类可能改变模块或 interface ABI，必须显式启用：
+
+```text
+modules ports interfaces interface_instances interface_ports modports
+```
+
+单文件模式只接受上述 13 类或 `all`。多文件模式可重复传入
+`--category`；例如先传 `all`，再显式加入需要的 ABI 类别。
+
+多文件模式始终保留 top module 名和普通 top port 名。若 testbench、SDC、Tcl、
+软件模型或其他工程通过名称访问对象，不应开启对应 ABI category。
+顶层使用 interface port 时，必须整体保留 interface 名、modport、member 和 top port；
+该边界详见第 6 节。完整 category 语义见
+[重命名表](docs/systemverilog_renaming_table.md)。
+
+### 3.3 单文件加密与解密
+
+以独立样例 `rtl_samples/11_supported_obfuscation.sv` 为例：
+
+```sh
+python -m rtl_obfuscator.rewrite encrypt \
+  --input rtl_samples/11_supported_obfuscation.sv \
+  --output /tmp/rtl_single/gate.sv \
+  --map /tmp/rtl_single/mapping.json \
+  --metrics /tmp/rtl_single/metrics.json \
+  --category all \
+  --name-length 8
+```
+
+预期摘要为 1 个文件、23 个 mapping entry、63 个 token。单文件模式只生成
+一个 gate、一个 version 1 mapping 和一个 metrics，不生成 per-file mapping。
+
+使用同一 mapping 解密：
+
+```sh
+python -m rtl_obfuscator.rewrite decrypt \
+  --input /tmp/rtl_single/gate.sv \
+  --output /tmp/rtl_single/restored.sv \
+  --map /tmp/rtl_single/mapping.json
+```
+
+检查恢复结果：
+
+```sh
+python -c 'from pathlib import Path; assert Path("rtl_samples/11_supported_obfuscation.sv").read_bytes()==Path("/tmp/rtl_single/restored.sv").read_bytes(); print("byte-identical")'
+```
+
+### 3.4 多文件样例 `rtl_samples/example_fifo`
+
+多文件操作以 `rtl_samples/example_fifo` 为例。这是一个可综合的同步 FIFO，
+由 filelist 和四个 SystemVerilog 源文件组成：
+
+```text
+rtl_samples/example_fifo/
+├── design.f          # 按 compilation 顺序列出下面四个 .sv
+├── fifo_if.sv       # 工程内部 interface、interface signals 和 modport 声明
+├── fifo_storage.sv  # RAM、parameter、typedef、struct/union、function/task 和 generate
+├── fifo_ctrl.sv     # FIFO 状态、读写指针、enum、generate 和 storage instance
+└── fifo_top.sv      # 顶层标量/向量 ports、内部 interface instance 和 controller instance
+```
+
+`design.f` 内容是：
+
+```text
+fifo_if.sv
+fifo_storage.sv
+fifo_ctrl.sv
+fifo_top.sv
+```
+
+`fifo_top` 对外是普通 ports，`fifo_if` 只在 top 内部实例化。因此本样例可以
+显式开启 interface 相关 category；它不代表已支持“顶层 interface port”。
+
+### 3.5 以 `example_fifo` 为例进行多文件加密
+
+下面从 `design.f` 读取四个文件，同时输出全局 mapping、每文件 mapping
+和 metrics。输出目录与 gold 目录分开：
 
 ```sh
 python -m rtl_obfuscator.rewrite encrypt-project \
@@ -99,7 +203,7 @@ python -m rtl_obfuscator.rewrite encrypt-project \
 {"files": 4, "mapping_entries": 77, "modified_tokens": 292}
 ```
 
-输出目录：
+输出结构：
 
 ```text
 /tmp/rtl_fifo/
@@ -109,17 +213,18 @@ python -m rtl_obfuscator.rewrite encrypt-project \
 └── metrics.json           # coverage、leakage 和 affected lines
 ```
 
-随机名称每次运行可能不同；验收比较对象数、token 数、source range 和功能，不比较具体字符串。
+随机名称每次运行可能不同；验收比较对象数、token 数、source range 和功能，
+不比较具体随机字符串。
 
-### 3.2 查看结果
+### 3.6 查看多文件加密结果
 
-查看改写后的某个文件：
+查看改写后的某个 RTL：
 
 ```sh
 python -c 'from pathlib import Path; print(Path("/tmp/rtl_fifo/gate/fifo_storage.sv").read_text())'
 ```
 
-格式化查看全局 mapping、每文件 mapping 和 metrics：
+格式化查看全局 mapping、某文件 mapping 和 metrics：
 
 ```sh
 python -m json.tool /tmp/rtl_fifo/mapping.json
@@ -133,27 +238,11 @@ python -m json.tool /tmp/rtl_fifo/maps/fifo_storage.json
 python -m json.tool /tmp/rtl_fifo/metrics.json
 ```
 
-FIFO 的 coverage 应为 `1.0`，`plaintext_leakage_rate` 应为 `0.0`。
+FIFO 的 symbol/occurrence coverage 应为 `1.0`，`plaintext_leakage_rate` 应为 `0.0`。
 
-### 3.3 解密
+### 3.7 单类别 debug
 
-```sh
-python -m rtl_obfuscator.rewrite decrypt-project \
-  --gate-dir /tmp/rtl_fifo/gate \
-  --source-root rtl_samples/example_fifo \
-  --map /tmp/rtl_fifo/mapping.json \
-  --output-dir /tmp/rtl_fifo/restored
-```
-
-mapping 是恢复原名的必要文件，应与 gate 一起保存。检查四个恢复文件是否与 gold 字节一致：
-
-```sh
-python -c 'from pathlib import Path; g=Path("rtl_samples/example_fifo"); r=Path("/tmp/rtl_fifo/restored"); fs=["fifo_if.sv","fifo_storage.sv","fifo_ctrl.sv","fifo_top.sv"]; assert all((g/f).read_bytes()==(r/f).read_bytes() for f in fs); print("byte-identical")'
-```
-
-### 3.4 单类别 debug
-
-每次 debug 都必须从原始 gold 开始，不能以上一次的 gate 作为输入。以下命令只处理
+每次 debug 都必须从原始 gold 开始，不能以上一次的 gate 作为输入。以下只处理
 `parameters`：
 
 ```sh
@@ -170,48 +259,25 @@ python -m rtl_obfuscator.rewrite encrypt-project \
 ```
 
 固定结果为 9 个 parameter、51 个 token。把 `parameters` 换成其他 category 即可观察
-对应的独立改写。完整 category 及 FIFO 计数见
-[重命名表](docs/systemverilog_renaming_table.md)。
+对应的独立改写。完整计数见[重命名表](docs/systemverilog_renaming_table.md)。
 
-### 3.5 单文件模式
+### 3.8 多文件解密
 
-```sh
-python -m rtl_obfuscator.rewrite encrypt \
-  --input rtl_samples/11_supported_obfuscation.sv \
-  --output /tmp/rtl_single/gate.sv \
-  --map /tmp/rtl_single/mapping.json \
-  --metrics /tmp/rtl_single/metrics.json \
-  --category all \
-  --name-length 8
-```
-
-单文件解密：
+完成第 5 节的 PySlang 和 Yosys 验证后，使用全局 version 2 mapping 解密：
 
 ```sh
-python -m rtl_obfuscator.rewrite decrypt \
-  --input /tmp/rtl_single/gate.sv \
-  --output /tmp/rtl_single/restored.sv \
-  --map /tmp/rtl_single/mapping.json
+python -m rtl_obfuscator.rewrite decrypt-project \
+  --gate-dir /tmp/rtl_fifo/gate \
+  --source-root rtl_samples/example_fifo \
+  --map /tmp/rtl_fifo/mapping.json \
+  --output-dir /tmp/rtl_fifo/restored
 ```
 
-### 3.6 Category 选择
+mapping 是恢复原名的必要文件，应与 gate 一起保存。检查四个恢复文件：
 
-`--category all` 只启用 13 个默认内部类别：
-
-```text
-signals parameters enum_values genvars functions tasks arguments instances
-generate_blocks typedefs struct_types struct_fields union_fields
+```sh
+python -c 'from pathlib import Path; g=Path("rtl_samples/example_fifo"); r=Path("/tmp/rtl_fifo/restored"); fs=["fifo_if.sv","fifo_storage.sv","fifo_ctrl.sv","fifo_top.sv"]; assert all((g/f).read_bytes()==(r/f).read_bytes() for f in fs); print("byte-identical")'
 ```
-
-下面 6 类可能改变模块或 interface ABI，必须显式启用：
-
-```text
-modules ports interfaces interface_instances interface_ports modports
-```
-
-多文件模式始终保留 top module 名和普通 top port 名。若 testbench、SDC、Tcl、软件模型
-或其他工程通过名称访问对象，应保留对应类别。详细语义见
-[重命名表](docs/systemverilog_renaming_table.md)。
 
 ## 4. 替换实现机制
 
