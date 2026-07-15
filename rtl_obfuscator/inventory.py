@@ -859,6 +859,26 @@ def _type_alias_reference_tokens(
                 continue
             references[target].append(source_range)
 
+        # PySlang does not emit a VariableSymbol for typedef names used in
+        # struct/union member declarations.  Recover those CST type uses in
+        # the declaring module, excluding the typedef declaration itself.
+        definition_syntax = getattr(target.declaringDefinition, "syntax", None)
+        if definition_syntax is None:
+            continue
+        syntax_nodes: list[Any] = []
+        definition_syntax.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            if type(syntax_node).__name__ != "IdentifierNameSyntax":
+                continue
+            identifier = getattr(syntax_node, "identifier", None)
+            if identifier is None or identifier.rawText != target.name:
+                continue
+            if identifier.location.offset == target.location.offset:
+                continue
+            if type(getattr(syntax_node, "parent", None)).__name__ != "NamedTypeSyntax":
+                continue
+            references[target].append(identifier)
+
     return references
 
 
@@ -883,6 +903,26 @@ def _struct_union_field_reference_tokens(
             source_range = getattr(right, "sourceRange", None)
             if source_range is not None:
                 references[target].append(source_range)
+                continue
+            node_range = getattr(node, "sourceRange", None)
+            if node_range is None:
+                raise ValueError("member reference has no source range")
+            start = node_range.end.offset - len(target.name)
+            end = node_range.end.offset
+            if start < node_range.start.offset:
+                raise ValueError("member reference range is shorter than target name")
+            source_path = Path(
+                compilation.sourceManager.getFullPath(node_range.start.buffer)
+            )
+            source_bytes = source_path.read_bytes()
+            if source_bytes[start:end] != target.name.encode("utf-8"):
+                raise ValueError("member reference fallback failed source validation")
+            references[target].append(
+                pyslang.SourceRange(
+                    pyslang.SourceLocation(node_range.end.buffer, start),
+                    pyslang.SourceLocation(node_range.end.buffer, end),
+                )
+            )
 
     return references
 
@@ -914,16 +954,36 @@ def _add_ranges(
             "modports",
         )
     ]
+    parameter_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "parameters"
+    ]
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
             return
         for target in generic_targets:
             if node.symbol is target:
-                references[target].append(node.syntax.identifier)
+                syntax = getattr(node, "syntax", None)
+                identifier = getattr(syntax, "identifier", None)
+                if identifier is not None:
+                    references[target].append(identifier)
+                else:
+                    source_range = getattr(node, "sourceRange", None)
+                    if source_range is not None:
+                        references[target].append(source_range)
                 return
 
     compilation.getRoot().visit(visitor)
+    for target, tokens in _parameter_dimension_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    for target, tokens in _named_parameter_override_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
     genvar_targets = [
         target
         for target, category in zip(targets, categories, strict=True)
@@ -1456,6 +1516,147 @@ def _interface_port_reference_tokens(
 
     return references
 
+
+def _parameter_dimension_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect value-parameter references in dimensions and generate headers.
+
+    PySlang does not include dimension or generate-header expressions in the
+    ordinary compilation-root expression walk. Both are nevertheless
+    available from semantic nodes: declaredType.resolvedDimensions retains
+    each dimension expression, while GenerateBlockArraySymbol retains the
+    generate header. Collect both strictly by symbol identity so a same-named
+    local genvar cannot be mistaken for a module parameter.
+    """
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(semantic_nodes.append)
+
+    def append_bound_references(expression: Any) -> None:
+        if expression is None or not hasattr(expression, "visit"):
+            return
+        expression_nodes: list[Any] = []
+        expression.visit(expression_nodes.append)
+        for node in expression_nodes:
+            if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+                continue
+            for target in targets:
+                if node.symbol is not target:
+                    continue
+                syntax = getattr(node, "syntax", None)
+                identifier = getattr(syntax, "identifier", None)
+                references[target].append(
+                    identifier if identifier is not None else node.sourceRange
+                )
+                break
+
+    for semantic_node in semantic_nodes:
+        declared_type = getattr(semantic_node, "declaredType", None)
+        dimensions = getattr(declared_type, "resolvedDimensions", ())
+        for dimension in dimensions:
+            append_bound_references(getattr(dimension, "leftExpr", None))
+            append_bound_references(getattr(dimension, "rightExpr", None))
+            append_bound_references(getattr(dimension, "queueMaxSize", None))
+
+    # Aggregate FieldSymbol types do not expose resolvedDimensions in
+    # PySlang 11. Recover only their dimension tokens from the field's exact
+    # member syntax, then prove ownership with lexical semantic lookup.
+    dimension_kinds = {
+        "VariableDimensionSyntax",
+        "RangeDimensionSpecifierSyntax",
+        "AssociativeDimensionSpecifierSyntax",
+        "QueueDimensionSpecifierSyntax",
+        "UnsizedDimensionSpecifierSyntax",
+    }
+    field_nodes: list[Any] = []
+    for semantic_node in semantic_nodes:
+        if getattr(semantic_node, "kind", None) != pyslang.ast.SymbolKind.TypeAlias:
+            continue
+        aggregate_type = getattr(
+            getattr(semantic_node, "declaredType", None), "type", None
+        )
+        if aggregate_type is not None:
+            aggregate_type.visit(
+                lambda node: field_nodes.append(node)
+                if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Field
+                else None
+            )
+
+    for field in field_nodes:
+        member_syntax = getattr(getattr(field, "syntax", None), "parent", None)
+        parent_scope = getattr(field, "parentScope", None)
+        if member_syntax is None or parent_scope is None:
+            continue
+        syntax_nodes: list[Any] = []
+        member_syntax.visit(syntax_nodes.append)
+        for node in syntax_nodes:
+            if type(node).__name__ != "IdentifierNameSyntax":
+                continue
+            identifier = getattr(node, "identifier", None)
+            if identifier is None:
+                continue
+            parent = getattr(node, "parent", None)
+            while parent is not None and parent is not member_syntax:
+                if type(parent).__name__ in dimension_kinds:
+                    bound_symbol = parent_scope.lookupName(identifier.rawText)
+                    for target in targets:
+                        if bound_symbol is target:
+                            references[target].append(identifier)
+                            break
+                    break
+                parent = getattr(parent, "parent", None)
+
+    generate_arrays = [
+        node
+        for node in semantic_nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.GenerateBlockArray
+    ]
+    for generate_array in generate_arrays:
+        for expression in (
+            generate_array.initialExpression,
+            generate_array.stopExpression,
+            generate_array.iterExpression,
+        ):
+            append_bound_references(expression)
+
+    return references
+
+
+def _named_parameter_override_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect left-hand names of semantically resolved named overrides."""
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    parameter_targets = {
+        (target.declaringDefinition, target.name): target for target in targets
+    }
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+
+    for node in semantic_nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Instance:
+            continue
+        definition = getattr(node, "definition", None)
+        syntax = getattr(node, "syntax", None)
+        hierarchy = getattr(syntax, "parent", None)
+        if definition is None or hierarchy is None:
+            continue
+        syntax_nodes: list[Any] = []
+        hierarchy.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            if type(syntax_node).__name__ != "NamedParamAssignmentSyntax":
+                continue
+            name_token = getattr(syntax_node, "name", None)
+            if name_token is None:
+                continue
+            target = parameter_targets.get((definition, name_token.rawText))
+            if target is not None:
+                references[target].append(name_token)
+
+    return references
+
+
 def _add_project_ranges(
     entries: list[dict[str, Any]],
     targets: list[Any],
@@ -1492,10 +1693,30 @@ def _add_project_ranges(
             return
         for target in generic_targets:
             if node.symbol is target:
-                references[target].append(node.syntax.identifier)
+                syntax = getattr(node, "syntax", None)
+                identifier = getattr(syntax, "identifier", None)
+                if identifier is not None:
+                    references[target].append(identifier)
+                else:
+                    source_range = getattr(node, "sourceRange", None)
+                    if source_range is not None:
+                        references[target].append(source_range)
                 return
 
     compilation.getRoot().visit(visitor)
+    parameter_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "parameters"
+    ]
+    for target, tokens in _parameter_dimension_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    for target, tokens in _named_parameter_override_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
     genvar_targets = [
         target
         for target, category in zip(targets, categories, strict=True)

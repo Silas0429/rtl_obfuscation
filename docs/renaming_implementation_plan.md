@@ -172,17 +172,17 @@ JSON 中的 entry 按 `SymbolKey` 稳定排序。字段缺失、版本不等于 
 | T017 | `interfaces`（仅 interface 定义名） | ACCEPTED |
 | T018 | `interface_instances`、`interface_ports`、`modports` | ACCEPTED |
 | T019 | 全类别组合、默认/显式 ABI 类别和完整项目回归 | ACCEPTED |
-| T020 | 四文件 FIFO 样例、per-file mapping 和单类别 debug 回归 | READY |
+| T020 | 四文件 FIFO 样例、per-file mapping、单类别 debug 回归、occurrence 闭包和内部 state/RAM 重命名 formal | ACCEPTED |
 
 后续阶段只有在类别共享同一 collector、source-range 机制和验证 fixture 时，才允许在
 一个任务合同中列成可独立验收的子项；否则必须拆分。上表只表示实现顺序，不授权
 一次性实现整行。
 
-T013、T014、T015、T016、T017、T018 和 T019 已完成并验收。T006 继续保持 `DRAFT`；
+T013、T014、T015、T016、T017、T018、T019 和 T020 已完成并验收。T006 继续保持 `DRAFT`；
 Yosys 0.53 不能读取当前 `parameter type` fixture，在没有新的可执行 formal 策略前
-不得把 type parameter RTL 改写并入其他任务。当前唯一可启动任务为 T020；它只做
-四文件 FIFO gold、per-file mapping 输出、单类别 debug 回归和必要的 FIFO array
-source-range 修复，不新增重命名类别。
+不得把 type parameter RTL 改写并入其他任务。当前没有新的活动实现任务。
+T020 的 collector 回退规则、`77/292` 冻结摘要和 formal 正负验收设计见
+[t020_fifo_completion_design.md](t020_fifo_completion_design.md)。
 
 ## 8. 黑盒验收标准
 
@@ -254,4 +254,5 @@ formal verification 通过是正确性门禁，不计入效果分数。第一版
 - 已验收 T018：[tasks/T018_interface_member_roundtrip.md](tasks/T018_interface_member_roundtrip.md)
 - 已验收 T019：[tasks/T019_project_regression.md](tasks/T019_project_regression.md)
 - 当前 T020：[tasks/T020_example_fifo_per_file_mapping.md](tasks/T020_example_fifo_per_file_mapping.md)
+- T020 收口设计：[t020_fifo_completion_design.md](t020_fifo_completion_design.md)
 - 当前交接入口：[project_handoff.md](project_handoff.md)

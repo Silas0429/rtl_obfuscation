@@ -1,5 +1,8 @@
 # 当前支持的重命名功能与综合演示
 
+面向交付使用的最新边界、项目结构和 FIFO 命令统一见
+[delivery_guide.md](delivery_guide.md)。本文保留较早的单文件综合样例数据。
+
 本文只描述已经通过黑盒测试和 Yosys formal 的功能，不包含计划中尚未实现的类别。
 单文件能力使用 mapping v1；多文件 project 能力使用 filelist、mapping v2 和 project-level
 formal。`interfaces`、`modules`、`ports` 以及其他 interface ABI 类别必须显式指定，
@@ -10,7 +13,7 @@ formal。`interfaces`、`modules`、`ports` 以及其他 interface ABI 类别必
 | CLI category | 当前支持内容 | 验收结果 | 当前边界 |
 | --- | --- | ---: | --- |
 | `signals` | module 内部、非 port 的 `VariableSymbol`/`NetSymbol`；源码可为 `logic`、`reg`、`wire`、`tri` | 7 entries / 24 tokens | 不含 port、interface member、subroutine argument、aggregate field |
-| `parameters` | module value parameter 与普通 module localparam 的声明和普通表达式引用 | 4 / 10 | 不含 type parameter、type-dimension 引用、generate iteration parameter |
+| `parameters` | module value parameter/localparam 声明、普通表达式、常用 packed/unpacked dimension、generate header 和 resolved named override 左侧 | FIFO：9 / 51 | 不含 type/package/class/interface parameter、defparam、层次引用和任意复杂同名遮蔽；详见交付指南第 4—5 节 |
 | `enum_values` | module 内 enum member 的声明和已绑定引用 | 3 / 8 | 不含 package/class enum 或跨文件引用 |
 | `genvars` | 单个简单 generate-for 的声明、条件、步进和循环体索引 | 1 / 5 | 当前固定样例为 4 次展开；不含多个、嵌套 loop 和 generate block label |
 | `functions` | module function 声明、普通调用；T009 另覆盖传统返回赋值 | 1 / 2 | 不含 extern、DPI、recursive、package/class function |
@@ -39,6 +42,9 @@ generate_blocks typedefs struct_types struct_fields union_fields
 
 `modules`、`ports`、`interfaces`、`interface_instances`、`interface_ports` 和 `modports`
 必须通过重复的 `--category` 显式加入。单 category 选项仍保留，作为定位某一类重命名问题的 debug 模式。
+
+T020 已验收四文件 FIFO、per-file mapping、parameter dimension/named override 和 19 类
+debug 流程。FIFO 固定完整结果为 77 entries / 292 tokens。
 
 ## 2. 演示输入
 

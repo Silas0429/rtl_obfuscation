@@ -36,12 +36,16 @@ def _yosys_script_multifile(
     return f"""
 read_verilog -sv -formal {gold_paths}
 prep -top {top} -flatten
+memory_map -formal
+opt_clean
 rename {top} gold
 design -stash gold_design
 design -reset
 
 read_verilog -sv -formal {gate_paths}
 prep -top {top} -flatten
+memory_map -formal
+opt_clean
 rename {top} gate
 design -stash gate_design
 design -reset
@@ -50,6 +54,7 @@ design -copy-from gold_design -as gold gold
 design -copy-from gate_design -as gate gate
 equiv_make gold gate equiv
 hierarchy -top equiv
+equiv_struct -icells
 equiv_simple -seq {seq}
 equiv_induct -seq {seq}
 equiv_status -assert
@@ -60,12 +65,16 @@ def _yosys_script(gold: Path, gate: Path, top: str, seq: int) -> str:
     return f"""
 read_verilog -sv -formal {gold}
 prep -top {top} -flatten
+memory_map -formal
+opt_clean
 rename {top} gold
 design -stash gold_design
 design -reset
 
 read_verilog -sv -formal {gate}
 prep -top {top} -flatten
+memory_map -formal
+opt_clean
 rename {top} gate
 design -stash gate_design
 design -reset
@@ -74,6 +83,7 @@ design -copy-from gold_design -as gold gold
 design -copy-from gate_design -as gate gate
 equiv_make gold gate equiv
 hierarchy -top equiv
+equiv_struct -icells
 equiv_simple -seq {seq}
 equiv_induct -seq {seq}
 equiv_status -assert

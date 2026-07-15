@@ -326,10 +326,32 @@ def _project_metrics(
     symbol_count = len(entries)
     occurrence_count = len(all_ranges)
     leaked_occurrences = 0
+    # Check only the exact source ranges represented by the mapping.  Gate
+    # offsets differ from gold offsets when replacement names have a
+    # different length, so translate each source range by the cumulative
+    # edit delta in that file before checking the renamed token.
+    records_by_file: dict[str, list[tuple[int, str, str]]] = {}
     for entry in entries:
-        rel_file = entry["declaration"]["file"]
+        for record in _entry_ranges(entry):
+            records_by_file.setdefault(record["file"], []).append(
+                (record["start"], entry["original_name"], entry["renamed_name"])
+            )
+    for rel_file, records in records_by_file.items():
         gate = (output_dir / rel_file).read_bytes()
-        leaked_occurrences += gate.count(entry["original_name"].encode("utf-8"))
+        delta = 0
+        for source_start, original_name, renamed_name in sorted(records):
+            gate_start = source_start + delta
+            renamed_bytes = renamed_name.encode("utf-8")
+            original_bytes = original_name.encode("utf-8")
+            gate_end = gate_start
+            while gate_end < len(gate) and (
+                gate[gate_end : gate_end + 1].isalnum()
+                or gate[gate_end : gate_end + 1] in (b"_", b"$")
+            ):
+                gate_end += 1
+            if gate[gate_start:gate_end] == original_bytes:
+                leaked_occurrences += 1
+            delta += len(renamed_bytes) - len(original_bytes)
 
     symbol_coverage = symbol_count / symbol_count if symbol_count else 0.0
     occurrence_coverage = (
@@ -355,6 +377,59 @@ def _project_metrics(
         "plaintext_leakage_rate": leaked_occurrences / occurrence_count if occurrence_count else 0.0,
         "effective_coverage": (symbol_coverage * occurrence_coverage) ** 0.5,
     }
+
+
+def _write_project_file_maps(
+    mapping: dict[str, Any], file_map_dir: Path
+) -> None:
+    """Write per-source-file audit projections of a project mapping."""
+    records_by_file: dict[str, list[dict[str, Any]]] = {
+        relative_file: [] for relative_file in mapping["files"]
+    }
+    for entry in mapping["entries"]:
+        declaration = entry["declaration"]
+        entry_key = {
+            "category": entry["category"],
+            "scope": entry["scope"],
+            "declaration": declaration,
+        }
+        for role, record in (
+            [("declaration", declaration)]
+            + [("reference", reference) for reference in entry["references"]]
+        ):
+            records_by_file.setdefault(record["file"], []).append(
+                {
+                    "entry_key": entry_key,
+                    "category": entry["category"],
+                    "scope": entry["scope"],
+                    "original_name": entry["original_name"],
+                    "renamed_name": entry["renamed_name"],
+                    "role": role,
+                    "range": {"start": record["start"], "end": record["end"]},
+                }
+            )
+
+    for relative_file, records in records_by_file.items():
+        records.sort(
+            key=lambda record: (
+                record["range"]["start"],
+                record["range"]["end"],
+                record["category"],
+                record["role"],
+            )
+        )
+        per_file_mapping = {
+            "version": 1,
+            "file": relative_file,
+            "top": mapping["top"],
+            "entries": records,
+            "summary": {
+                "entries": len(records),
+                "occurrences": len(records),
+            },
+        }
+        output_path = file_map_dir / Path(relative_file).with_suffix(".json")
+        _write_json(output_path, per_file_mapping)
 
 
 def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
@@ -393,6 +468,8 @@ def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
     _write_json(args.metrics_file, _project_metrics(
         args.source_root, args.output_dir, relative_files, entries
     ))
+    if args.file_map_dir is not None:
+        _write_project_file_maps(mapping, args.file_map_dir)
     return {
         "files": len(relative_files),
         "mapping_entries": len(entries),
@@ -510,10 +587,10 @@ def _gate_project_ranges(
         raise ValueError("gate contains SystemVerilog errors")
 
     # Build module original->renamed name mapping from entries
-    module_name_map: dict[str, str] = {}
+    scope_name_map: dict[str, str] = {}
     for entry in entries:
-        if entry["category"] == "modules":
-            module_name_map[entry["scope"]] = entry["renamed_name"]
+        if entry["category"] in ("modules", "interfaces"):
+            scope_name_map[entry["scope"]] = entry["renamed_name"]
 
     targets_by_category: dict[str, list[Any]] = {}
     matches = []
@@ -538,7 +615,7 @@ def _gate_project_ranges(
             ]
         elif cat == "ports":
             # In gate, port's declaringDefinition.name is the renamed module name
-            expected_scope = module_name_map.get(entry["scope"], entry["scope"])
+            expected_scope = scope_name_map.get(entry["scope"], entry["scope"])
             entry_matches = [
                 target
                 for target in targets
@@ -546,11 +623,12 @@ def _gate_project_ranges(
                 and target.declaringDefinition.name == expected_scope
             ]
         else:
+            expected_scope = scope_name_map.get(entry["scope"], entry["scope"])
             entry_matches = [
                 target
                 for target in targets
                 if target.name == entry["renamed_name"]
-                and target.declaringDefinition.name == entry["scope"]
+                and target.declaringDefinition.name == expected_scope
             ]
         if len(entry_matches) != 1:
             raise ValueError("mapped target was not found uniquely in gate RTL")
@@ -647,6 +725,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt_project.add_argument("--output-dir", required=True, type=Path, dest="output_dir")
     encrypt_project.add_argument("--map", required=True, type=Path, dest="map_file")
     encrypt_project.add_argument("--metrics", required=True, type=Path, dest="metrics_file")
+    encrypt_project.add_argument(
+        "--file-map-dir", required=False, type=Path, dest="file_map_dir"
+    )
     encrypt_project.add_argument("--top", required=True, type=str, dest="top")
     encrypt_project.add_argument(
         "--category",

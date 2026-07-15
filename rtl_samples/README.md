@@ -20,10 +20,11 @@ a child module to exercise instance and named-port handling.
 | 10 | `10_systemverilog_fsm.sv` | `sample10_systemverilog_fsm` | Enum, `always_comb`, `always_ff`, asynchronous reset | SystemVerilog |
 | 11 | `11_supported_obfuscation.sv` | `sample11_supported_obfuscation` | Combined supported categories: signals, parameters, enum values, genvar, function, task, arguments, and generate block label | SystemVerilog |
 
-The combined sample currently exercises eight of the nine supported categories.
-`instances` is covered separately by `06_module_instance.sv`. A one-pass
-`--category all` run on sample 11 produces 22 mapping entries and 61 modified
-tokens.
+The combined sample currently exercises nine of the thirteen categories included
+by `--category all`: signals, parameters, enum values, genvars, functions, tasks,
+arguments, generate block labels, and typedefs. Other categories are covered by
+dedicated fixtures and by `example_fifo/`. A one-pass `--category all` run on
+sample 11 produces 23 mapping entries and 63 modified tokens.
 
 ## File list
 

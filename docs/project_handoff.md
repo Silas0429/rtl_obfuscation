@@ -3,14 +3,16 @@
 本文记录新主 Agent 接手时必须保持的当前目标、真实状态和恢复步骤。功能范围与
 验收规则仍以本文链接的各事实来源为准；本文不替代任务合同。
 
+交付操作优先阅读 [delivery_guide.md](delivery_guide.md)；其中包含 T020 验收后的最新
+功能边界、项目结构、四文件 FIFO 完整命令和 debug 流程。
+
 ## 1. 当前暂停点
 
 - 分支：`main`。
-- 已验收能力停在 T019。
-- T001—T005、T007—T019 状态均为 `ACCEPTED`。
+- 已验收能力停在 T020。
+- T001—T005、T007—T020 状态均为 `ACCEPTED`。
 - T006 是暂缓的 `DRAFT`，不得启动。
-- T020 任务合同已创建并处于 `READY`，尚未启动；当前没有 `IN_PROGRESS` 或
-  `READY_FOR_REVIEW` 任务。
+- 当前没有 `IN_PROGRESS` 或 `READY_FOR_REVIEW` 任务。
 - 新 Agent 接手后不得直接编辑实现；先完成第 7 节的恢复检查，再由主 Agent/子 Agent
   按唯一的 T020 合同继续工作。
 
@@ -155,19 +157,20 @@ cmp -s rtl_samples/11_supported_obfuscation.sv \
   /tmp/rtl_obfuscation_handoff/restored.sv
 ```
 
-预期：25 tests 全部通过；encrypt/decrypt 均报告 `23/63`；三个前端检查退出码
+预期：30 tests 全部通过；encrypt/decrypt 均报告 `23/63`；三个前端检查退出码
 均为 0；formal JSON 为 `formal_equivalence=pass`；`cmp` 退出码为 0。
 
 ## 8. 当前下一任务
 
-T020 [example FIFO/per-file mapping](tasks/T020_example_fifo_per_file_mapping.md) 已冻结为
-`READY`，只允许子 Agent 实现四文件 FIFO 样例的 per-file mapping 输出和既有 FIFO
-array source-range 边界修复。T019 已由主 Agent 独立验收：
+T020 [example FIFO/per-file mapping](tasks/T020_example_fifo_per_file_mapping.md) 已验收：
 
-- 五组 project 组合回归；
-- `all` 与显式 ABI category 边界；
-- 五组 decrypt、前端检查和 Yosys formal；
-- 完整回归共 25 tests。
+- 四文件 FIFO 完整组合为 77 entries / 292 tokens；
+- global/per-file mapping、metrics 和字节级恢复通过；
+- 19 类单步 debug 通过；
+- PySlang、Verible、Icarus 和 Yosys formal 通过；
+- 完整回归共 30 tests。
+
+当前未创建下一张实现任务单。交付范围以 `docs/delivery_guide.md` 为准。
 
 T006 `type_parameters` 继续保持 `DRAFT`。当前 Yosys 0.53 无法解析
 `tests/fixtures/t006_type_parameter.sv` 中的 `parameter type`，不得通过跳过 formal
@@ -181,5 +184,6 @@ T006 `type_parameters` 继续保持 `DRAFT`。当前 Yosys 0.53 无法解析
 - `docs/formal_verification.md`：Yosys 强制流程。
 - `docs/tasks/README.md`：任务状态流程。
 - `docs/current_supported_features.md`：已经验收的黑盒能力和演示命令。
+- `docs/delivery_guide.md`：交付边界、项目结构、FIFO 完整加密和 debug 使用说明。
 - `docs/multifile_interface_port_struct_design.md`：后续多文件和类型/interface 设计。
 - `docs/tasks/TNNN_*.md`：每个历史任务的合同和验收证据。

@@ -19,20 +19,21 @@ scripts/formal_equivalence.py
 
 ## 2. 当前输入边界
 
-第一版只支持：
+当前支持：
 
-- gold 和 gate 各一个 `.sv` 文件。
+- gold 和 gate 各一个 `.sv` 文件，或者各一个只列出显式 `.sv` 相对路径的 filelist。
 - 两个文件具有相同的 top module 名。
 - top 的 port 名、方向和位宽保持一致。
 - 允许内部变量、net、instance 等名称不同。
 - Yosys `read_verilog -sv` 能读取全部语法。
 - 设计能够由 `prep -flatten` 完整展开，不依赖外部 blackbox/library。
+- 静态 memory 能由 `memory_map -formal` 展开为可进入 equivalence/SAT 的逻辑。
 - 顺序逻辑使用两边一致的 clock、reset 和初始语义。
 
-第一版不支持：
+当前不支持：
 
 - top module 或 top port 重命名。
-- 多文件 filelist、include directory、define、library 自动发现。
+- 嵌套 filelist、include directory、define、library 自动发现。
 - macro、DPI、class、动态 testbench 结构。
 - Yosys frontend 不接受的 SystemVerilog 语法。
 - 自动生成 assumption、reset sequence 或 blackbox model。
@@ -60,20 +61,39 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
   --seq 5
 ```
 
+多文件模式显式给出两侧 filelist 和 source root：
+
+```sh
+conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
+  --gold-filelist path/to/gold/design.f \
+  --gold-root path/to/gold \
+  --gate-filelist path/to/gate/design.f \
+  --gate-root path/to/gate \
+  --top unchanged_top_module \
+  --seq 5
+```
+
 ## 4. 内部 Yosys 流程
 
 脚本固定执行：
 
 1. `read_verilog -sv -formal` 读取 gold。
 2. `prep -top <top> -flatten` 处理并展开 gold。
-3. 将 top 改名为 `gold` 并 stash design。
-4. 对 gate 执行相同处理，将 top 改名为 `gate`。
-5. `equiv_make gold gate equiv` 建立等价检查模块。
-6. `equiv_simple -seq 5` 执行 SAT 等价证明。
-7. `equiv_induct -seq 5` 处理仍未证明的顺序等价点。
-8. `equiv_status -assert` 保证任何未证明点都会使命令失败。
+3. `memory_map -formal` 将静态 memory 对称展开为 formal 可处理的逻辑。
+4. `opt_clean` 清理 memory mapping 产生的无用单元和连线。
+5. 将 top 改名为 `gold` 并 stash design。
+6. 对 gate 严格执行相同的 `prep`、`memory_map -formal` 和 `opt_clean`，然后将 top
+   改名为 `gate` 并 stash design。
+7. `equiv_make gold gate equiv` 建立等价检查模块。
+8. `hierarchy -top equiv` 建立 equivalence hierarchy。
+9. `equiv_struct -icells` 按结构和内部 cell 对应关系补充因随机改名丢失的 equivalence。
+10. `equiv_simple -seq 5` 执行 SAT 等价证明。
+11. `equiv_induct -seq 5` 处理仍未证明的顺序等价点。
+12. `equiv_status -assert` 保证任何未证明点都会使命令失败。
 
-不得删除最后的 `-assert`，也不得仅根据日志中出现部分 `success` 判断通过。
+单文件和多文件模式必须生成同一套核心 Yosys pass，不得只修复其中一条路径。gold/gate
+两侧的预处理必须完全对称。不得删除最后的 `-assert`，也不得仅根据日志中出现部分
+`success` 判断通过。
 
 ## 5. 输出契约
 
@@ -98,6 +118,8 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 - 子 Agent 自测时运行一次并把命令、JSON、gold/gate/top 写入任务单。
 - 主 Agent 验收时必须独立重跑，不能只引用子 Agent 的结果。
 - formal 失败时任务不能进入 `READY_FOR_REVIEW` 或 `ACCEPTED`。
+- 修改 formal 流程的任务必须同时提供等价正例和非等价负例；正例必须退出 0 并输出 PASS
+  JSON，负例必须非零退出。identity comparison 只能用作诊断，不能替代 transformed gate。
 
 ## 7. 已验证基线
 
@@ -122,3 +144,14 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 ```
 
 结果：退出码 1，`equiv_status -assert` 报告 4 个未证明的 `$equiv` cells。该负例证明流程不会把明显的行为改变误判为通过。
+
+## 8. T020 多文件 memory/state 基线
+
+T020 使用 `rtl_samples/example_fifo/design.f` 的四文件 FIFO，完整重命名会改动内部 state、
+status signal 和 RAM 名称。固定正向命令见 T020 任务单；必须得到退出码 0 和
+`formal_equivalence=pass`。
+
+专项测试还必须在临时目录基于有效 gate 生成非等价 FIFO 变体，把计数增量从 1 改为 2。
+该负例必须非零退出并由 `equiv_status -assert` 报告未证明单元。临时变体不得写回或替换
+冻结 gold。正负结果共同证明 memory mapping 与 structural matching 能处理合法重命名，
+但不会把真实行为变化误判为等价。
