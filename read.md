@@ -118,42 +118,53 @@ modules ports interfaces interface_instances interface_ports modports
 该边界详见第 6 节。完整 category 语义见
 [重命名表](docs/systemverilog_renaming_table.md)。
 
-### 3.3 单文件加密与解密
+### 3.3 单文件完整流程
 
-以独立样例 `rtl_samples/11_supported_obfuscation.sv` 为例：
+以独立样例 `rtl_samples/11_supported_obfuscation.sv` 为例，按“加密→formal→解密”执行。
 
-```sh
-python -m rtl_obfuscator.rewrite encrypt \
-  --input rtl_samples/11_supported_obfuscation.sv \
-  --output /tmp/rtl_single/gate.sv \
-  --map /tmp/rtl_single/mapping.json \
-  --metrics /tmp/rtl_single/metrics.json \
-  --category all \
-  --name-length 8
-```
+1. 加密：
 
-预期摘要为 1 个文件、23 个 mapping entry、63 个 token。单文件模式只生成
-一个 gate、一个 version 1 mapping 和一个 metrics，不生成 per-file mapping。
+   ```sh
+   python -m rtl_obfuscator.rewrite encrypt \
+     --input rtl_samples/11_supported_obfuscation.sv \
+     --output /tmp/rtl_single/gate.sv \
+     --map /tmp/rtl_single/mapping.json \
+     --metrics /tmp/rtl_single/metrics.json \
+     --category all \
+     --name-length 8
+   ```
 
-使用同一 mapping 解密：
+   预期摘要为 1 个文件、23 个 mapping entry、63 个 token。输出是一个 gate、一个
+   version 1 mapping 和一个 metrics。
 
-```sh
-python -m rtl_obfuscator.rewrite decrypt \
-  --input /tmp/rtl_single/gate.sv \
-  --output /tmp/rtl_single/restored.sv \
-  --map /tmp/rtl_single/mapping.json
-```
+2. 形式等价：
 
-检查恢复结果：
+   ```sh
+   python scripts/formal_equivalence.py \
+     --gold rtl_samples/11_supported_obfuscation.sv \
+     --gate /tmp/rtl_single/gate.sv \
+     --top sample11_supported_obfuscation
+   ```
 
-```sh
-python -c 'from pathlib import Path; assert Path("rtl_samples/11_supported_obfuscation.sv").read_bytes()==Path("/tmp/rtl_single/restored.sv").read_bytes(); print("byte-identical")'
-```
+   必须退出码为 0，并包含 `"formal_equivalence": "pass"`。
+
+3. 解密并检查字节恢复：
+
+   ```sh
+   python -m rtl_obfuscator.rewrite decrypt \
+     --input /tmp/rtl_single/gate.sv \
+     --output /tmp/rtl_single/restored.sv \
+     --map /tmp/rtl_single/mapping.json
+   ```
+
+   ```sh
+   python -c 'from pathlib import Path; assert Path("rtl_samples/11_supported_obfuscation.sv").read_bytes()==Path("/tmp/rtl_single/restored.sv").read_bytes(); print("byte-identical")'
+   ```
 
 ### 3.4 多文件样例 `rtl_samples/example_fifo`
 
-多文件操作以 `rtl_samples/example_fifo` 为例。这是一个可综合的同步 FIFO，
-由 filelist 和四个 SystemVerilog 源文件组成：
+多文件操作以 `rtl_samples/example_fifo` 为例。这是一个可综合的同步 FIFO，由 filelist 和四个
+SystemVerilog 源文件组成：
 
 ```text
 rtl_samples/example_fifo/
@@ -173,53 +184,72 @@ fifo_ctrl.sv
 fifo_top.sv
 ```
 
-`fifo_top` 对外是普通 ports，`fifo_if` 只在 top 内部实例化。因此本样例可以
-显式开启 interface 相关 category；它不代表已支持“顶层 interface port”。
+`fifo_top` 对外是普通 ports，`fifo_if` 只在 top 内部实例化。因此本样例可以显式开启 interface 相关
+category；它不代表已支持“顶层 interface port”。
 
-### 3.5 以 `example_fifo` 为例进行多文件加密
+### 3.5 多文件完整流程
 
-下面从 `design.f` 读取四个文件，同时输出全局 mapping、每文件 mapping
-和 metrics。输出目录与 gold 目录分开：
+下面按“加密→formal→解密”执行：
 
-```sh
-python -m rtl_obfuscator.rewrite encrypt-project \
-  --filelist rtl_samples/example_fifo/design.f \
-  --source-root rtl_samples/example_fifo \
-  --output-dir /tmp/rtl_fifo/gate \
-  --map /tmp/rtl_fifo/mapping.json \
-  --metrics /tmp/rtl_fifo/metrics.json \
-  --file-map-dir /tmp/rtl_fifo/maps \
-  --top fifo_top \
-  --category all \
-  --category modules \
-  --category ports \
-  --category interfaces \
-  --category interface_instances \
-  --category interface_ports \
-  --category modports \
-  --name-length 8
-```
+1. 加密：
 
-预期摘要：
+   ```sh
+   python -m rtl_obfuscator.rewrite encrypt-project \
+     --filelist rtl_samples/example_fifo/design.f \
+     --source-root rtl_samples/example_fifo \
+     --output-dir /tmp/rtl_fifo/gate \
+     --map /tmp/rtl_fifo/mapping.json \
+     --metrics /tmp/rtl_fifo/metrics.json \
+     --file-map-dir /tmp/rtl_fifo/maps \
+     --top fifo_top \
+     --category all \
+     --category modules \
+     --category ports \
+     --category interfaces \
+     --category interface_instances \
+     --category interface_ports \
+     --category modports \
+     --name-length 8
+   ```
 
-```json
-{"files": 4, "mapping_entries": 77, "modified_tokens": 292}
-```
+   预期摘要为 `{"files": 4, "mapping_entries": 77, "modified_tokens": 292}`。输出目录与 gold 分开：
 
-输出结构：
+   ```text
+   /tmp/rtl_fifo/
+   ├── gate/                  # 四个改写后的 .sv 和镜像 design.f
+   ├── maps/                  # 每个 .sv 对应的 occurrence mapping
+   ├── mapping.json           # 整个工程的 original_name <-> renamed_name
+   └── metrics.json           # coverage、leakage 和 affected lines
+   ```
 
-```text
-/tmp/rtl_fifo/
-├── gate/                  # 四个改写后的 .sv 和镜像 design.f
-├── maps/                  # 每个 .sv 对应的 occurrence mapping
-├── mapping.json           # 整个工程的 original_name <-> renamed_name
-└── metrics.json           # coverage、leakage 和 affected lines
-```
+2. 形式等价：
 
-随机名称每次运行可能不同；验收比较对象数、token 数、source range 和功能，
-不比较具体随机字符串。
+   ```sh
+   python scripts/formal_equivalence.py \
+     --gold-filelist rtl_samples/example_fifo/design.f \
+     --gold-root rtl_samples/example_fifo \
+     --gate-filelist /tmp/rtl_fifo/gate/design.f \
+     --gate-root /tmp/rtl_fifo/gate \
+     --top fifo_top
+   ```
 
-### 3.6 查看多文件加密结果
+   必须退出码为 0，并包含 `"formal_equivalence": "pass"`。
+
+3. 解密并检查四个文件：
+
+   ```sh
+   python -m rtl_obfuscator.rewrite decrypt-project \
+     --gate-dir /tmp/rtl_fifo/gate \
+     --source-root rtl_samples/example_fifo \
+     --map /tmp/rtl_fifo/mapping.json \
+     --output-dir /tmp/rtl_fifo/restored
+   ```
+
+   ```sh
+   python -c 'from pathlib import Path; g=Path("rtl_samples/example_fifo"); r=Path("/tmp/rtl_fifo/restored"); fs=["fifo_if.sv","fifo_storage.sv","fifo_ctrl.sv","fifo_top.sv"]; assert all((g/f).read_bytes()==(r/f).read_bytes() for f in fs); print("byte-identical")'
+   ```
+
+### 3.6 查看加密结果
 
 查看改写后的某个 RTL：
 
@@ -243,12 +273,9 @@ python -m json.tool /tmp/rtl_fifo/metrics.json
 
 FIFO 的 symbol/occurrence coverage 应为 `1.0`，`plaintext_leakage_rate` 应为 `0.0`。
 
-### 3.7 自动 debug
+### 3.7 单文件 debug
 
-debug 只生成分 category 加密结果，不提供 debug 解密。每个 category 都重新从
-原始 gold 开始，不会把前一个 category 的 gate 作为下一个输入。
-
-单文件自动运行 13 个默认 category：
+debug 只生成分 category 加密结果，不提供 debug 解密。单文件从原始 gold 独立运行 13 个默认 category：
 
 ```sh
 python -m rtl_obfuscator.rewrite encrypt \
@@ -257,15 +284,11 @@ python -m rtl_obfuscator.rewrite encrypt \
   --name-length 8
 ```
 
-单文件 debug 输出：
+每个 category 输出 `gate.sv`、`mapping.json` 和 `metrics.json`。stdout 是汇总 JSON，其中 `runs` 记录每类的数量。
 
-```text
-/tmp/rtl_single/debug/<category>/gate.sv
-/tmp/rtl_single/debug/<category>/mapping.json
-/tmp/rtl_single/debug/<category>/metrics.json
-```
+### 3.8 多文件 debug
 
-多文件自动运行全部 19 个 category：
+FIFO 从同一份 `design.f` 独立运行全部 19 个 category：
 
 ```sh
 python -m rtl_obfuscator.rewrite encrypt-project \
@@ -276,41 +299,9 @@ python -m rtl_obfuscator.rewrite encrypt-project \
   --name-length 8
 ```
 
-多文件 debug 输出：
+每个 category 输出 `gate/`、`maps/`、`mapping.json` 和 `metrics.json`。每次都基于 gold 重新加密，不会使用前一次运行的 gate。
 
-```text
-/tmp/rtl_fifo/debug/<category>/gate/
-/tmp/rtl_fifo/debug/<category>/maps/
-/tmp/rtl_fifo/debug/<category>/mapping.json
-/tmp/rtl_fifo/debug/<category>/metrics.json
-```
-
-stdout 是一个汇总 JSON，`runs` 按 category 顺序记录每次的 `files`、
-`mapping_entries` 和 `modified_tokens`。即使单文件中某类没有可替换对象，
-也会生成完整子目录并记录 `0/0`。FIFO 的 19 类固定计数见
-[重命名表](docs/systemverilog_renaming_table.md)。
-
-`--debug` 不能与 `--category`、`--output`、`--output-dir`、`--map`、`--metrics`
-或 `--file-map-dir` 混用。如果只想调试一个 category，仍使用普通模式并只传
-一个 `--category <name>`。
-
-### 3.8 多文件解密
-
-完成第 5 节的 PySlang 和 Yosys 验证后，使用全局 version 2 mapping 解密：
-
-```sh
-python -m rtl_obfuscator.rewrite decrypt-project \
-  --gate-dir /tmp/rtl_fifo/gate \
-  --source-root rtl_samples/example_fifo \
-  --map /tmp/rtl_fifo/mapping.json \
-  --output-dir /tmp/rtl_fifo/restored
-```
-
-mapping 是恢复原名的必要文件，应与 gate 一起保存。检查四个恢复文件：
-
-```sh
-python -c 'from pathlib import Path; g=Path("rtl_samples/example_fifo"); r=Path("/tmp/rtl_fifo/restored"); fs=["fifo_if.sv","fifo_storage.sv","fifo_ctrl.sv","fifo_top.sv"]; assert all((g/f).read_bytes()==(r/f).read_bytes() for f in fs); print("byte-identical")'
-```
+`--debug` 不能与 `--category`、`--output`、`--output-dir`、`--map`、`--metrics` 或 `--file-map-dir` 混用。如果只想调试一个 category，使用普通模式并传一个 `--category <name>`。
 
 ## 4. 替换实现机制
 
