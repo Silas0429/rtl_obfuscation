@@ -120,7 +120,10 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                     "transformed_data",
                     "observed_data",
                     "width_enabled",
+                    "helper_data",
                     "current_state",
+                    "sample_pair",
+                    "sample_payload",
                 ],
             ),
             ("parameters", ["WIDTH", "XOR_MASK", "ACTIVE_BITS", "RESET_VALUE"]),
@@ -132,8 +135,12 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                 "arguments",
                 ["function_data", "task_data", "task_mode", "task_result"],
             ),
+            ("instances", ["u_helper"]),
             ("generate_blocks", ["generate_input"]),
             ("typedefs", ["state_t"]),
+            ("struct_types", ["pair_t", "payload_t"]),
+            ("struct_fields", ["low_half", "high_half"]),
+            ("union_fields", ["flat_value", "pair_value"]),
         ]
 
         with TemporaryDirectory() as temporary_directory:
@@ -141,7 +148,7 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
                 repository,
                 gold,
                 Path(temporary_directory) / "demo",
-                {"files": 1, "mapping_entries": 23, "modified_tokens": 63},
+                {"files": 1, "mapping_entries": 33, "modified_tokens": 90},
             )
 
         expected_categories = [
@@ -155,7 +162,7 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
             [entry["original_name"] for entry in entries], expected_names
         )
         renamed_names = [entry["renamed_name"] for entry in entries]
-        self.assertEqual(len(set(renamed_names)), 23)
+        self.assertEqual(len(set(renamed_names)), 33)
         self.assertTrue(
             all(
                 re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{7}", name)
@@ -176,14 +183,14 @@ class AllCategoryRewriteCliTest(unittest.TestCase):
             metrics,
             {
                 "affected_lines": {
-                    "changed": 41,
-                    "total": 61,
-                    "rate": 0.6721311475409836,
+                    "changed": 57,
+                    "total": 86,
+                    "rate": 57 / 86,
                 },
-                "symbols": {"renamed": 23, "eligible": 23, "coverage": 1.0},
+                "symbols": {"renamed": 33, "eligible": 33, "coverage": 1.0},
                 "occurrences": {
-                    "renamed": 63,
-                    "eligible": 63,
+                    "renamed": 90,
+                    "eligible": 90,
                     "coverage": 1.0,
                 },
                 "plaintext_leakage_rate": 0.0,

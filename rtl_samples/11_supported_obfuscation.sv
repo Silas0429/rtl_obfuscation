@@ -23,7 +23,26 @@ module sample11_supported_obfuscation #(
     wire  [3:0] transformed_data;
     tri   [3:0] observed_data;
     wire        width_enabled;
+    logic [3:0] helper_data;
     state_t current_state;
+
+    typedef struct packed {
+        logic [1:0] low_half;
+        logic [1:0] high_half;
+    } pair_t;
+
+    typedef union packed {
+        logic [3:0] flat_value;
+        pair_t      pair_value;
+    } payload_t;
+
+    pair_t   sample_pair;
+    payload_t sample_payload;
+
+    sample11_helper u_helper (
+        .data_in(observed_data),
+        .data_out(helper_data)
+    );
 
     function automatic void apply_mask(
         input logic [3:0] function_data
@@ -43,6 +62,7 @@ module sample11_supported_obfuscation #(
         end
     endtask
 
+    // test line
     for (genvar bit_index = 0; bit_index < 4; bit_index++) begin : generate_input
         assign generated_output[bit_index] = input_data[bit_index];
     end
@@ -53,6 +73,11 @@ module sample11_supported_obfuscation #(
     assign width_enabled = (ACTIVE_BITS == 4);
 
     always_comb begin
+        sample_pair.low_half = helper_data[1:0];
+        sample_pair.high_half = helper_data[3:2];
+        sample_payload.pair_value = sample_pair;
+        sample_payload.flat_value = helper_data;
+
         apply_mask(observed_data);
         select_value(function_result, mode_select, selected_data);
 
@@ -69,4 +94,11 @@ module sample11_supported_obfuscation #(
         endcase
     end
 
+endmodule
+
+module sample11_helper (
+    input  logic [3:0] data_in,
+    output logic [3:0] data_out
+);
+    assign data_out = data_in;
 endmodule

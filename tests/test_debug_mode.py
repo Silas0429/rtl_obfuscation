@@ -11,19 +11,19 @@ import unittest
 
 
 SINGLE_CATEGORIES = {
-    "signals": (7, 24),
+    "signals": (10, 37),
     "parameters": (4, 10),
     "enum_values": (3, 8),
     "genvars": (1, 5),
     "functions": (1, 2),
     "tasks": (1, 2),
     "arguments": (4, 9),
-    "instances": (0, 0),
+    "instances": (1, 1),
     "generate_blocks": (1, 1),
     "typedefs": (1, 2),
-    "struct_types": (0, 0),
-    "struct_fields": (0, 0),
-    "union_fields": (0, 0),
+    "struct_types": (2, 5),
+    "struct_fields": (2, 4),
+    "union_fields": (2, 4),
 }
 
 PROJECT_CATEGORIES = {

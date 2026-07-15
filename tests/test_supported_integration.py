@@ -1,4 +1,4 @@
-"""Integration test for the seven currently supported rename categories."""
+"""Integration test for a selected single-file category pipeline."""
 
 from __future__ import annotations
 
@@ -33,13 +33,13 @@ class SupportedCategoriesIntegrationTest(unittest.TestCase):
         gold = repository / relative_gold
         gold_bytes = gold.read_bytes()
         cases = [
-            ("signals", 7, 24, 21, 0.3442622950819672),
-            ("parameters", 4, 10, 9, 0.14754098360655737),
-            ("enum_values", 3, 8, 8, 0.13114754098360656),
-            ("genvars", 1, 5, 2, 0.03278688524590164),
-            ("functions", 1, 2, 2, 0.03278688524590164),
-            ("tasks", 1, 2, 2, 0.03278688524590164),
-            ("arguments", 4, 9, 8, 0.13114754098360656),
+            ("signals", 10, 37, 30, 30 / 86),
+            ("parameters", 4, 10, 9, 9 / 86),
+            ("enum_values", 3, 8, 8, 8 / 86),
+            ("genvars", 1, 5, 2, 2 / 86),
+            ("functions", 1, 2, 2, 2 / 86),
+            ("tasks", 1, 2, 2, 2 / 86),
+            ("arguments", 4, 9, 8, 8 / 86),
         ]
 
         with TemporaryDirectory() as temporary_directory:
@@ -90,9 +90,9 @@ class SupportedCategoriesIntegrationTest(unittest.TestCase):
             )
             expected_ranges = [
                 ((59, 64), [(300, 305)]),
-                ((96, 104), [(808, 816), (1949, 1957)]),
-                ((286, 297), [(1467, 1478)]),
-                ((334, 345), [(1105, 1116), (1997, 2008)]),
+                ((96, 104), [(1210, 1218), (2566, 2574)]),
+                ((286, 297), [(1886, 1897)]),
+                ((334, 345), [(1507, 1518), (2614, 2625)]),
             ]
             for entry, (declaration, references) in zip(
                 direct_entries, expected_ranges, strict=True
@@ -183,7 +183,7 @@ class SupportedCategoriesIntegrationTest(unittest.TestCase):
                     {
                         "affected_lines": {
                             "changed": changed_lines,
-                            "total": 61,
+                            "total": 86,
                             "rate": rate,
                         },
                         "symbols": {
@@ -220,7 +220,7 @@ class SupportedCategoriesIntegrationTest(unittest.TestCase):
                 total_entries += entry_count
                 total_tokens += token_count
 
-            self.assertEqual((total_entries, total_tokens), (21, 60))
+            self.assertEqual((total_entries, total_tokens), (24, 73))
             final_tree = pyslang.syntax.SyntaxTree.fromFile(str(current))
             final_compilation = pyslang.ast.Compilation()
             final_compilation.addSyntaxTree(final_tree)

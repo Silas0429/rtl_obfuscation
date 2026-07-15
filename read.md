@@ -134,7 +134,8 @@ modules ports interfaces interface_instances interface_ports modports
      --name-length 8
    ```
 
-   预期摘要为 1 个文件、23 个 mapping entry、63 个 token。输出是一个 gate、一个
+   预期摘要为 1 个文件、33 个 mapping entry、90 个 token。该样例覆盖单文件模式的全部
+   13 个 category。输出是一个 gate、一个
    version 1 mapping 和一个 metrics。
 
 2. 形式等价：
