@@ -1,7 +1,7 @@
 # 未来扩展与已知问题
 
 本文件只记录当前交付范围之外的事项。已经实现的功能和使用方法见根目录
-[`read.md`](../read.md)，不要在本文件复制使用说明。
+[`README.md`](../README.md)，不要在本文件复制使用说明。
 
 ## 1. 优先解决的问题
 
@@ -60,6 +60,9 @@ dimension 中的第一个 `WIDTH` 绑定外层 parameter，第二个是新 field
 
 当前 filelist 只接受显式 `.sv` 相对路径。后续可扩展：
 
+- `project-root + top` 的递归发现、依赖闭包和工程级加密已经形成分阶段实施方案，见
+  [`project_root_top_roadmap.md`](project_root_top_roadmap.md)；该文档描述计划，不代表当前
+  已交付能力；
 - include directory、define、library 和嵌套 filelist；
 - 未解析 IP/blackbox 的受控模型；
 - preserve/allow/deny 规则；

@@ -1,0 +1,1 @@
+`define T027_INCLUDE_VALUE 1

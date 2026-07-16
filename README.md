@@ -393,4 +393,6 @@ parameter 与 generate-local genvar 同名、不同 aggregate 类型中的同名
 - [SystemVerilog 重命名表](docs/systemverilog_renaming_table.md)：每个 category 的当前语义和边界。
 - [验证流程](docs/formal_verification.md)：PySlang、Yosys、解密和正负 formal 基线。
 - [未来事项](docs/future_work.md)：未实现能力、工具链限制和推荐扩展顺序。
+- [`project-root + top` 路线图](docs/project_root_top_roadmap.md)：计划中的工程发现、top 闭包、
+  五类对象加密和 RISC-V-Vector 端到端验收；不代表当前已交付能力。
 - `docs/tasks/`：开发与验收历史，仅用于追溯。
