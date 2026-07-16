@@ -10,7 +10,7 @@ from typing import Any
 
 import pyslang
 
-from rtl_obfuscator import inventory
+from rtl_obfuscator import inventory, project
 
 
 def _write_bytes(path: Path, content: bytes) -> None:
@@ -926,12 +926,46 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     decrypt.add_argument("--input", required=True, type=Path, dest="input_file")
     decrypt.add_argument("--output", required=True, type=Path, dest="output_file")
     decrypt.add_argument("--map", required=True, type=Path, dest="map_file")
+
+    inspect_project = operations.add_parser("inspect-project")
+    inspect_project.add_argument(
+        "--project-root", required=True, type=Path, dest="project_root"
+    )
+    inspect_project.add_argument("--top", required=True)
+    inspect_project.add_argument("--report", required=True, type=Path, dest="report")
+    inspect_project.add_argument(
+        "--include-dir", action="append", default=[], dest="include_dirs"
+    )
+    inspect_project.add_argument(
+        "--define", action="append", default=[], dest="defines"
+    )
+    inspect_project.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        choices=("signals", "ports", "instances", "struct", "interface"),
+        dest="categories",
+    )
     return parser
 
 
 def main() -> int:
     parser = _create_argument_parser()
     args = parser.parse_args()
+    if args.operation == "inspect-project":
+        try:
+            _, summary, success = project.inspect_project(
+                project_root=args.project_root,
+                top=args.top,
+                report_path=args.report,
+                include_dirs=args.include_dirs,
+                defines=args.defines,
+                categories=args.categories,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        print(json.dumps(summary, separators=(",", ":")))
+        return 0 if success else 1
     try:
         if args.operation == "encrypt":
             _validate_encrypt_mode(args)

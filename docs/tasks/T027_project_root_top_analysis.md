@@ -1,6 +1,6 @@
 # T027：`project-root + top` 工程闭包与 AST inventory
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T026 `ACCEPTED`
@@ -681,51 +681,44 @@ rtl_samples/RISC-V-Vector/**
 
 ## 17. 子 Agent 执行记录
 
-开始时填写：
-
 ```text
-start_time:
-starting_head:
-first_command:
-confirmed_unique_active_task:
-pyslang_api_probe:
+start_time: 2026-07-16 17:39:58 CST
+starting_head: 1dcebb4
+first_command: `sed -n '1,260p' AGENTS.md; sed -n '1,260p' docs/tasks/README.md; rg -n '^# T027|^- 状态：|^## ' docs/tasks/T027*.md docs/tasks/*.md; sed -n '1,420p' docs/tasks/T027*.md; git status --short --branch; git rev-parse --short HEAD`
+confirmed_unique_active_task: yes; T027 is the only `READY` task and no task is `IN_PROGRESS` or `READY_FOR_REVIEW`
+pyslang_api_probe: PySlang 11.0.0 confirmed `SyntaxTree.fromFiles(paths, SourceManager, Bag)` returns one `CompilationUnitSyntax`; `SourceManager.addUserDirectories(path)` accepts one directory per call; `PreprocessorOptions.predefines` is a list assigned through `Bag.preprocessorOptions`; `CompilationOptions.topModules` is a set assigned through `Bag.compilationOptions`; `RootSymbol.topInstances` provides the selected `InstanceSymbol`, whose `definition`, `body`, `location`, and source buffer resolve through `Compilation.sourceManager.getFullPath()`.
+phase_a_gate: integration, top_abi, macro_identifier, and the fixed 19-file RISC closure each compiled with one shared SourceManager / combined SyntaxTree / compilation unit, exactly one requested top instance, and 0 parse / semantic errors.
+phase_b_gate: candidate and definition indexes matched the frozen fixtures; all eight negative CLI cases returned exit 1 with the required primary code; explicit include-dir and command-line define disambiguation returned exit 0 with 0 compilation errors.
+phase_c_gate: integration reached exactly 3 modules / 1 interface / 6 files and RISC reached exactly 17 modules / 0 interfaces / 19 files; both strict closure compilations reported 0 parse and 0 semantic errors.
+phase_d_gate: integration inventory matched exactly 32 entries / 107 occurrences; top ABI matched the exact 8 preserved entries; macro-generated `macro_signal` was preserved with `declaration=null`; every emitted physical range was source-validated and deterministic.
+finish_time: 2026-07-16 18:03:15 CST
 ```
 
 ## 18. 偏差或阻塞
 
-没有偏差时填写 `None`。发现 API、输入或合同不一致时记录：
-
-```text
-observed_behavior:
-minimal_reproduction:
-contract_conflict:
-proposed_minimal_resolution:
-status:
-```
+None.
 
 不得在本节记录问题后仍自行扩大实现范围。
 
 ## 19. READY_FOR_REVIEW 交付证据
 
-子 Agent 完成后填写：
-
 ```text
-changed_files:
-exact_commands:
-exit_codes:
-integration_stdout:
-integration_report_summary:
-negative_fixture_results:
-risc_report_summary:
-range_oracle_result:
-determinism_result:
-target_unittest_result:
-full_unittest_result:
-risc_immutability_result:
-git_diff_check:
+changed_files: rtl_obfuscator/project.py (new); rtl_obfuscator/inventory.py; rtl_obfuscator/rewrite.py; tests/test_project_root_inspect.py (new); docs/tasks/T027_project_root_top_analysis.md
+exact_commands: `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/project.py rtl_obfuscator/inventory.py rtl_obfuscator/rewrite.py tests/test_project_root_inspect.py`; `conda run -n rtl_obfuscation python -m unittest tests.test_project_root_inspect -v`; both fixed integration CLI commands followed by `cmp`; fixed RISC CLI command; `conda run -n rtl_obfuscation python -m unittest discover -s tests -v`; `git diff --exit-code 5586a30 -- rtl_samples/RISC-V-Vector`; `git diff --check`; `git status --short`
+exit_codes: all positive, py_compile, unittest, cmp, RISC immutability, and diff-check commands exited 0; each of the eight fixed negative CLI cases exited 1; invalid top and outside-root include-dir probes exited 2
+integration_stdout: `{"candidate_files":7,"closure_files":6,"definitions":6,"eligible_occurrences":107,"eligible_symbols":32,"reachable_interfaces":1,"reachable_modules":3,"status":"pass","top":"project_top"}`
+integration_report_summary: 7 candidates; 6 definitions; 6 closure files; 3 reachable modules; 1 reachable interface; exact source compile order `internal_if.sv, structs.sv, leaf.sv, child.sv, top_bundle.sv`; 0 parse errors; 0 semantic errors; 32 eligible symbols / 107 occurrences
+negative_fixture_results: missing_top/TOP_NOT_FOUND; ambiguous_top/AMBIGUOUS_TOP; missing_module/UNRESOLVED_MODULE; ambiguous_definition/AMBIGUOUS_DEFINITION; missing_include/MISSING_INCLUDE; ambiguous_include/AMBIGUOUS_INCLUDE; unresolved_macro/UNRESOLVED_MACRO; ambiguous_macro/AMBIGUOUS_MACRO; all exit 1 with one primary diagnostic
+risc_report_summary: 56 candidates; 38 definitions; exact 17 reachable modules; 0 interfaces; exact 19 closure files; 0 parse errors; 0 semantic errors; `params.sv`, `sva/**`, and `vector_simulator/**` excluded
+range_oracle_result: PASS; every definition and inventory declaration/reference range read back as its exact UTF-8 identifier; no duplicate or overlapping inventory ranges; macro-generated declaration remained null
+determinism_result: PASS; integration and RISC repeated stdout and report bytes matched exactly; fixed integration `cmp` exited 0
+target_unittest_result: `Ran 16 tests in 8.756s`; `OK`
+full_unittest_result: `Ran 49 tests in 17.944s`; `OK`
+risc_immutability_result: `git diff --exit-code 5586a30 -- rtl_samples/RISC-V-Vector` exited 0
+git_diff_check: exit 0; status contains only the five files allowed by section 15
 formal_verification: N/A
 formal_reason: no rewritten RTL is produced by T027
-uncovered_boundaries:
+uncovered_boundaries: no behavior beyond the contract was added; macro-generated definitions remain `UNSUPPORTED_MACRO_IDENTIFIER`, and T028 rewrite/mapping/gate behavior remains out of scope
 ```
 
 ## 20. 主 Agent 独立验收
@@ -745,3 +738,20 @@ uncovered_boundaries:
 只有全部通过时，主 Agent 才能把本任务设置为 `ACCEPTED`。任一闭包集合、error count、oracle、
 确定性或 legacy 回归不符，都必须退回 `IN_PROGRESS`；不能以“RISC 很大”或“T028 会处理”为由
 接受部分实现。
+
+### 主 Agent 验收结果
+
+- `ACCEPTED`（2026-07-16，主 Agent 独立验收）。
+- `py_compile` 退出码 0；16 项目标 unittest 在 8.694 秒内全部通过。
+- 主 Agent 独立执行两次 integration、两次 RISC、top ABI 和 macro CLI；integration stdout
+  精确为合同固定值，两组重复报告均逐字节一致。
+- 独立 JSON/range 审计通过：integration 为 32 symbols / 107 occurrences，验证 126 个物理
+  range；top ABI 精确 8 个 preserved 对象；macro declaration 为 null；RISC 为 56 candidates、
+  17 modules、19 closure files、1085 eligible symbols、5529 个物理 range，且 0 parse/
+  semantic error。
+- 八个负向 CLI 分别返回合同固定 primary code 和退出码 1；显式 include-dir、command-line
+  define 两个消歧正例退出码 0，define 未虚构 source provider。
+- 完整回归为 `Ran 49 tests in 17.856s`、`OK`。
+- `rtl_samples/RISC-V-Vector` 相对 `5586a30` 无变化；T027 固定 fixtures 相对 `1dcebb4`
+  无变化；允许文件审计和 `git diff --check` 通过。
+- Formal verification：`N/A`，本任务没有产生重写 RTL；未运行 identity formal。

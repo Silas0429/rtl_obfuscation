@@ -5,18 +5,18 @@
 本路线图把 `project-root + top` 能力拆成三张粗粒度任务单，而不是为文件发现、宏、闭包、
 inventory 和每一种重命名对象分别建立任务。三张任务单分别交付一条可独立运行的纵向能力：
 
-| 任务 | 一次性交付的能力 | 是否产生重写 RTL |
-| --- | --- | --- |
-| T027 | 工程发现、预处理依赖、top 闭包、严格编译、AST inventory 和精确 source ranges | 否 |
-| T028 | 对闭包执行五类对象的选择、加密、mapping、重编译、解密和小型工程 formal | 是 |
-| T029 | RISC-V-Vector 可综合视图、真实工程加密、解密和 formal 集成验收 | 是 |
+| 任务 | 状态 | 一次性交付的能力 | 是否产生重写 RTL |
+| --- | --- | --- | --- |
+| T027 | `ACCEPTED` | 工程发现、预处理依赖、top 闭包、严格编译、AST inventory 和精确 source ranges | 否 |
+| T028 | 未创建 | 对闭包执行五类对象的选择、加密、mapping、重编译、解密和小型工程 formal | 是 |
+| T029 | 未创建 | RISC-V-Vector 可综合视图、真实工程加密、解密和 formal 集成验收 | 是 |
 
 每张任务单内部可以有多个按顺序执行的门禁，但只在整张任务完成后发生一次
 `READY_FOR_REVIEW -> ACCEPTED` 交接。仍然遵守
 [`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
-本路线图不是活动任务合同。实施时由主 Agent 依次建立 T027、T028、T029，并在设置为
+本路线图不是活动任务合同。T027 已验收；后续由主 Agent 依次建立 T028、T029，并在设置为
 `READY` 前冻结该任务的 fixture、oracle、命令和预期 JSON。T006 继续保持 `DRAFT`，本路线图
 不实现或重命名 parameter。
 

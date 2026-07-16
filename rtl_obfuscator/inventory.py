@@ -1870,6 +1870,501 @@ def _add_project_ranges(
             raise ValueError("overlapping identifier ranges")
 
 
+def _selected_nodes(top_instance: Any) -> list[Any]:
+    """Return the semantic tree rooted at one explicitly selected top.
+
+    Interface ports use an implicit interface instance that is not a child of
+    the module instance traversal. Include that instance body explicitly so
+    top ABI interface members can be classified without visiting unrelated
+    compilation roots.
+    """
+    nodes: list[Any] = []
+    top_instance.visit(nodes.append)
+    interface_connections: list[Any] = []
+    for node in list(nodes):
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.InterfacePort:
+            continue
+        connection = getattr(node, "connection", ())
+        if connection and getattr(connection[0], "kind", None) == pyslang.ast.SymbolKind.Instance:
+            interface_connections.append(connection[0])
+    for instance in interface_connections:
+        instance.visit(nodes.append)
+    return nodes
+
+
+def _deduplicate_symbols(symbols: list[Any], source_manager: Any) -> list[Any]:
+    unique: dict[tuple[str, int, str], Any] = {}
+    for symbol in symbols:
+        unique.setdefault(_symbol_sort_key(symbol, source_manager), symbol)
+    return [unique[key] for key in sorted(unique)]
+
+
+def _location_record_from_manager(
+    source_root: Path,
+    source_manager: Any,
+    location: Any,
+    byte_length: int,
+) -> dict[str, Any]:
+    source_path = Path(source_manager.getFullPath(location.buffer)).resolve()
+    relative = source_path.relative_to(source_root.resolve()).as_posix()
+    return {
+        "file": relative,
+        "start": location.offset,
+        "end": location.offset + byte_length,
+    }
+
+
+def _token_record_from_manager(
+    source_root: Path,
+    source_manager: Any,
+    token: Any,
+    expected_name: str,
+) -> dict[str, Any] | None:
+    if hasattr(token, "location"):
+        location = token.location
+        if source_manager.isMacroLoc(location):
+            location = source_manager.getFullyOriginalLoc(location)
+        raw_text = getattr(token, "rawText", None)
+        if raw_text is None:
+            raw_text = getattr(token, "name", None)
+        byte_length = len(expected_name.encode("utf-8"))
+        if isinstance(raw_text, str) and raw_text == expected_name:
+            byte_length = len(raw_text.encode("utf-8"))
+        record = _location_record_from_manager(
+            source_root, source_manager, location, byte_length
+        )
+    else:
+        start = token.start
+        end = token.end
+        if source_manager.isMacroLoc(start):
+            start = source_manager.getFullyOriginalLoc(start)
+        if source_manager.isMacroLoc(end):
+            end = source_manager.getFullyOriginalLoc(end)
+        start_path = Path(source_manager.getFullPath(start.buffer)).resolve()
+        end_path = Path(source_manager.getFullPath(end.buffer)).resolve()
+        if start_path != end_path:
+            return None
+        record = {
+            "file": start_path.relative_to(source_root.resolve()).as_posix(),
+            "start": start.offset,
+            "end": end.offset,
+        }
+    source = (source_root / record["file"]).read_bytes()
+    if source[record["start"] : record["end"]] != expected_name.encode("utf-8"):
+        return None
+    return record
+
+
+def _top_project_references(
+    targets: list[Any],
+    categories: list[str],
+    compilation: pyslang.ast.Compilation,
+    top: str,
+) -> dict[Any, list[Any]]:
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    generic_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "signals"
+    ]
+
+    def visitor(node: Any) -> None:
+        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+            return
+        for target in generic_targets:
+            if node.symbol is not target:
+                continue
+            syntax = getattr(node, "syntax", None)
+            identifier = getattr(syntax, "identifier", None)
+            references[target].append(
+                identifier if identifier is not None else node.sourceRange
+            )
+            return
+
+    compilation.getRoot().visit(visitor)
+
+    by_helper = (
+        (
+            ("ports",),
+            lambda selected: _module_port_reference_tokens(
+                [
+                    target
+                    for target in selected
+                    if getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
+                ],
+                [
+                    "ports"
+                    for target in selected
+                    if getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
+                ],
+                compilation,
+                top,
+            ),
+        ),
+        (
+            ("struct_types",),
+            lambda selected: _type_alias_reference_tokens(selected, compilation),
+        ),
+        (
+            ("struct_fields",),
+            lambda selected: _struct_union_field_reference_tokens(selected, compilation),
+        ),
+        (
+            ("interfaces",),
+            lambda selected: _interface_reference_tokens(selected, compilation),
+        ),
+        (
+            ("interface_instances",),
+            lambda selected: _interface_instance_reference_tokens(selected, compilation),
+        ),
+        (
+            ("interface_ports",),
+            lambda selected: _interface_port_reference_tokens(selected, compilation),
+        ),
+    )
+    for helper_categories, helper in by_helper:
+        selected = [
+            target
+            for target, category in zip(targets, categories, strict=True)
+            if category in helper_categories
+        ]
+        for target, tokens in helper(selected).items():
+            references[target].extend(tokens)
+    selected_interface_ports = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "ports"
+        and getattr(target, "kind", None) == pyslang.ast.SymbolKind.InterfacePort
+    ]
+    for target, tokens in _interface_instance_reference_tokens(
+        selected_interface_ports, compilation
+    ).items():
+        references[target].extend(tokens)
+    return references
+
+
+def build_top_project_inventory(
+    *,
+    compilation: pyslang.ast.Compilation,
+    top_instance: Any,
+    source_root: Path,
+    categories: list[str],
+) -> tuple[dict[str, list[dict[str, Any]]], set[str], set[str]]:
+    """Build inventory from one selected top instance traversal boundary."""
+    nodes = _selected_nodes(top_instance)
+    source_manager = compilation.sourceManager
+    top = top_instance.definition.name
+
+    module_instances = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Instance
+        and getattr(node, "definition", None) is not None
+        and node.definition.definitionKind == pyslang.ast.DefinitionKind.Module
+    ]
+    interface_instances = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Instance
+        and getattr(node, "definition", None) is not None
+        and node.definition.definitionKind == pyslang.ast.DefinitionKind.Interface
+        and getattr(node, "syntax", None) is not None
+    ]
+    interface_ports = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.InterfacePort
+    ]
+    reachable_modules = {instance.definition.name for instance in module_instances}
+    reachable_interfaces = {
+        instance.definition.name for instance in interface_instances
+    } | {
+        port.interfaceDef.name
+        for port in interface_ports
+        if getattr(port, "interfaceDef", None) is not None
+    }
+
+    port_symbols = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Port
+        and getattr(node, "declaringDefinition", None) is not None
+        and node.declaringDefinition.definitionKind == pyslang.ast.DefinitionKind.Module
+        and node.declaringDefinition.name in reachable_modules
+    ]
+    port_internal_symbols = {
+        port.internalSymbol for port in port_symbols if port.internalSymbol is not None
+    }
+    function_return_variables = {
+        node.returnValVar
+        for node in nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Subroutine
+        and node.subroutineKind == pyslang.ast.SubroutineKind.Function
+        and node.returnValVar is not None
+    }
+    signal_symbols = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None)
+        in (pyslang.ast.SymbolKind.Variable, pyslang.ast.SymbolKind.Net)
+        and node not in port_internal_symbols
+        and node not in function_return_variables
+        and getattr(node, "declaringDefinition", None) is not None
+        and node.declaringDefinition.definitionKind == pyslang.ast.DefinitionKind.Module
+        and node.declaringDefinition.name in reachable_modules
+    ]
+    child_instances = [
+        instance
+        for instance in module_instances
+        if instance is not top_instance and getattr(instance, "syntax", None) is not None
+    ]
+
+    root_nodes: list[Any] = []
+    compilation.getRoot().visit(root_nodes.append)
+    all_type_aliases = [
+        node
+        for node in root_nodes
+        if getattr(node, "kind", None) == pyslang.ast.SymbolKind.TypeAlias
+        and (
+            getattr(node, "isStruct", False)
+            or getattr(node, "isUnpackedStruct", False)
+        )
+    ]
+    selected_values = [
+        node
+        for node in nodes
+        if getattr(node, "kind", None)
+        in (
+            pyslang.ast.SymbolKind.Variable,
+            pyslang.ast.SymbolKind.Net,
+            pyslang.ast.SymbolKind.FormalArgument,
+        )
+    ]
+    used_type_aliases = [
+        alias
+        for alias in all_type_aliases
+        if any(
+            getattr(getattr(value, "declaredType", None), "type", None) is alias
+            for value in selected_values
+        )
+    ]
+    struct_fields: list[Any] = []
+    field_owner: dict[Any, Any] = {}
+    for alias in used_type_aliases:
+        resolved = alias.targetType.type
+        for field in resolved:
+            struct_fields.append(field)
+            field_owner[field] = alias
+
+    interface_definitions: list[Any] = []
+    for instance in interface_instances:
+        interface_definitions.append(instance.definition)
+    for port in interface_ports:
+        if getattr(port, "interfaceDef", None) is not None:
+            interface_definitions.append(port.interfaceDef)
+    interface_definitions = _deduplicate_symbols(
+        interface_definitions, source_manager
+    )
+    interface_member_symbols: list[Any] = []
+    modport_symbols: list[Any] = []
+    for node in nodes:
+        definition = getattr(node, "declaringDefinition", None)
+        if definition is None or definition.name not in reachable_interfaces:
+            continue
+        if getattr(node, "kind", None) in (
+            pyslang.ast.SymbolKind.Variable,
+            pyslang.ast.SymbolKind.Net,
+        ):
+            interface_member_symbols.append(node)
+        elif getattr(node, "kind", None) == pyslang.ast.SymbolKind.Modport:
+            modport_symbols.append(node)
+
+    top_port_symbols: set[Any] = {
+        port for port in port_symbols if port.declaringDefinition.name == top
+    } | {
+        port
+        for port in interface_ports
+        if port.declaringDefinition.name == top
+    }
+    top_internal_symbols = {
+        port.internalSymbol
+        for port in port_symbols
+        if port in top_port_symbols and port.internalSymbol is not None
+    }
+    top_abi_types = {
+        alias
+        for alias in used_type_aliases
+        if any(
+            value in top_internal_symbols
+            and getattr(getattr(value, "declaredType", None), "type", None) is alias
+            for value in selected_values
+        )
+    }
+    top_abi_interfaces = {
+        port.interfaceDef
+        for port in interface_ports
+        if port in top_port_symbols and getattr(port, "interfaceDef", None) is not None
+    }
+
+    candidates: list[tuple[Any, str, str, str | None]] = []
+
+    def append_symbols(
+        symbols: list[Any], category: str, scope_function: Any, reason_function: Any
+    ) -> None:
+        if category not in categories:
+            return
+        for symbol in _deduplicate_symbols(symbols, source_manager):
+            candidates.append(
+                (symbol, category, scope_function(symbol), reason_function(symbol))
+            )
+
+    append_symbols(
+        signal_symbols,
+        "signals",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: "macro_expansion"
+        if source_manager.isMacroLoc(symbol.location)
+        else None,
+    )
+    all_module_ports = [*port_symbols, *interface_ports]
+    append_symbols(
+        all_module_ports,
+        "ports",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: "top_port" if symbol in top_port_symbols else None,
+    )
+    append_symbols(
+        child_instances,
+        "instances",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: None,
+    )
+    append_symbols(
+        used_type_aliases,
+        "struct_types",
+        lambda symbol: "$unit",
+        lambda symbol: "top_abi_type" if symbol in top_abi_types else None,
+    )
+    append_symbols(
+        struct_fields,
+        "struct_fields",
+        lambda symbol: f"$unit::{field_owner[symbol].name}",
+        lambda symbol: "top_abi_type"
+        if field_owner[symbol] in top_abi_types
+        else None,
+    )
+    append_symbols(
+        interface_definitions,
+        "interfaces",
+        lambda symbol: "$unit",
+        lambda symbol: "top_abi_type" if symbol in top_abi_interfaces else None,
+    )
+    append_symbols(
+        interface_instances,
+        "interface_instances",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: None,
+    )
+    append_symbols(
+        interface_member_symbols,
+        "interface_ports",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: "top_abi_type"
+        if symbol.declaringDefinition in top_abi_interfaces
+        else None,
+    )
+    append_symbols(
+        modport_symbols,
+        "modports",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: "top_abi_type"
+        if symbol.declaringDefinition in top_abi_interfaces
+        else None,
+    )
+
+    targets = [candidate[0] for candidate in candidates]
+    target_categories = [candidate[1] for candidate in candidates]
+    references = _top_project_references(
+        targets, target_categories, compilation, top
+    )
+    eligible: list[dict[str, Any]] = []
+    preserved: list[dict[str, Any]] = []
+    all_ranges: dict[str, list[tuple[int, int]]] = {}
+    for target, category, scope, reason in candidates:
+        declaration: dict[str, Any] | None
+        if source_manager.isMacroLoc(target.location):
+            declaration = None
+        else:
+            declaration = _location_record_from_manager(
+                source_root,
+                source_manager,
+                target.location,
+                len(target.name.encode("utf-8")),
+            )
+        reference_records = []
+        for token in references[target]:
+            record = _token_record_from_manager(
+                source_root, source_manager, token, target.name
+            )
+            if record is not None and record != declaration:
+                reference_records.append(record)
+        unique_references = {
+            (record["file"], record["start"], record["end"]): record
+            for record in reference_records
+        }
+        ordered_references = [
+            unique_references[key] for key in sorted(unique_references)
+        ]
+        entry = {
+            "category": category,
+            "scope": scope,
+            "name": target.name,
+            "declaration": declaration,
+            "references": ordered_references,
+            "occurrences": (1 if declaration is not None else 0)
+            + len(ordered_references),
+            "reason": reason,
+        }
+        destination = preserved if reason is not None else eligible
+        destination.append(entry)
+        for record in ([declaration] if declaration is not None else []) + ordered_references:
+            source = (source_root / record["file"]).read_bytes()
+            if source[record["start"] : record["end"]] != target.name.encode("utf-8"):
+                raise ValueError("project range does not contain the target name")
+            all_ranges.setdefault(record["file"], []).append(
+                (record["start"], record["end"])
+            )
+
+    def entry_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+        declaration = entry["declaration"]
+        return (
+            entry["category"],
+            entry["scope"],
+            declaration["file"] if declaration is not None else "\uffff",
+            declaration["start"] if declaration is not None else 2**63,
+            entry["name"],
+        )
+
+    eligible.sort(key=entry_key)
+    preserved.sort(key=entry_key)
+    for ranges in all_ranges.values():
+        ordered = sorted(ranges)
+        if len(ordered) != len(set(ordered)):
+            raise ValueError("duplicate project inventory ranges")
+        if any(
+            current_start < previous_end
+            for (_, previous_end), (current_start, _) in zip(
+                ordered, ordered[1:]
+            )
+        ):
+            raise ValueError("overlapping project inventory ranges")
+    return (
+        {"eligible": eligible, "preserved": preserved, "unsupported": []},
+        reachable_modules,
+        reachable_interfaces,
+    )
+
+
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="List random-name mappings for SystemVerilog identifiers."

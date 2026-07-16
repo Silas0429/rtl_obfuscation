@@ -58,11 +58,11 @@ dimension 中的第一个 `WIDTH` 绑定外层 parameter，第二个是新 field
 
 ## 3. 工程输入与外部 ABI
 
-当前 filelist 只接受显式 `.sv` 相对路径。后续可扩展：
+当前 `inspect-project` 已支持 `project-root + top` 的递归发现、active include/宏依赖、top 闭包、
+严格编译和五组 AST inventory；加密命令仍只接受显式 `.sv` filelist。后续可扩展：
 
-- `project-root + top` 的递归发现、依赖闭包和工程级加密已经形成分阶段实施方案，见
-  [`project_root_top_roadmap.md`](project_root_top_roadmap.md)；该文档描述计划，不代表当前
-  已交付能力；
+- 让 `encrypt-project` 消费已验收的 project-root 闭包并输出 mapping v3，见
+  [`project_root_top_roadmap.md`](project_root_top_roadmap.md) 的 T028/T029；
 - include directory、define、library 和嵌套 filelist；
 - 未解析 IP/blackbox 的受控模型；
 - preserve/allow/deny 规则；
