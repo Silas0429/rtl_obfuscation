@@ -814,19 +814,18 @@ def _error_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def inspect_project(
+def analyze_project(
     *,
     project_root: Path,
     top: str,
-    report_path: Path,
     include_dirs: Iterable[Path | str] = (),
     defines: Iterable[str] = (),
     categories: Iterable[str] = (),
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
-    """Inspect a project and atomically emit its schema-v1 report.
+    """Analyze a project without writing any output artifacts.
 
     Invalid invocation values raise ``ValueError``. Project analysis failures
-    are returned as ``success=False`` after an error report is written.
+    are returned as ``success=False`` with the same schema used by the CLI.
     """
     root, normalized_dirs, normalized_defines, expanded_categories = (
         _validate_configuration(project_root, top, include_dirs, defines, categories)
@@ -925,7 +924,6 @@ def inspect_project(
         report["inventory"] = inventory_report
         report["diagnostics"] = []
         result_summary = _summary(report)
-        _write_json_atomic(report_path, report)
         return report, result_summary, True
     except (ProjectAnalysisError, OSError, RuntimeError, ValueError) as error:
         if not isinstance(error, ProjectAnalysisError):
@@ -959,5 +957,25 @@ def inspect_project(
                     )
                 ],
             }
-        _write_json_atomic(report_path, report)
         return report, _error_summary(report), False
+
+
+def inspect_project(
+    *,
+    project_root: Path,
+    top: str,
+    report_path: Path,
+    include_dirs: Iterable[Path | str] = (),
+    defines: Iterable[str] = (),
+    categories: Iterable[str] = (),
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    """Analyze a project and atomically emit its schema-v1 report."""
+    report, summary, success = analyze_project(
+        project_root=project_root,
+        top=top,
+        include_dirs=include_dirs,
+        defines=defines,
+        categories=categories,
+    )
+    _write_json_atomic(report_path, report)
+    return report, summary, success

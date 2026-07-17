@@ -1,8 +1,8 @@
 # RTL Obfuscation
 
 本项目使用 PySlang 对 SystemVerilog 做语义分析，将可确认绑定关系的标识符随机重命名，
-同时输出可审计、可逆的 mapping。项目支持单文件和显式 filelist 多文件加密，并支持
-`project-root + top` 的只读工程发现、依赖闭包、严格编译和 AST inventory；
+同时输出可审计、可逆的 mapping。项目支持单文件、显式 filelist 多文件加密，以及
+`project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和五组对象加密；
 `rtl_samples/example_fifo/` 是当前完整加密交付样例。
 
 FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、79 个重命名对象、
@@ -32,7 +32,7 @@ rtl_obfuscation/
 核心数据流：
 
 ```text
-SystemVerilog/filelist
+SystemVerilog/filelist/project-root+top
     -> PySlang Compilation
     -> 按 category 收集声明、语义绑定和字节区间
     -> 分配随机名称并从文件末尾向前应用 source edit
@@ -68,32 +68,32 @@ python -c 'import pyslang; print("PySlang import OK")'
 python -m unittest discover -s tests -v
 ```
 
-当前基线为 `Ran 49 tests`、`OK`。
+当前基线为 `Ran 67 tests`、`OK`。
 
 ## 3. 基本操作
 
 ### 3.1 单文件与多文件模式
 
-项目提供两套命令：`encrypt` / `decrypt` 处理一个 `.sv`，
-`encrypt-project` / `decrypt-project` 处理一个显式 filelist 工程。
+项目提供三种输入工作流：`encrypt` / `decrypt` 处理一个 `.sv`；
+`encrypt-project` / `decrypt-project` 既可处理显式 filelist，也可从 `project-root + top`
+自动建立闭包。
 
-| 对比项 | 单文件模式 | 多文件模式 |
-| --- | --- | --- |
-| 加密命令 | `encrypt` | `encrypt-project` |
-| 解密命令 | `decrypt` | `decrypt-project` |
-| 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` |
-| PySlang 分析 | 只把一个 `.sv` 加入 compilation | filelist 中全部 `.sv` 进入同一 compilation |
-| 跨文件绑定 | 不可用 | 可改写 module type、child port、interface 等已支持跨文件引用 |
-| Category 参数 | 只传一个 `--category`；可用 `all` | `--category` 可重复，用于组合内部类别和 ABI 类别 |
-| Top | 不需要 `--top` | 必须给出 `--top`；保留 top module 和普通 top ports |
-| Gate 输出 | `--output <gate.sv>` | `--output-dir <gate-dir>`，按相对路径镜像多个文件 |
-| Mapping | version 1，一个文件内的声明和引用 | version 2，包含 `files`、`top` 和跨文件 range |
-| Per-file mapping | 不需要 | 可用 `--file-map-dir` 输出全局 mapping 的每文件投影 |
-| `--debug <dir>` | 从同一 gold 自动独立运行 13 个 category | 从同一 filelist 自动独立运行 19 个 category |
-| 适用场景 | 独立 module、最小复现、单 category debug | 真实 RTL 工程、跨文件 module/interface 关系和最终交付 |
+| 对比项 | 单文件模式 | 显式 filelist 模式 | `project-root + top` 模式 |
+| --- | --- | --- | --- |
+| 加密命令 | `encrypt` | `encrypt-project` | `encrypt-project` |
+| 解密命令 | `decrypt` | `decrypt-project` | `decrypt-project` |
+| 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` | `--project-root <dir>` + `--top <module>` |
+| PySlang 分析 | 单个 `.sv` | filelist 中全部 `.sv` | 自动发现依赖，只严格编译 top 闭包 |
+| Category 参数 | 一个底层 category 或 `all` | 可重复组合 19 个底层 category | 可重复选择 `signals/ports/instances/struct/interface` 五组；省略即全部 |
+| Top | 不需要 | 必须提供，保留 top module 和普通 top ports | 必须提供，保留 top module、普通 top ports 和 top ABI |
+| Gate 输出 | 一个文件 | 镜像 filelist 文件 | 只镜像闭包文件并生成 `design.f` |
+| Mapping | version 1 | version 2 | version 3，含编译上下文、闭包和 manifest |
+| Per-file mapping | 不需要 | 可选 | 可选；不生成无 occurrence 的 header 空映射 |
+| `--debug <dir>` | 独立运行 13 类 | 独立运行 19 类 | 独立运行五个概念组 |
+| 适用场景 | 独立 module、最小复现 | 已有可靠 filelist 的工程 | 只知道工程根目录和 top 的工程 |
 
-只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用多文件
-模式。两种模式都不会原地修改 gold，输出路径必须与源码路径分开。
+只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用 filelist 或
+`project-root + top` 模式。三种模式都不会原地修改 gold，输出路径必须与源码路径分开。
 
 ### 3.2 Category 选择
 
@@ -309,16 +309,16 @@ python -m rtl_obfuscator.rewrite encrypt-project \
 
 `--debug` 不能与 `--category`、`--output`、`--output-dir`、`--map`、`--metrics` 或 `--file-map-dir` 混用。如果只想调试一个 category，使用普通模式并传一个 `--category <name>`。
 
-### 3.9 `project-root + top` 只读分析
+### 3.9 `project-root + top` 自动工程流程
 
 `inspect-project` 从工程目录递归发现 `.sv/.svh`，唯一定位 top，解析 active include、宏和
 compilation-unit 类型依赖，只严格编译 top 闭包，并输出五个概念组的 AST inventory：
 
 ```sh
 python -m rtl_obfuscator.rewrite inspect-project \
-  --project-root rtl_samples/RISC-V-Vector \
-  --top vector_top \
-  --report /tmp/vector-inspect.json
+  --project-root rtl_samples/example_fifo \
+  --top fifo_top \
+  --report /tmp/fifo-project/inspect.json
 ```
 
 可重复使用 `--include-dir`、`--define NAME[=VALUE]` 和
@@ -331,22 +331,48 @@ eligible inventory。
 interfaces/files、严格编译诊断和精确 source ranges。缺失或歧义 top/module/include/macro 时
 退出码为 1，同时生成带稳定错误码的 `status=error` 报告。
 
-该命令只分析，不修改 RTL。当前 `encrypt-project` 仍要求显式 filelist；将 project-root 闭包
-直接用于加密属于路线图中的 T028。
+直接加密同一 top 闭包：
+
+```sh
+python -m rtl_obfuscator.rewrite encrypt-project \
+  --project-root rtl_samples/example_fifo \
+  --top fifo_top \
+  --output-dir /tmp/fifo-project/gate \
+  --map /tmp/fifo-project/mapping.json \
+  --metrics /tmp/fifo-project/metrics.json \
+  --file-map-dir /tmp/fifo-project/maps \
+  --name-length 8
+```
+
+省略 `--category` 默认启用五组；该样例固定摘要为 4 files / 50 entries / 195 tokens。
+gate 只包含 top 闭包和生成的 `design.f`，mapping version 3 记录原/gate manifest、编译上下文、
+精确 ranges 和 preserved top ABI。解密不需要原工程路径：
+
+```sh
+python -m rtl_obfuscator.rewrite decrypt-project \
+  --gate-dir /tmp/fifo-project/gate \
+  --map /tmp/fifo-project/mapping.json \
+  --output-dir /tmp/fifo-project/restored
+```
+
+若只需某一组，可重复传入 `--category signals|ports|instances|struct|interface`；debug 模式会
+从同一 gold 独立运行五组。RISC-V-Vector 的工程发现已经回归覆盖，但其 synthesis/formal view
+和端到端加密验收属于 T029。
 
 ## 4. 替换实现机制
 
-1. `project.py` 为 `inspect-project` 发现候选文件并构建 top-rooted 闭包；filelist 加密仍由
-   `inventory.py` 将显式文件加入同一个 `pyslang.ast.Compilation`。
+1. `project.py` 为 `inspect-project` 和 project-root 加密发现候选文件并构建 top-rooted 闭包；
+   filelist 加密仍由 `inventory.py` 将显式文件加入同一个 `pyslang.ast.Compilation`。
 2. 每个 category 只收集符合当前边界的 PySlang symbol；同名字符串不会自动视为同一对象。
 3. 声明和普通引用优先通过 `node.symbol is target` 证明绑定；PySlang 未直接暴露 token 时，
    只在已限定语法范围内使用 source range fallback，并核对 gold 字节。
 4. 随机名称长度由 `--name-length` 指定，最小为 4；名称避开关键字、已有 identifier 和
    本轮已分配名称。
 5. source edit 按字节区间从后向前应用，因此不同长度的新名称不会移动尚未处理的 gold range。
-6. 单文件 mapping 使用 version 1；多文件全局 mapping 使用 version 2；per-file mapping 是
-   全局 occurrence 的文件投影。
-7. 解密会在 gate 上重新定位新名称并逆向应用 mapping，不依赖原始名称的文本搜索。
+6. 单文件 mapping 使用 version 1，filelist mapping 使用 version 2，project-root mapping 使用
+   version 3；per-file mapping 是全局 occurrence 的文件投影。
+7. version 3 解密先校验 manifest、range 宽度/边界和 gate AST occurrence，再逆向应用 mapping，
+   不依赖原始名称的文本搜索。
 
 例如：
 
@@ -408,7 +434,7 @@ parameter 与 generate-local genvar 同名、不同 aggregate 类型中的同名
 | package/class/interface parameter | `package p; parameter WIDTH=8;` | 当前不处理 |
 | `defparam` 或层次 parameter | `defparam u.WIDTH=16;` | 当前不处理 |
 | 未解析外部 module | `ip #(.WIDTH(WIDTH)) u();`，但 `ip` 不在 filelist | 把定义加入 compilation 或保留该名称 |
-| 宏、include 和库自动发现 | `` `define WIDTH 8 `` | `inspect-project` 支持已验收的 active include/宏闭包；filelist 加密尚未自动消费该闭包，宏生成 identifier 默认保留 |
+| 宏、include 和库自动发现 | `` `define WIDTH 8 `` | project-root 模式消费已验收的 active include/宏闭包；宏生成且无法定位物理 token 的 identifier 默认保留 |
 | 外部层次依赖 | `force dut.u_fifo.count=0;` | 同步维护外部文件，或保留相关对象 |
 | DPI、bind、class、clocking、virtual interface | 验证环境公开 API | 当前不处理 |
 
@@ -421,6 +447,6 @@ parameter 与 generate-local genvar 同名、不同 aggregate 类型中的同名
 - [SystemVerilog 重命名表](docs/systemverilog_renaming_table.md)：每个 category 的当前语义和边界。
 - [验证流程](docs/formal_verification.md)：PySlang、Yosys、解密和正负 formal 基线。
 - [未来事项](docs/future_work.md)：未实现能力、工具链限制和推荐扩展顺序。
-- [`project-root + top` 路线图](docs/project_root_top_roadmap.md)：T027 工程发现和 AST inventory
-  已交付；五类对象直接加密和 RISC-V-Vector formal 仍属于 T028/T029。
+- [`project-root + top` 路线图](docs/project_root_top_roadmap.md)：T027 工程发现和 T028 五组对象
+  通用加密已交付；RISC-V-Vector synthesis/formal 端到端验收属于 T029。
 - `docs/tasks/`：开发与验收历史，仅用于追溯。

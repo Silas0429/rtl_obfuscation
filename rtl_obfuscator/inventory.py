@@ -2127,7 +2127,9 @@ def build_top_project_inventory(
         if getattr(node, "kind", None) == pyslang.ast.SymbolKind.TypeAlias
         and (
             getattr(node, "isStruct", False)
+            or getattr(node, "isPackedUnion", False)
             or getattr(node, "isUnpackedStruct", False)
+            or getattr(node, "isUnpackedUnion", False)
         )
     ]
     selected_values = [
@@ -2152,6 +2154,11 @@ def build_top_project_inventory(
     field_owner: dict[Any, Any] = {}
     for alias in used_type_aliases:
         resolved = alias.targetType.type
+        if not (
+            getattr(resolved, "isStruct", False)
+            or getattr(resolved, "isUnpackedStruct", False)
+        ):
+            continue
         for field in resolved:
             struct_fields.append(field)
             field_owner[field] = alias
@@ -2242,13 +2249,21 @@ def build_top_project_inventory(
     append_symbols(
         used_type_aliases,
         "struct_types",
-        lambda symbol: "$unit",
+        lambda symbol: (
+            symbol.declaringDefinition.name
+            if symbol.declaringDefinition is not None
+            else "$unit"
+        ),
         lambda symbol: "top_abi_type" if symbol in top_abi_types else None,
     )
     append_symbols(
         struct_fields,
         "struct_fields",
-        lambda symbol: f"$unit::{field_owner[symbol].name}",
+        lambda symbol: (
+            symbol.declaringDefinition.name
+            if symbol.declaringDefinition is not None
+            else f"$unit::{field_owner[symbol].name}"
+        ),
         lambda symbol: "top_abi_type"
         if field_owner[symbol] in top_abi_types
         else None,

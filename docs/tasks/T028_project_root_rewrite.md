@@ -1,6 +1,6 @@
 # T028：`project-root + top` 五组对象加密闭环
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T027 `ACCEPTED`
@@ -757,23 +757,40 @@ scripts/formal_equivalence.py
 
 ## 20. 子 Agent 执行记录
 
-开始时填写：
-
 ```text
-start_time:
-starting_head:
-first_command:
-confirmed_unique_active_task:
-baseline_49_tests:
-t027_integration_baseline:
-fifo_legacy_baseline:
-fifo_formal_baseline:
-project_api_probe:
+start_time: 2026-07-16 18:53:22 CST
+starting_head: 1e9a205
+first_command: `sed -n '1,260p' AGENTS.md; sed -n '1,320p' docs/tasks/README.md; rg -n '^# T028|^- 状态：|^## ' docs/tasks/T*.md; sed -n '1,920p' docs/tasks/T028*.md; git status --short --branch; git rev-parse --short HEAD`
+confirmed_unique_active_task: yes; T028 was the only `READY` task, no task was `IN_PROGRESS` or `READY_FOR_REVIEW`, T027 was `ACCEPTED`, and the starting worktree was clean
+baseline_49_tests: PASS; `Ran 49 tests in 17.862s`, `OK`; the dedicated T027 suite also passed `Ran 16 tests in 8.905s`, `OK`
+t027_integration_baseline: PASS; stdout reported 7 candidates / 6 closure files / 6 definitions / 32 eligible symbols / 107 eligible occurrences / 3 modules / 1 interface / status pass
+fifo_legacy_baseline: PASS; current project-root inspect reproduced the contracted known start at 49 entries / 193 occurrences, while legacy filelist encryption for the five actual category sets produced exactly 50 entries / 195 tokens
+fifo_formal_baseline: PASS; legacy five-group gate at `/tmp/rtl_obfuscation_t028/baseline/legacy-gate` returned exit 0 and `{"formal_equivalence":"pass","seq":5,"top":"fifo_top"}`
+project_api_probe: T027 currently exposes `inspect_project(...)` only as a report-writing API returning `(report, summary, success)`; `_ProjectContext` owns discovery/closure/compile; mapping v2 is validated by `_validate_project_mapping`, reversed through semantic `_gate_project_ranges`, and decrypted by `_decrypt_project`; reusable edit, metrics, and per-file projection primitives are `_apply_edits`, `_project_metrics`, and `_write_project_file_maps`. Fixed T027 fixtures, FIFO, and RISC inputs all matched `d343e26`.
+phase_b: PASS; added reusable no-output `analyze_project(...)`, corrected module-scoped struct/union type semantics, retained struct-only fields, and obtained unchanged integration 32/107 plus FIFO project inventory 50/195
+phase_c: PASS; project-root gate contains only closure files plus deterministic `design.f`, gate strict reanalysis passed, metrics/per-file projections are complete, and debug produced the fixed five-group matrix
+phase_d: PASS; mapping v3 validation, gate manifest/audit, semantic gate ranges, empty-entry restore, and restored input-manifest verification passed; legacy mapping v2 dispatch remains unchanged
+phase_e: PASS; fixed integration and FIFO artifacts, formal positive/functional negative, 18 target tests, 67 full tests, independent hash/range assertions, and fixed-input diffs all passed
+finish_time: 2026-07-16 19:12:27 CST
+ending_head: 1e9a205; no commit or push was performed
+review_reopened_time: 2026-07-17 CST
+review_reopened_head: 1e9a205
+review_findings: mapping v3 accepted an out-of-bounds source range and boolean occurrences; an invalid regular-file parent for `--map` failed only after partially copying gate output
+review_action: returned T028 to IN_PROGRESS; add all three reproductions inside the existing 18 test methods, strengthen v3 range/occurrence validation, preflight output parents, and make normal project-root publication transactional
+review_resolution_time: 2026-07-17 10:17:25 CST
+review_resolution: PASS; v3 now requires non-boolean positive integer occurrence counts, exact identifier byte widths, inferred gold file bounds, gate token bytes, and exact gold-to-gate transformed AST ranges for eligible and preserved objects. Project-root encrypt stages every artifact beside its destination, atomically replaces all targets, and rolls back already-published targets on failure; invalid file parents are rejected by argparse before analysis or publication.
+review_reproduction_after_fix: overflow range exit=1/stdout empty/no restored; boolean entry exit=1/stdout empty/no restored; boolean preserved exit=1/stdout empty/no restored; regular-file map parent exit=2/stdout empty/no gate/map/metrics
+review_test_result: unchanged 18 methods; `Ran 18 tests in 4.536s`, `OK`; full regression `Ran 67 tests in 23.552s`, `OK`
+review_fresh_artifacts: `/tmp/rtl_obfuscation_t028_recheck`; integration encrypt/inspect/decrypt=6/32/107 with byte-identical restore; FIFO encrypt/decrypt=4/50/195 with byte-identical restore
+review_formal: fresh FIFO positive exit 0 with formal_equivalence=pass/seq=5; fresh count+2 negative exit 1 with 3 unproven equivalence cells
+review_fixed_inputs: T027 fixtures, example FIFO, and RISC-V-Vector all still match d343e26; `git diff --check` exit 0; no commit or push
 ```
 
 ## 21. 偏差或阻塞
 
-无偏差填写 `None`。有偏差时填写：
+`None`
+
+有偏差时填写：
 
 ```text
 observed_behavior:
@@ -790,17 +807,23 @@ status:
 必须填写：
 
 ```text
-formal_verification: PASS | FAIL | BLOCKED
+formal_verification: PASS
 gold: rtl_samples/example_fifo + design.f
 gate: /tmp/rtl_obfuscation_t028/fifo/gate + design.f
 top: fifo_top
-command:
-exit_code:
-result:
-negative_gate:
-negative_command:
-negative_exit_code:
-negative_result:
+command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist rtl_samples/example_fifo/design.f --gold-root rtl_samples/example_fifo --gate-filelist /tmp/rtl_obfuscation_t028/fifo/gate/design.f --gate-root /tmp/rtl_obfuscation_t028/fifo/gate --top fifo_top
+exit_code: 0
+result: {"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t028/fifo/gate","gold":"rtl_samples/example_fifo","seq":5,"top":"fifo_top"}
+negative_gate: /tmp/rtl_obfuscation_t028/fifo-negative + design.f; mapped `count` renamed identifier's unique `+ 1'b1` update was changed to `+ 2`
+negative_command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist rtl_samples/example_fifo/design.f --gold-root rtl_samples/example_fifo --gate-filelist /tmp/rtl_obfuscation_t028/fifo-negative/design.f --gate-root /tmp/rtl_obfuscation_t028/fifo-negative --top fifo_top
+negative_exit_code: 1
+negative_result: expected failure; `equiv_status -assert` reported `Found 3 unproven $equiv cells`
+review_rerun_gate: /tmp/rtl_obfuscation_t028_recheck/fifo/gate + design.f
+review_rerun_exit_code: 0
+review_rerun_result: {"formal_equivalence":"pass","gate":"/tmp/rtl_obfuscation_t028_recheck/fifo/gate","gold":"rtl_samples/example_fifo","seq":5,"top":"fifo_top"}
+review_negative_gate: /tmp/rtl_obfuscation_t028_recheck/fifo/negative + design.f
+review_negative_exit_code: 1
+review_negative_result: expected failure; `equiv_status -assert` reported `Found 3 unproven $equiv cells`
 ```
 
 只有正例 PASS、功能负例非 0 时才能申请验收。
@@ -810,30 +833,32 @@ negative_result:
 完成后填写：
 
 ```text
-changed_files:
-exact_commands:
-exit_codes:
-integration_group_summaries:
-integration_combined_summary:
-mapping_v3_schema_result:
-manifest_result:
-gate_reinspect_result:
-same_file_unreachable_result:
-top_abi_result:
-macro_result:
-decrypt_hash_result:
-debug_matrix_result:
-fifo_inventory_result:
-fifo_mapping_result:
-fifo_metrics_result:
-formal_result:
-formal_negative_result:
-legacy_v2_result:
-target_unittest_result:
-full_unittest_result:
-fixed_input_diff_result:
-git_diff_check:
-uncovered_boundaries:
+changed_files: rtl_obfuscator/project.py; rtl_obfuscator/inventory.py; rtl_obfuscator/rewrite.py; tests/test_project_root_rewrite.py; docs/tasks/T028_project_root_rewrite.md
+exact_commands: all commands in sections 17.1 through 17.6 were run exactly; fixed formal commands are recorded in section 22. Additional commands were `conda run -n rtl_obfuscation python -m unittest tests.test_project_root_inspect -v`, `conda run -n rtl_obfuscation python -m unittest discover -s tests -v`, and a `conda run -n rtl_obfuscation python -c` independent assertion over both fixed mappings, source ranges, manifests, per-file union, legacy FIFO ranges, restored bytes, top ABI, macro, and debug artifacts.
+exit_codes: py_compile=0; target unittest=0; integration encrypt/inspect/decrypt=0/0/0; FIFO encrypt/formal/decrypt=0/0/0; FIFO functional negative formal=1 as required; full unittest=0; three fixed-input diffs=0; git diff --check=0
+integration_group_summaries: signals=7/27; ports=12/37; instances=2/2; struct=3/13; interface=8/28
+integration_combined_summary: stdout exactly parsed as {"files":6,"mapping_entries":32,"modified_tokens":107}; decrypt returned the same counts
+mapping_v3_schema_result: PASS; exact 15 top-level keys/order, canonical five groups/nine actual categories, exact gold non-renamed fields/ranges, 32 globally unique valid renamed names, six preserved top ports, strict duplicate/overlap/order/context validation; review fixes additionally reject boolean occurrences, wrong range width, source-file overflow, wrong gate token location, and any mapping range not equal to its transformed gate AST occurrence
+manifest_result: PASS; integration input=c48601bfe787e84f0f7d252e5a8ca8818138ee16feb5edeaf2463bfbabb481c2 and gate=52af4ff2df48078ca9c2950345b4f8d296720687a2ef232f39f315289bd28a62; FIFO input=39884f76dcd0b7c91e77074f79f8bfe3c793c7f8f0474cba0160295f22e67704 and gate=e4b1e717c353d7ce60de868c407e72adcae11c2c9a8f79be0b2d13cd28a89607; mutated gate manifest and occurrence audit were rejected without restored output
+review_manifest_result: PASS; fresh integration gate=ddefb6ea9a2041e8beca4dda71a8dfa5edef4f4f90d3129e66219f5366fb072b and FIFO gate=703cd9ea50902ad5d61f931e192c1957a7eb82f4c692e1ea28ff7f6fbe6f17f4; both fresh restored manifests equal their fixed input manifests
+atomic_publication_result: PASS; normal project-root artifacts are fully prepared at destination-local temporary paths before publication, existing targets are backed up, and any publication exception removes new targets and restores backups; the reported regular-file parent reproduction now exits 2 before producing gate/map/metrics
+gate_reinspect_result: PASS; integration 6 closure files, 3 modules, 1 renamed interface, 32/107 eligible inventory, 0 parse errors, 0 semantic errors; FIFO gate strict analysis also passed
+same_file_unreachable_result: PASS; `module same_file_unused` through EOF is byte-identical, unrelated RTL is absent, and `include/common.svh` is present and byte-identical
+top_abi_result: PASS; 3 files, 0/0, exact eight preserved objects, coverage 1.0, byte-identical round trip
+macro_result: PASS; 2 files, 0/0, `macro_signal` preserved with `macro_expansion` and null declaration, byte-identical round trip
+decrypt_hash_result: PASS; every integration 6/6 and FIFO 4/4 restored closure file is byte-identical and independently recomputes the input manifest
+debug_matrix_result: PASS; fixed order signals=7/27, ports=12/37, instances=2/2, struct=3/13, interface=8/28; mode=project-root and category_count=5
+fifo_inventory_result: PASS; project inventory corrected from known baseline 49/193 to 50/195; struct types are `fifo_entry_t` and module-scoped union `fifo_view_t`; union fields remain excluded
+fifo_mapping_result: PASS; signals=14/67, ports=17/59, instances=2/2, struct_types=2/5, struct_fields=2/4, interfaces=1/2, interface_instances=1/15, interface_ports=9/39, modports=2/2, total=50/195; category/name/declaration/reference ranges equal the five-group legacy mapping
+fifo_metrics_result: PASS; symbols=50/50, occurrences=195/195, all coverage=1.0, leakage=0.0
+formal_result: PASS; fixed positive exit 0 and JSON formal_equivalence=pass, seq=5
+formal_negative_result: PASS; fixed `count + 2` negative exited 1 with 3 unproven equivalence cells
+legacy_v2_result: PASS; mapping remains version 2, decrypt with source-root succeeds, missing source-root exits 2, existing legacy/debug/formal regressions pass
+target_unittest_result: initial `Ran 18 tests in 4.293s`, `OK`; post-review-fix `Ran 18 tests in 4.536s`, `OK`
+full_unittest_result: initial `Ran 67 tests in 22.223s`, `OK`; post-review-fix `Ran 67 tests in 23.552s`, `OK`
+fixed_input_diff_result: PASS; all three `git diff --exit-code d343e26` commands for T027 fixtures, example FIFO, and RISC-V-Vector exited 0
+git_diff_check: PASS; exit 0; status contains only the five allowed paths, with the new test file untracked; no commit/push
+uncovered_boundaries: contract exclusions remain unchanged: parameter/module/union_fields and non-five-group project-root rewriting are out of scope; RISC-V-Vector synthesis/formal belongs to T029; the documented Yosys 0.53 integration frontend assertion is not represented as formal evidence
 ```
 
 ## 24. 主 Agent 独立验收
@@ -855,3 +880,23 @@ uncovered_boundaries:
 
 全部通过后才能设置 `ACCEPTED`。T028 产生重写 RTL，因此 formal 失败、跳过或不支持时均不能
 接受，也不能以预算、任务规模或 T029 会处理为由接受部分实现。
+
+## 25. 主 Agent 独立验收结果
+
+```text
+accepted_at: 2026-07-17 CST
+accepted_head_before_commit: 1e9a205
+target_unittest: PASS; Ran 18 tests in 4.750s; OK
+full_unittest: PASS; Ran 67 tests in 22.562s; OK
+integration: PASS; 6 files / 32 entries / 107 tokens; gate strict compile 0 errors; restored files byte-identical
+fifo: PASS; 4 files / 50 entries / 195 tokens; project mapping category/name/ranges equal legacy five-group mapping; restored files byte-identical
+mapping_v3: PASS; exact schema, gold ranges, manifests, 32 globally unique names, 107 complete per-file occurrences
+negative_mapping: PASS; manifest damage, occurrence damage, overflow range, same-width shifted range, boolean entry occurrences, and boolean preserved occurrences all exited 1 without restored output
+path_preflight: PASS; regular-file map parent exited 2 without gate/map/metrics
+transaction_rollback: PASS; injected failure while publishing the second target restored both existing targets and removed all temporary containers
+formal_positive: PASS; exit 0; {"formal_equivalence":"pass","seq":5,"top":"fifo_top"}
+formal_negative: PASS; count + 2 exited 1; equiv_status -assert reported 3 unproven equivalence cells
+fixed_inputs: PASS; T027 fixtures, example_fifo, and RISC-V-Vector match d343e26
+diff_check: PASS
+acceptance_result: ACCEPTED
+```
