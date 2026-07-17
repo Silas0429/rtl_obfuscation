@@ -849,10 +849,18 @@ def _type_alias_reference_tokens(
             if declared_type is None:
                 continue
             resolved_type = getattr(declared_type, "type", None)
-            if resolved_type is not target:
+            if _aggregate_alias_from_type(resolved_type, [target]) is not target:
                 continue
             type_syntax = getattr(declared_type, "typeSyntax", None)
             if type_syntax is None:
+                continue
+            name_syntax = getattr(type_syntax, "name", None)
+            identifier = getattr(name_syntax, "identifier", None)
+            if (
+                identifier is not None
+                and getattr(identifier, "rawText", None) == target.name
+            ):
+                references[target].append(identifier)
                 continue
             source_range = getattr(type_syntax, "sourceRange", None)
             if source_range is None:
@@ -880,6 +888,25 @@ def _type_alias_reference_tokens(
             references[target].append(identifier)
 
     return references
+
+
+def _aggregate_alias_from_type(resolved_type: Any, aliases: list[Any]) -> Any | None:
+    """Return the directly used aggregate alias, including one packed dimension.
+
+    Slang represents ``alias [N-1:0] value`` as a PackedArrayType whose element
+    type is the alias symbol.  This is still one declared use of that alias; it
+    is not a request to infer aliases through arbitrary nested type structure.
+    """
+    for alias in aliases:
+        if resolved_type is alias:
+            return alias
+    if type(resolved_type).__name__ != "PackedArrayType":
+        return None
+    element_type = getattr(resolved_type, "elementType", None)
+    for alias in aliases:
+        if element_type is alias:
+            return alias
+    return None
 
 
 
@@ -1330,16 +1357,34 @@ def _module_port_reference_tokens(
 
     # Collect body references via internalSymbol
     for node in semantic_nodes:
-        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
-            continue
-        symbol = getattr(node, "symbol", None)
-        if symbol is None:
-            continue
-        if symbol in port_internal_symbols:
+        kind = getattr(node, "kind", None)
+        if kind == pyslang.ast.ExpressionKind.NamedValue:
+            symbol = getattr(node, "symbol", None)
+            if symbol in port_internal_symbols:
+                target = port_internal_symbols[symbol]
+                identifier = getattr(
+                    getattr(node, "syntax", None), "identifier", None
+                )
+                references[target].append(
+                    identifier if identifier is not None else node.sourceRange
+                )
+        elif type(node).__name__ == "MemberAccessExpression":
+            value = getattr(node, "value", None)
+            if (
+                getattr(value, "kind", None)
+                != pyslang.ast.ExpressionKind.NamedValue
+            ):
+                continue
+            symbol = getattr(value, "symbol", None)
+            if symbol not in port_internal_symbols:
+                continue
             target = port_internal_symbols[symbol]
-            identifier = getattr(getattr(node, "syntax", None), "identifier", None)
-            if identifier is not None:
-                references[target].append(identifier)
+            identifier = getattr(
+                getattr(value, "syntax", None), "identifier", None
+            )
+            references[target].append(
+                identifier if identifier is not None else value.sourceRange
+            )
 
     return references
 
@@ -1967,6 +2012,17 @@ def _top_project_references(
         for target, category in zip(targets, categories, strict=True)
         if category == "signals"
     ]
+    port_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "ports"
+        and getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
+    ]
+    port_targets_by_internal = {
+        target.internalSymbol: target
+        for target in port_targets
+        if target.internalSymbol is not None
+    }
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
@@ -1982,6 +2038,48 @@ def _top_project_references(
             return
 
     compilation.getRoot().visit(visitor)
+
+    # Slang represents instances in an unrolled generate template as
+    # UninstantiatedDefSymbol nodes. Their actual arguments do not produce
+    # usable NamedValueExpression nodes, so bind identifier syntax from each
+    # actual in the symbol's lexical scope. The identity check is the semantic
+    # boundary: spelling alone never selects a target.
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(semantic_nodes.append)
+    for node in semantic_nodes:
+        if type(node).__name__ != "UninstantiatedDefSymbol":
+            continue
+        scope = getattr(node, "parentScope", None)
+        syntax = getattr(node, "syntax", None)
+        if scope is None or syntax is None:
+            continue
+        syntax_nodes: list[Any] = []
+        syntax.visit(syntax_nodes.append)
+        for connection in syntax_nodes:
+            if type(connection).__name__ != "NamedPortConnectionSyntax":
+                continue
+            expression = getattr(connection, "expr", None)
+            if expression is None:
+                continue
+            expression_nodes: list[Any] = []
+            expression.visit(expression_nodes.append)
+            for expression_node in expression_nodes:
+                if type(expression_node).__name__ != "IdentifierNameSyntax":
+                    continue
+                identifier = getattr(expression_node, "identifier", None)
+                if identifier is None:
+                    continue
+                bound = scope.find(identifier.rawText)
+                for target in generic_targets:
+                    if bound is target:
+                        references[target].append(identifier)
+                        break
+                else:
+                    parent_bound = scope.lookupName(identifier.rawText)
+                    for internal, target in port_targets_by_internal.items():
+                        if parent_bound is internal:
+                            references[target].append(identifier)
+                            break
 
     by_helper = (
         (
@@ -2146,7 +2244,11 @@ def build_top_project_inventory(
         alias
         for alias in all_type_aliases
         if any(
-            getattr(getattr(value, "declaredType", None), "type", None) is alias
+            _aggregate_alias_from_type(
+                getattr(getattr(value, "declaredType", None), "type", None),
+                [alias],
+            )
+            is alias
             for value in selected_values
         )
     ]
@@ -2203,7 +2305,11 @@ def build_top_project_inventory(
         for alias in used_type_aliases
         if any(
             value in top_internal_symbols
-            and getattr(getattr(value, "declaredType", None), "type", None) is alias
+            and _aggregate_alias_from_type(
+                getattr(getattr(value, "declaredType", None), "type", None),
+                [alias],
+            )
+            is alias
             for value in selected_values
         )
     }

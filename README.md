@@ -3,11 +3,13 @@
 本项目使用 PySlang 对 SystemVerilog 做语义分析，将可确认绑定关系的标识符随机重命名，
 同时输出可审计、可逆的 mapping。项目支持单文件、显式 filelist 多文件加密，以及
 `project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和五组对象加密；
-`rtl_samples/example_fifo/` 是当前完整加密交付样例。
+`rtl_samples/example_fifo/` 和 `rtl_samples/RISC-V-Vector/` 是当前完整交付样例。
 
 FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、79 个重命名对象、
 299 个被改写 token，PySlang 前端、Yosys formal 和字节级解密恢复均通过。样例还展示了
 内部 interface signal bundle 和 packed struct 作为 function argument 的实际使用。
+RISC-V-Vector 的 `vector_top` 固定闭包为 19 个文件、17 个 module、1091 个对象和 5741 个
+identifier occurrences；严格 gate 重编译、mapping v3、逐字节解密以及 formal 正负例均纳入验收。
 
 ## 1. 项目结构
 
@@ -16,9 +18,11 @@ rtl_obfuscation/
 ├── rtl_obfuscator/
 │   ├── inventory.py       # PySlang compilation、语义对象和 source range 收集
 │   ├── project.py         # project-root 发现、依赖闭包、严格编译和报告
+│   ├── formal_view.py     # AST-driven formal view 和 identifier-only alignment
 │   └── rewrite.py         # CLI、随机命名、源码改写、mapping、metrics 和解密
 ├── scripts/
-│   └── formal_equivalence.py
+│   ├── formal_equivalence.py
+│   └── t029_acceptance.py
 ├── rtl_samples/
 │   └── example_fifo/      # 四文件同步 FIFO 交付样例
 ├── tests/                 # 单元测试、语法 fixture、formal 正负例
@@ -68,7 +72,7 @@ python -c 'import pyslang; print("PySlang import OK")'
 python -m unittest discover -s tests -v
 ```
 
-当前基线为 `Ran 67 tests`、`OK`。
+当前基线为 `Ran 82 tests`、`OK`。
 
 ## 3. 基本操作
 
@@ -356,8 +360,44 @@ python -m rtl_obfuscator.rewrite decrypt-project \
 ```
 
 若只需某一组，可重复传入 `--category signals|ports|instances|struct|interface`；debug 模式会
-从同一 gold 独立运行五组。RISC-V-Vector 的工程发现已经回归覆盖，但其 synthesis/formal view
-和端到端加密验收属于 T029。
+从同一 gold 独立运行五组。RISC-V-Vector/vector_top 的固定组合摘要为 19 files / 1091 entries /
+5741 tokens，其中 ports 为 348 entries / 1853 tokens；parameter、top module、top ports 和 top ABI
+仍保持不变。
+
+### 3.10 Formal view 与真实 gate alignment
+
+Yosys 0.53 不能直接处理 RISC 样例中的 compilation-unit packed struct 和 concurrent assertion。
+`formal-view` 从同一个 project resolver 生成验证专用派生树，不修改产品 gold/gate：
+
+```sh
+python -m rtl_obfuscator.rewrite formal-view \
+  --project-root rtl_samples/RISC-V-Vector \
+  --top vector_top \
+  --output-dir /tmp/risc/formal-gold \
+  --manifest /tmp/risc/formal-gold.json
+```
+
+固定 view 对 25 个 aggregate type、233 个 member access 和 2 条 concurrent assertion 做
+AST-driven 变换。真实随机命名 gate 还需使用 mapping v3 做 identifier-only name alignment：
+
+```sh
+python -m rtl_obfuscator.rewrite formal-align \
+  --gate-dir /tmp/risc/gate \
+  --gate-view-dir /tmp/risc/formal-gate \
+  --gate-view-manifest /tmp/risc/formal-gate.json \
+  --map /tmp/risc/mapping.json \
+  --output-dir /tmp/risc/formal-gate-aligned \
+  --manifest /tmp/risc/formal-gate-aligned.json
+```
+
+alignment 只允许 PySlang lexer 识别的 `TokenKind.Identifier`，并且只能执行 mapping 中
+`renamed_name -> original_name`；它不读取 gold、不调用解密，也不改变 operator、literal、string、
+comment 或 directive。RISC 固定替换 5527 个 identifier，随后使用标准 multifile formal 流程。
+可用一次性验收驱动重跑完整链路：
+
+```sh
+python scripts/t029_acceptance.py --work-dir /tmp/rtl_obfuscation_t029_acceptance
+```
 
 ## 4. 替换实现机制
 
@@ -448,5 +488,5 @@ parameter 与 generate-local genvar 同名、不同 aggregate 类型中的同名
 - [验证流程](docs/formal_verification.md)：PySlang、Yosys、解密和正负 formal 基线。
 - [未来事项](docs/future_work.md)：未实现能力、工具链限制和推荐扩展顺序。
 - [`project-root + top` 路线图](docs/project_root_top_roadmap.md)：T027 工程发现和 T028 五组对象
-  通用加密已交付；RISC-V-Vector synthesis/formal 端到端验收属于 T029。
+  通用加密，以及 T029 RISC-V-Vector synthesis/formal 端到端交付。
 - `docs/tasks/`：开发与验收历史，仅用于追溯。

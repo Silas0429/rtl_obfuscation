@@ -34,16 +34,18 @@ def _yosys_script_multifile(
     gold_paths = " ".join(str(f) for f in gold_files)
     gate_paths = " ".join(str(f) for f in gate_files)
     return f"""
-read_verilog -sv -formal {gold_paths}
+read_verilog -sv -formal -defer {gold_paths}
 prep -top {top} -flatten
+async2sync
 memory_map -formal
 opt_clean
 rename {top} gold
 design -stash gold_design
 design -reset
 
-read_verilog -sv -formal {gate_paths}
+read_verilog -sv -formal -defer {gate_paths}
 prep -top {top} -flatten
+async2sync
 memory_map -formal
 opt_clean
 rename {top} gate

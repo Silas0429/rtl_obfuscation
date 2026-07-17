@@ -90,6 +90,18 @@ class _Edge:
         }
 
 
+@dataclass(frozen=True)
+class ProjectSemanticContext:
+    """Strict semantic objects selected by the shared project resolver."""
+
+    project_root: Path
+    compilation: Any
+    top_instance: Any
+    source_manager: Any
+    closure: tuple[str, ...]
+    compile_order: tuple[str, ...]
+
+
 class ProjectAnalysisError(Exception):
     """A stable project-analysis failure that belongs in the JSON report."""
 
@@ -814,14 +826,16 @@ def _error_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def analyze_project(
+def _analyze_project_with_context(
     *,
     project_root: Path,
     top: str,
     include_dirs: Iterable[Path | str] = (),
     defines: Iterable[str] = (),
     categories: Iterable[str] = (),
-) -> tuple[dict[str, Any], dict[str, Any], bool]:
+) -> tuple[
+    dict[str, Any], dict[str, Any], bool, ProjectSemanticContext | None
+]:
     """Analyze a project without writing any output artifacts.
 
     Invalid invocation values raise ``ValueError``. Project analysis failures
@@ -924,7 +938,15 @@ def analyze_project(
         report["inventory"] = inventory_report
         report["diagnostics"] = []
         result_summary = _summary(report)
-        return report, result_summary, True
+        semantic_context = ProjectSemanticContext(
+            project_root=root,
+            compilation=compilation,
+            top_instance=top_instance,
+            source_manager=manager,
+            closure=tuple(sorted(closure)),
+            compile_order=tuple(compile_order),
+        )
+        return report, result_summary, True, semantic_context
     except (ProjectAnalysisError, OSError, RuntimeError, ValueError) as error:
         if not isinstance(error, ProjectAnalysisError):
             error = ProjectAnalysisError(
@@ -957,7 +979,46 @@ def analyze_project(
                     )
                 ],
             }
-        return report, _error_summary(report), False
+        return report, _error_summary(report), False, None
+
+
+def analyze_project(
+    *,
+    project_root: Path,
+    top: str,
+    include_dirs: Iterable[Path | str] = (),
+    defines: Iterable[str] = (),
+    categories: Iterable[str] = (),
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    """Analyze a project without exposing the strict semantic objects."""
+    report, summary, success, _ = _analyze_project_with_context(
+        project_root=project_root,
+        top=top,
+        include_dirs=include_dirs,
+        defines=defines,
+        categories=categories,
+    )
+    return report, summary, success
+
+
+def analyze_project_context(
+    *,
+    project_root: Path,
+    top: str,
+    include_dirs: Iterable[Path | str] = (),
+    defines: Iterable[str] = (),
+    categories: Iterable[str] = (),
+) -> tuple[
+    dict[str, Any], dict[str, Any], bool, ProjectSemanticContext | None
+]:
+    """Analyze once and return the selected strict semantic context."""
+    return _analyze_project_with_context(
+        project_root=project_root,
+        top=top,
+        include_dirs=include_dirs,
+        defines=defines,
+        categories=categories,
+    )
 
 
 def inspect_project(

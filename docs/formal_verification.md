@@ -60,8 +60,9 @@ python scripts/formal_equivalence.py \
 脚本对 gold 和 gate 对称执行：
 
 ```text
-read_verilog -sv -formal
+read_verilog -sv -formal -defer        # multifile；single-file 不加 -defer
 prep -top <top> -flatten
+async2sync                             # multifile
 memory_map -formal
 opt_clean
 equiv_make gold gate equiv
@@ -73,6 +74,30 @@ equiv_status -assert
 ```
 
 `equiv_status -assert` 不可删除。只有退出码 0 且 JSON 为 `pass` 才算通过。
+
+### 3.1 RISC-V-Vector formal-only 派生链
+
+`vector_top` 先分别从原工程和真实 gate 生成 260-transform formal view。gate view 随后通过
+mapping v3 做 5527 个 lexer-verified identifier alignment：
+
+```sh
+python -m rtl_obfuscator.rewrite formal-view \
+  --project-root /tmp/risc/gate --top vector_top \
+  --output-dir /tmp/risc/formal-gate --manifest /tmp/risc/formal-gate.json
+
+python -m rtl_obfuscator.rewrite formal-align \
+  --gate-dir /tmp/risc/gate \
+  --gate-view-dir /tmp/risc/formal-gate \
+  --gate-view-manifest /tmp/risc/formal-gate.json \
+  --map /tmp/risc/mapping.json \
+  --output-dir /tmp/risc/formal-gate-aligned \
+  --manifest /tmp/risc/formal-gate-aligned.json
+```
+
+`formal-align` 完整验证 product gate、mapping ranges/manifests、gate view transformation manifest、
+compile order 和 lexer token kind。它不能接收 gold 路径，只恢复 mapping 中的 identifier spelling。
+正例使用 gold view 与 aligned gate view；固定负例只把 `vector_idle_o` 的第一个二元 `&` 改为 `|`，
+并要求 `equiv_status -assert` 恰好留下该 cell。两次证明各自保持 600 秒上限。
 
 ## 4. 正例与负例
 

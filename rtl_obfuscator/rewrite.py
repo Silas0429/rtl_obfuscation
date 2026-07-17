@@ -14,7 +14,7 @@ from typing import Any
 
 import pyslang
 
-from rtl_obfuscator import inventory, project
+from rtl_obfuscator import formal_view, inventory, project
 
 
 _PROJECT_ROOT_GROUPS = (
@@ -1506,20 +1506,8 @@ def _validate_mapping_ranges_against_gate(
 def _decrypt_project_root(
     args: argparse.Namespace, mapping: dict[str, Any]
 ) -> dict[str, int]:
-    mapping = _validate_project_root_mapping(mapping)
+    mapping, gate_report = _validate_project_gate(mapping, args.gate_dir)
     files = mapping["files"]
-    if _project_manifest(args.gate_dir, files) != mapping["gate_manifest_sha256"]:
-        raise ValueError("gate manifest does not match mapping")
-    _validate_mapping_ranges_against_gate(mapping, args.gate_dir)
-    gate_report, _, success = project.analyze_project(
-        project_root=args.gate_dir,
-        top=mapping["top"],
-        include_dirs=mapping["compile_context"]["include_dirs"],
-        defines=mapping["compile_context"]["defines"],
-        categories=mapping["selected_groups"],
-    )
-    if not success:
-        raise ValueError("gate strict project analysis failed")
     gate_entries = _audit_gate_report(mapping, gate_report)
 
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
@@ -1546,6 +1534,45 @@ def _decrypt_project_root(
             entry["occurrences"] for entry in mapping["entries"]
         ),
     }
+
+
+def _validate_project_gate(
+    mapping: dict[str, Any], gate_dir: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    mapping = _validate_project_root_mapping(mapping)
+    files = mapping["files"]
+    if _project_manifest(gate_dir, files) != mapping["gate_manifest_sha256"]:
+        raise ValueError("gate manifest does not match mapping")
+    _validate_mapping_ranges_against_gate(mapping, gate_dir)
+    gate_report, _, success = project.analyze_project(
+        project_root=gate_dir,
+        top=mapping["top"],
+        include_dirs=mapping["compile_context"]["include_dirs"],
+        defines=mapping["compile_context"]["defines"],
+        categories=mapping["selected_groups"],
+    )
+    if not success:
+        raise ValueError("gate strict project analysis failed")
+    _audit_gate_report(mapping, gate_report)
+    return mapping, gate_report
+
+
+def _formal_align(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        with args.map_file.open(encoding="utf-8") as stream:
+            raw_mapping = json.load(stream)
+    except (OSError, ValueError) as error:
+        raise ValueError("invalid formal-align mapping JSON") from error
+    mapping, _ = _validate_project_gate(raw_mapping, args.gate_dir)
+    return formal_view.align_formal_view(
+        gate_dir=args.gate_dir,
+        gate_view_dir=args.gate_view_dir,
+        gate_view_manifest_path=args.gate_view_manifest,
+        mapping_path=args.map_file,
+        mapping=mapping,
+        output_dir=args.output_dir,
+        manifest_path=args.manifest,
+    )
 
 
 def _decrypt_project(args: argparse.Namespace) -> dict[str, int]:
@@ -1763,6 +1790,25 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
                 version = None
             if version != 3:
                 parser.error("--source-root is required for mapping v2")
+    elif args.operation == "formal-view":
+        try:
+            formal_view._validate_paths(
+                args.project_root, args.output_dir, args.manifest
+            )
+        except ValueError as error:
+            parser.error(str(error))
+    elif args.operation == "formal-align":
+        try:
+            formal_view._validate_alignment_paths(
+                gate_dir=args.gate_dir,
+                gate_view_dir=args.gate_view_dir,
+                gate_view_manifest=args.gate_view_manifest,
+                mapping_path=args.map_file,
+                output_dir=args.output_dir,
+                manifest_path=args.manifest,
+            )
+        except ValueError as error:
+            parser.error(str(error))
 
 
 def _create_argument_parser() -> argparse.ArgumentParser:
@@ -1942,6 +1988,37 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         choices=("signals", "ports", "instances", "struct", "interface"),
         dest="categories",
     )
+
+    formal = operations.add_parser("formal-view")
+    formal.add_argument(
+        "--project-root", required=True, type=Path, dest="project_root"
+    )
+    formal.add_argument("--top", required=True)
+    formal.add_argument(
+        "--output-dir", required=True, type=Path, dest="output_dir"
+    )
+    formal.add_argument("--manifest", required=True, type=Path)
+    formal.add_argument(
+        "--include-dir", action="append", default=[], dest="include_dirs"
+    )
+    formal.add_argument("--define", action="append", default=[], dest="defines")
+
+    align = operations.add_parser("formal-align")
+    align.add_argument("--gate-dir", required=True, type=Path, dest="gate_dir")
+    align.add_argument(
+        "--gate-view-dir", required=True, type=Path, dest="gate_view_dir"
+    )
+    align.add_argument(
+        "--gate-view-manifest",
+        required=True,
+        type=Path,
+        dest="gate_view_manifest",
+    )
+    align.add_argument("--map", required=True, type=Path, dest="map_file")
+    align.add_argument(
+        "--output-dir", required=True, type=Path, dest="output_dir"
+    )
+    align.add_argument("--manifest", required=True, type=Path)
     return parser
 
 
@@ -1978,6 +2055,17 @@ def main() -> int:
                 if args.debug_dir is not None
                 else _encrypt_project(args)
             )
+        elif args.operation == "formal-view":
+            summary = formal_view.build_formal_view(
+                project_root=args.project_root,
+                top=args.top,
+                output_dir=args.output_dir,
+                manifest_path=args.manifest,
+                include_dirs=args.include_dirs,
+                defines=args.defines,
+            )
+        elif args.operation == "formal-align":
+            summary = _formal_align(args)
         else:
             summary = _decrypt_project(args)
     except (OSError, RuntimeError, ValueError) as error:

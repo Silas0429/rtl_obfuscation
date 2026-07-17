@@ -59,11 +59,10 @@ dimension 中的第一个 `WIDTH` 绑定外层 parameter，第二个是新 field
 ## 3. 工程输入与外部 ABI
 
 当前 `inspect-project` 已支持 `project-root + top` 的递归发现、active include/宏依赖、top 闭包、
-严格编译和五组 AST inventory；加密命令仍只接受显式 `.sv` filelist。后续可扩展：
+严格编译和五组 AST inventory；`encrypt-project` 已能直接消费该闭包，生成 mapping v3、gate、
+metrics 和逐文件 mapping，并由 `decrypt-project` 字节恢复。后续可扩展：
 
-- 让 `encrypt-project` 消费已验收的 project-root 闭包并输出 mapping v3，见
-  [`project_root_top_roadmap.md`](project_root_top_roadmap.md) 的 T028/T029；
-- include directory、define、library 和嵌套 filelist；
+- library、嵌套 filelist 和更复杂的 include/define 条件组合；
 - 未解析 IP/blackbox 的受控模型；
 - preserve/allow/deny 规则；
 - testbench、SDC、Tcl、波形脚本和软件模型的 mapping 消费工具；
@@ -74,6 +73,10 @@ dimension 中的第一个 `WIDTH` 绑定外层 parameter，第二个是新 field
 当前 Yosys 适合项目现有可综合子集，但不是完整 SystemVerilog 前端。未来若扩展顶层 interface、
 type parameter、package/class 或复杂 assertion，需要先确定能够可靠 elaboration 的 frontend 和
 非 vacuous formal 流程。不能仅因为某个 frontend 接受源码，就认为它正确理解了语义。
+
+RISC-V-Vector 当前通过 AST-driven packed-aggregate lowering、concurrent assertion blanking 和
+mapping-validated identifier-only alignment 进入 Yosys；这些都是 formal-only 派生物。它们不表示
+Yosys 已原生支持相应 SystemVerilog，也不能推广为对任意嵌套 aggregate、外部库或 blackbox 的支持。
 
 建议每项扩展继续保持：
 
