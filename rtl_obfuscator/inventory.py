@@ -51,6 +51,47 @@ _ALL_CATEGORIES = tuple(
     )
 )
 
+# T033's classification registry is consumed by all non-project-root entry
+# points.  The default profile is deliberately expressed in canonical
+# categories; project-root aliases remain a project-root-only concern.
+_DEFAULT_PROFILE_CATEGORIES = _ALL_CATEGORIES
+_PROJECT_ROOT_ONLY_CATEGORIES = frozenset(
+    {
+        "modules",
+        "ports",
+        "interfaces",
+        "interface_instances",
+        "interface_ports",
+        "modports",
+        "struct",
+        "interface",
+    }
+)
+_CATEGORY_REQUIRES_PROJECT_ROOT = "CATEGORY_REQUIRES_PROJECT_ROOT"
+
+
+def _expand_default_profile(
+    requested: str | list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    """Expand and validate the T034 single-module profile selection."""
+    categories = [requested] if isinstance(requested, str) else list(requested)
+    if not categories:
+        raise ValueError("category is required")
+
+    expanded: list[str] = []
+    for category in categories:
+        if category in _PROJECT_ROOT_ONLY_CATEGORIES:
+            raise ValueError(
+                f"{_CATEGORY_REQUIRES_PROJECT_ROOT}: {category}"
+            )
+        if category == "all":
+            expanded.extend(_DEFAULT_PROFILE_CATEGORIES)
+        elif category in _DEFAULT_PROFILE_CATEGORIES:
+            expanded.append(category)
+        else:
+            raise ValueError(f"unsupported category: {category}")
+    return tuple(expanded)
+
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
 # keywords from all language revisions accepted by the current parser.
 _SYSTEMVERILOG_KEYWORDS = frozenset(
@@ -1134,9 +1175,7 @@ def _build_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    requested_categories = (
-        _ALL_CATEGORIES if category == "all" else (category,)
-    )
+    requested_categories = _expand_default_profile(category)
     targets: list[Any] = []
     categories_list: list[str] = []
     unavailable: set[str] = set()
@@ -1195,12 +1234,7 @@ def _build_project_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    requested_categories: list[str] = []
-    for cat in categories:
-        if cat == "all":
-            requested_categories.extend(_ALL_CATEGORIES)
-        else:
-            requested_categories.append(cat)
+    requested_categories = list(_expand_default_profile(categories))
     targets: list[Any] = []
     target_categories: list[str] = []
     unavailable: set[str] = set()

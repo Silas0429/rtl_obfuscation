@@ -1,6 +1,6 @@
 # T034：单文件/filelist 默认 single-module profile 与 multi/ABI fail-closed
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T033 `ACCEPTED`
@@ -194,7 +194,22 @@ hierarchy 或缺少 top 作为“通过”。
 - `rtl_obfuscator/inventory.py`：接入 T033 canonical registry，按 impact/abi 过滤默认 profile；
 - `rtl_obfuscator/rewrite.py`：单文件/filelist category 校验、debug profile 和稳定错误码；
 - `tests/test_t034_single_file_default_profile.py`：本任务黑盒测试；
-- 已有测试中仅用于记录 filelist debug 19 类旧行为的断言；将其更新为 T034 的 13 类 oracle；
+- `tests/test_example_fifo_project.py`：仅更新 filelist debug 旧的 19 类断言，使其遵循 T034 的 13 类默认 profile
+  和 multi/ABI fail-closed 矩阵；project-root 相关断言保持原语义；
+- `tests/test_project_root_rewrite.py`：仅更新
+  `test_fifo_project_inventory_matches_legacy_category_semantics` 这一 filelist 测试，使其验证
+  multi/ABI fail-closed；其他 project-root 测试和行为保持不变；
+- `tests/test_formal_equivalence.py`：仅更新 filelist formal 正例的旧 multi/ABI category 选择，
+  保留真实改写 gate 的 formal 正例和功能变更负例；
+- `tests/test_module_port_rewrite.py`：将 filelist `modules`/`ports` 旧改写断言更新为
+  `CATEGORY_REQUIRES_PROJECT_ROOT` fail-closed；不得改动 project-root 等价覆盖；
+- `tests/test_interface_rewrite.py`：将 filelist `interfaces` 旧改写断言更新为稳定拒绝，保留
+  其他 interface/project-root 语义覆盖；
+- `tests/test_interface_member_rewrite.py`：将 filelist `interface_instances`、`interface_ports`、
+  `modports` 旧改写断言更新为 `CATEGORY_REQUIRES_PROJECT_ROOT` 稳定拒绝；保留其他 interface
+  member/project-root 语义覆盖；
+- `tests/test_project_regression.py`：仅更新固定 filelist ABI category 矩阵及其期望结果，保留
+  默认 single-module 项和 project-root 回归；
 - 本任务单的执行记录。
 
 禁止修改：
@@ -267,32 +282,89 @@ negative_result: equiv_status -assert reached; unproven $equiv reported
 子 Agent 开始后填写：
 
 ```text
-start_time:
-head:
-first_command:
-inherited_worktree:
-changed_files:
+start_time: 2026-07-20 16:56:19 CST
+head: 532af3c
+first_command: `sed -n '1,380p' docs/tasks/T034_single_file_default_profile.md; sed -n '1,260p' docs/tasks/README.md; sed -n '1,240p' docs/category_profile_normalization_plan.md; sed -n '1,260p' docs/formal_verification.md; git status --short; git log --oneline --decorate -5`
+inherited_worktree: T033 is ACCEPTED at HEAD 532af3c; T034 fixture and task contract are present; working tree was clean; no other task was IN_PROGRESS or READY_FOR_REVIEW.
+changed_files: `rtl_obfuscator/inventory.py`, `rtl_obfuscator/rewrite.py`, `tests/test_t034_single_file_default_profile.py`, `tests/test_debug_mode.py`, `tests/test_example_fifo_project.py`, `tests/test_project_root_rewrite.py`, `tests/test_formal_equivalence.py`, `tests/test_module_port_rewrite.py`, `tests/test_interface_rewrite.py`, `tests/test_project_regression.py`, `tests/test_interface_member_rewrite.py`, this task record
 exact_commands:
-exit_codes:
-single_file_summary:
-filelist_summary:
-debug_summary:
-rejection_summary:
-mapping_oracle:
-decrypt_byte_identity:
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/inventory.py rtl_obfuscator/rewrite.py tests/test_t034_single_file_default_profile.py`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_t034_single_file_default_profile -v`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_debug_mode -v`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_t034_single_file_default_profile tests.test_t033_impact_category tests.test_multifile_project tests.test_debug_mode tests.test_example_fifo_project tests.test_project_root_rewrite tests.test_project_root_parameter_rewrite -v`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_formal_equivalence tests.test_module_port_rewrite tests.test_interface_rewrite tests.test_project_regression -v`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_interface_member_rewrite -v`
+  - `conda run -n rtl_obfuscation python -m unittest discover -s tests -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/inventory.py rtl_obfuscator/rewrite.py tests/test_t034_single_file_default_profile.py tests/test_formal_equivalence.py tests/test_module_port_rewrite.py tests/test_interface_rewrite.py tests/test_project_regression.py tests/test_interface_member_rewrite.py`
+  - `git diff --check`
+  - `for f in tests/fixtures/t034_profile_scope/*.sv; do conda run -n rtl_obfuscation verible-verilog-syntax "$f" >/dev/null || exit $?; done; conda run -n rtl_obfuscation iverilog -g2012 -t null -s t034_top tests/fixtures/t034_profile_scope/child.sv tests/fixtures/t034_profile_scope/top.sv tests/fixtures/t034_profile_scope/unused.sv`
+exit_codes: fixture SHA-256=PASS; final py_compile=0; final T034 combination=0 (`Ran 36 tests`, `OK`); authorized historical tests=0 (`Ran 6 tests`, `OK`); interface-member rejection test=0 (`Ran 1 test`, `OK`); fixture Verible/Icarus=0; git diff --check=0; full unittest discovery=0 (`Ran 117 tests in 516.370s`, `OK`)
+single_file_summary: PASS; mapping v1, 2 entries / 6 occurrences; exact signals ranges and decrypt byte identity
+filelist_summary: PASS; mapping v2, files `child.sv,top.sv,unused.sv`, 5 entries / 13 occurrences; unused file rewritten and decrypt byte identity
+debug_summary: PASS; filelist debug emits exactly 13 canonical default categories
+rejection_summary: PASS; all six multi/ABI categories and `struct`/`interface` aliases reject with `CATEGORY_REQUIRES_PROJECT_ROOT` before output creation; mixed `all + ports` rejects too
+mapping_oracle: PASS; fixture manifest `d51a7d1a4d938590c05561ece451f70060f96393f3136d3e0f33ba021b416a3e`; single/filelist ranges, bytes, normalized determinism, metrics and scope match contract
+decrypt_byte_identity: PASS; single and filelist restored source bytes match gold
 formal_verification: PASS
-gold:
+gold: `tests/fixtures/t034_profile_scope/design.f` / `tests/fixtures/t034_profile_scope`
 gate:
 top: t034_top
-command:
-exit_code:
-result:
-negative_command:
-negative_exit_code:
-negative_result:
-uncovered_boundaries:
+gate: `/private/tmp/rtl_obfuscation_t034_formal_PUKmxB/gate/design.f` / `/private/tmp/rtl_obfuscation_t034_formal_PUKmxB/gate`
+command: `conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t034_profile_scope/design.f --gold-root tests/fixtures/t034_profile_scope --gate-filelist /private/tmp/rtl_obfuscation_t034_formal_PUKmxB/gate/design.f --gate-root /private/tmp/rtl_obfuscation_t034_formal_PUKmxB/gate --top t034_top`
+exit_code: 0
+result: `{"formal_equivalence":"pass","gate":"/private/tmp/rtl_obfuscation_t034_formal_PUKmxB/gate","gold":"tests/fixtures/t034_profile_scope","seq":5,"top":"t034_top"}`
+negative_command: `conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t034_profile_scope/design.f --gold-root tests/fixtures/t034_profile_scope --gate-filelist /private/tmp/rtl_obfuscation_t034_formal_PUKmxB/negative-gate/design.f --gate-root /private/tmp/rtl_obfuscation_t034_formal_PUKmxB/negative-gate --top t034_top`
+negative_exit_code: 1
+negative_result: `equiv_status -assert` reached; Yosys reported `Found 1 unproven $equiv cells`.
+uncovered_boundaries: none within T034 scope; project-root multi/ABI behavior remains covered by existing project-root tests and was not changed. No commit/push was made.
 ```
 
-## 11. 主 Agent 验收结果
+## 11. 合同修订记录
 
-待 T034 实现完成并由主 Agent 独立验收后填写；子 Agent 不得提前修改本节为 `ACCEPTED`。
+```text
+amendment_time: 2026-07-20 17:16:36 CST
+authorized_by: Main Agent, following explicit user authorization
+authorized_scope: update only tests/test_example_fifo_project.py and tests/test_project_root_rewrite.py as specified in section 6; no implementation, fixture, formal script, mapping validator, or unrelated historical test changes
+reason: these two existing tests still assert the pre-T034 filelist multi/ABI rewrite behavior and prevent the already-passed T034 implementation from reaching READY_FOR_REVIEW
+required_follow_up: rerun the T034 focused suite, full unittest discovery, formal positive/negative evidence, py_compile, fixture Verible/Icarus, and git diff --check; remain IN_PROGRESS until all pass
+```
+
+```text
+amendment_time: 2026-07-20 17:26:37 CST
+authorized_by: Main Agent, following project-state review and explicit user direction to decide
+authorized_scope: additionally update only tests/test_formal_equivalence.py, tests/test_module_port_rewrite.py, tests/test_interface_rewrite.py, and tests/test_project_regression.py as specified in section 6; no implementation, fixture, formal script, mapping validator, project-root behavior, or unrelated historical test changes
+reason: all four failing cases explicitly require the pre-T034 filelist multi/ABI rewrite behavior; they are direct stale assertions, not independent product regressions
+required_follow_up: rerun the full T034 gate and remain IN_PROGRESS until the four files are updated, all focused/full tests pass, and the task execution record is complete
+```
+
+```text
+amendment_time: 2026-07-20 18:54:07 CST
+authorized_by: Main Agent, following explicit user authorization
+authorized_scope: additionally update only tests/test_interface_member_rewrite.py as specified in section 6; no implementation, fixture, formal script, mapping validator, project-root behavior, or unrelated historical test changes
+reason: the final full-suite failure still asserts the pre-T034 filelist interface_instances/interface_ports/modports rewrite behavior
+required_follow_up: rerun the T034 focused suite, authorized historical regressions, full unittest discovery, Formal positive/negative evidence, py_compile, fixture Verible/Icarus, and git diff --check; remain IN_PROGRESS until all pass
+```
+
+## 12. 主 Agent 验收结果
+
+acceptance_time: 2026-07-20 19:20:30 CST
+acceptance_head: 532af3c
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/inventory.py rtl_obfuscator/rewrite.py tests/test_t034_single_file_default_profile.py tests/test_formal_equivalence.py tests/test_module_port_rewrite.py tests/test_interface_rewrite.py tests/test_interface_member_rewrite.py tests/test_project_regression.py`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_t034_single_file_default_profile tests.test_t033_impact_category tests.test_multifile_project tests.test_debug_mode tests.test_example_fifo_project tests.test_project_root_rewrite tests.test_project_root_parameter_rewrite -v`
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_formal_equivalence tests.test_module_port_rewrite tests.test_interface_rewrite tests.test_interface_member_rewrite tests.test_project_regression -v`
+  - `conda run -n rtl_obfuscation python -m unittest discover -s tests -v`
+  - `conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project --filelist tests/fixtures/t034_profile_scope/design.f --source-root tests/fixtures/t034_profile_scope --output-dir /tmp/rtl-obfuscation-t034-accept.K6HPzP/gate --map /tmp/rtl-obfuscation-t034-accept.K6HPzP/mapping.json --metrics /tmp/rtl-obfuscation-t034-accept.K6HPzP/metrics.json --top t034_top --category all --name-length 8`
+  - `conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t034_profile_scope/design.f --gold-root tests/fixtures/t034_profile_scope --gate-filelist /tmp/rtl-obfuscation-t034-accept.K6HPzP/gate/design.f --gate-root /tmp/rtl-obfuscation-t034-accept.K6HPzP/gate --top t034_top`
+  - `for f in tests/fixtures/t034_profile_scope/*.sv; do conda run -n rtl_obfuscation verible-verilog-syntax "$f" >/dev/null || exit $?; done; conda run -n rtl_obfuscation iverilog -g2012 -t null -s t034_top tests/fixtures/t034_profile_scope/child.sv tests/fixtures/t034_profile_scope/top.sv tests/fixtures/t034_profile_scope/unused.sv`
+  - `git diff --check`
+acceptance_results: T034 focused=`Ran 36 tests in 27.442s`, `OK`; authorized historical=`Ran 7 tests in 1.415s`, `OK`; full unittest=`Ran 117 tests in 577.596s`, `OK`; py_compile=PASS; explicit Formal positive=`{"formal_equivalence":"pass","gold":"tests/fixtures/t034_profile_scope","seq":5,"top":"t034_top"}`; functional negative from focused and full regression reached `equiv_status -assert` and reported unproven `$equiv`; Verible/Icarus=PASS; git_diff_check=PASS
+formal_verification: PASS
+gold: `tests/fixtures/t034_profile_scope/design.f` / `tests/fixtures/t034_profile_scope`
+gate: `/tmp/rtl-obfuscation-t034-accept.K6HPzP/gate/design.f` / `/tmp/rtl-obfuscation-t034-accept.K6HPzP/gate`
+top: t034_top
+command: `conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t034_profile_scope/design.f --gold-root tests/fixtures/t034_profile_scope --gate-filelist /tmp/rtl-obfuscation-t034-accept.K6HPzP/gate/design.f --gate-root /tmp/rtl-obfuscation-t034-accept.K6HPzP/gate --top t034_top`
+exit_code: 0
+result: `{"formal_equivalence":"pass","gate":"/tmp/rtl-obfuscation-t034-accept.K6HPzP/gate","gold":"tests/fixtures/t034_profile_scope","seq":5,"top":"t034_top"}`
+negative_result: focused test and full regression confirmed the intentional functional mutation reaches `equiv_status -assert` and reports unproven `$equiv`
+acceptance_conclusion: PASS; T034 is accepted by the Main Agent. The full regression was run once to satisfy the frozen T034 contract; future routine tasks must follow the RISC-V-Vector Formal scheduling rule recorded in the project workflow documents.

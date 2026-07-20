@@ -2,8 +2,8 @@
 
 - 文档状态：`DRAFT`
 - 适用入口：单文件、显式 filelist、`project-root + top`
-- 当前基线：T027–T033 `ACCEPTED`
-- 当前任务：T034 `READY`，统一单文件/filelist 默认 profile 与 multi/ABI fail-closed；T033 已完成且不改写 RTL
+- 当前基线：T027–T034 `ACCEPTED`
+- 当前任务：T035 `DRAFT`，project-root 手动 multi-module profile；T033/T034 已完成
 
 ## 1. 目标
 

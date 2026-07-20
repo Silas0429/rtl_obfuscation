@@ -52,15 +52,13 @@ class FormalEquivalenceRegressionTest(unittest.TestCase):
                     "--filelist", str(source_root / "design.f"),
                     "--source-root", str(source_root), "--output-dir", str(gate),
                     "--map", str(mapping), "--metrics", str(metrics), "--top", "fifo_top",
-                    "--category", "all", "--category", "modules", "--category", "ports",
-                    "--category", "interfaces", "--category", "interface_instances",
-                    "--category", "interface_ports", "--category", "modports",
+                    "--category", "all",
                     "--name-length", "8",
                 ],
                 cwd=repository, capture_output=True, text=True, check=False,
             )
             self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
-            self.assertEqual(json.loads(encrypt.stdout)["modified_tokens"], 299)
+            self.assertEqual(json.loads(encrypt.stdout)["modified_tokens"], 178)
 
             positive = self._run(repository, [
                 "--gold-filelist", str(source_root / "design.f"),

@@ -46,7 +46,7 @@ conda run -n rtl_obfuscation yosys -V
 - The Main Agent owns requirements, architecture, task boundaries, expected input/output, and acceptance commands.
 - The Main Agent prepares one small task at a time and sets it to `READY` only after the output is objectively checkable.
 - The Main Agent validates delivered behavior with the task's black-box commands before setting it to `ACCEPTED`.
-- For every task that produces rewritten RTL, the Main Agent must independently rerun `scripts/formal_equivalence.py` and require a passing JSON result.
+- For every task that produces rewritten RTL, the Main Agent must independently rerun the task's required `scripts/formal_equivalence.py` flow and require a passing JSON result. RISC-V-Vector Formal is excluded from routine acceptance and full-regression runs; routine test commands must omit `tests.test_risc_v_vector_project_root` and must not use a blanket discovery command that invokes it. Run its `formal-view`/`formal-align`/Yosys flow only when the active task contract is a dedicated RISC-V-Vector acceptance task that explicitly requires it.
 - The Main Agent creates the next task only after the current task is accepted.
 
 ## Sub-agent role and documentation duty
@@ -55,7 +55,7 @@ conda run -n rtl_obfuscation yosys -V
 - Before editing code, the sub-agent must change the task status from `READY` to `IN_PROGRESS` and update its execution record.
 - If an assumption, API difference, or boundary issue appears, the sub-agent must document it in the task before continuing and must not expand scope on its own.
 - Before requesting review, the sub-agent must record changed files, exact commands, actual outputs, and uncovered boundaries, then set the task to `READY_FOR_REVIEW`.
-- For tasks that produce rewritten RTL, the sub-agent must run the Yosys flow in `docs/formal_verification.md` and record the exact gold, gate, top, command, exit code, and JSON result.
+- For tasks that produce rewritten RTL, the sub-agent must run the task contract's Yosys flow in `docs/formal_verification.md` and record the exact gold, gate, top, command, exit code, and JSON result. The sub-agent must not run RISC-V-Vector Formal during routine work unless the active task contract explicitly defines a dedicated RISC-V-Vector acceptance flow.
 - For mapping-only or source-range-only tasks, the sub-agent must record formal verification as `N/A` with the reason; it must not run an identity comparison and call that evidence of transformed RTL correctness.
 - A task with rewritten RTL and a failed, skipped, or unsupported formal check cannot be set to `READY_FOR_REVIEW`.
 - The sub-agent must not set a task to `ACCEPTED`; that status belongs to the Main Agent.

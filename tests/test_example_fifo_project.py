@@ -24,12 +24,6 @@ CATEGORIES = {
     "struct_types": (2, 5),
     "struct_fields": (2, 4),
     "union_fields": (2, 6),
-    "modules": (2, 4),
-    "ports": (17, 59),
-    "interfaces": (1, 2),
-    "interface_instances": (1, 15),
-    "interface_ports": (9, 39),
-    "modports": (2, 2),
 }
 
 
@@ -89,21 +83,13 @@ class ExampleFifoProjectTest(unittest.TestCase):
                 mapping_file,
                 metrics_file,
                 maps,
-                [
-                    "all",
-                    "modules",
-                    "ports",
-                    "interfaces",
-                    "interface_instances",
-                    "interface_ports",
-                    "modports",
-                ],
+                ["all"],
             )
             self.assertEqual(full.returncode, 0, full.stderr)
             self.assertEqual(json.loads(full.stdout), {
                 "files": 4,
-                "mapping_entries": 79,
-                "modified_tokens": 299,
+                "mapping_entries": 47,
+                "modified_tokens": 178,
             })
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
             self.assertEqual(mapping["version"], 2)
@@ -166,7 +152,7 @@ class ExampleFifoProjectTest(unittest.TestCase):
             metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
             self.assertEqual(metrics["symbols"]["coverage"], 1.0)
             self.assertEqual(metrics["occurrences"], {
-                "renamed": 299, "eligible": 299, "coverage": 1.0,
+                "renamed": 178, "eligible": 178, "coverage": 1.0,
             })
             self.assertEqual(metrics["plaintext_leakage_rate"], 0.0)
             self.assertEqual(metrics["effective_coverage"], 1.0)

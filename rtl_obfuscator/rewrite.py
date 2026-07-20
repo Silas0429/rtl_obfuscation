@@ -544,7 +544,7 @@ def _encrypt_filelist_project(args: argparse.Namespace) -> dict[str, int]:
 
 def _debug_encrypt_filelist_project(args: argparse.Namespace) -> dict[str, Any]:
     runs: list[dict[str, Any]] = []
-    for category in inventory._SUPPORTED_CATEGORIES:
+    for category in inventory._DEFAULT_PROFILE_CATEGORIES:
         category_root = args.debug_dir / category
         summary = _encrypt_filelist_project(
             argparse.Namespace(
@@ -1803,10 +1803,21 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
             except ValueError as error:
                 parser.error(str(error))
         else:
+            if args.debug_dir is None:
+                try:
+                    inventory._expand_default_profile(args.category or [])
+                except ValueError as error:
+                    parser.error(str(error))
             if args.source_root is None:
                 parser.error("--source-root is required with --filelist")
             if args.include_dirs or args.defines:
                 parser.error("--include-dir and --define require --project-root")
+    elif args.operation == "encrypt":
+        if args.debug_dir is None:
+            try:
+                inventory._expand_default_profile(args.category or [])
+            except ValueError as error:
+                parser.error(str(error))
     elif args.operation == "decrypt-project":
         try:
             _validate_decrypt_project_paths(args)
@@ -1880,21 +1891,12 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     encrypt.add_argument(
         "--category",
         required=False,
+        action="append",
         help="One category for normal mode; do not combine with --debug.",
         choices=(
-            "signals",
-            "parameters",
-            "enum_values",
-            "genvars",
-            "functions",
-            "tasks",
-            "arguments",
-            "instances",
-            "generate_blocks",
-            "typedefs",
-            "struct_types",
-            "struct_fields",
-            "union_fields",
+            *inventory._SUPPORTED_CATEGORIES,
+            "struct",
+            "interface",
             "all",
         ),
     )
@@ -1957,36 +1959,10 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         dest="category",
         help="Repeatable categories for normal mode; do not combine with --debug.",
         choices=(
-            "signals",
-            "parameters",
-            "enum_values",
-            "genvars",
-            "functions",
-            "tasks",
-            "arguments",
-            "instances",
-            "generate_blocks",
-            "typedefs",
-            "struct_types",
-            "struct_fields",
-            "union_fields",
-            "modules",
-            "ports",
-            "interfaces",
-            "interface_instances",
-            "interface_ports",
-            "modports",
+            *inventory._SUPPORTED_CATEGORIES,
             "all",
             "struct",
             "interface",
-            "enum_values",
-            "genvars",
-            "functions",
-            "tasks",
-            "arguments",
-            "generate_blocks",
-            "typedefs",
-            "union_fields",
         ),
     )
     encrypt_project.add_argument(

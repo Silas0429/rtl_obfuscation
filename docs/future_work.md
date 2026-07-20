@@ -6,7 +6,8 @@
 当前状态校准：T030 已交付 project-root 的 13 个非-parameter 用户组；T031/T032 已交付
 module value parameter/localparam 的显式 inventory 和 rewrite。`parameters` 目前只能在
 project-root 普通模式通过 `--category parameters` 启用，仍不在五组默认 profile 和
-project-root debug 中；显式 filelist 的 19 类底层集合及其 `all`/debug 规则保持不变。
+project-root debug 中；显式 filelist 采用 13 类默认 profile，6 个 multi/ABI category
+fail-closed，multi/ABI 改写继续由 project-root 手动 profile 承担。
 
 ## 1. 优先解决的问题
 
@@ -75,7 +76,7 @@ mapping，并由 `decrypt-project` 字节恢复。后续可扩展：
 
 - T033 已完成：冻结 `single_module`/`multi_module` impact、category ownership、共享 registry 和
   machine-readable oracle；
-- T034：统一单文件/filelist 默认 profile，filelist 只改列出文件中的 single-module 对象，
+- T034 已完成：统一单文件/filelist 默认 profile，filelist 只改列出文件中的 single-module 对象，
   并对 multi/ABI category fail-closed；
 - T035：开放 project-root 手动 multi-module profile，接通跨 module parameter、module/port/interface
   改写和 mapping v4 审计；

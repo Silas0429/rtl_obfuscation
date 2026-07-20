@@ -11,7 +11,7 @@
 | 工作流 | 普通模式默认 | 普通模式手动选择 | debug |
 | --- | --- | --- | --- |
 | 单文件 | 必须传一个 category；可传 `all` | 13 个非 ABI 底层 category | 13 个 category |
-| 显式 filelist 多文件 | 必须传 `--category` | 19 个底层 category；`all` 展开 13 类，6 个 ABI 类需显式追加 | 19 个 category |
+| 显式 filelist 多文件 | 必须传 `--category` | 13 个默认 category；6 个 multi/ABI category 稳定拒绝；`all` 展开 13 类 | 13 个 category |
 | `project-root + top` | `signals`、`ports`、`instances`、`struct`、`interface` 五组 | 共 14 个用户组，另含 `enum_values`、`genvars`、`functions`、`tasks`、`arguments`、`generate_blocks`、`typedefs`、`union_fields`、`parameters` | 13 个非-parameter 用户组；当前不遍历 `parameters` |
 
 project-root 的 `struct` 展开为 `struct_types + struct_fields`，`interface` 展开为

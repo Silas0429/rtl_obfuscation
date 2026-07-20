@@ -440,42 +440,20 @@ class ProjectRootRewriteTests(unittest.TestCase):
             self.assertTrue((category_root / "metrics.json").is_file())
             self.assertTrue((category_root / "maps").is_dir())
 
-    def test_fifo_project_inventory_matches_legacy_category_semantics(self) -> None:
-        report, _, success = project.analyze_project(project_root=FIFO, top="fifo_top")
-        self.assertTrue(success)
+    def test_fifo_filelist_multi_category_is_rejected(self) -> None:
         root = self._temporary_root()
         completed = self._run(
             "encrypt-project", "--filelist", str(FIFO / "design.f"), "--source-root", str(FIFO),
             "--output-dir", str(root / "gate"), "--map", str(root / "mapping.json"),
             "--metrics", str(root / "metrics.json"), "--top", "fifo_top", "--name-length", "8",
-            *sum((["--category", category] for category in ("signals", "ports", "instances", "struct_types", "struct_fields", "interfaces", "interface_instances", "interface_ports", "modports")), []),
+            "--category", "ports",
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        legacy = json.loads((root / "mapping.json").read_text())["entries"]
-        project_items = report["inventory"]["eligible"]
-        legacy_keys = sorted(
-            (
-                item["category"],
-                item["original_name"],
-                json.dumps(item["declaration"], sort_keys=True),
-                json.dumps(item["references"], sort_keys=True),
-            )
-            for item in legacy
-        )
-        project_keys = sorted(
-            (
-                item["category"],
-                item["name"],
-                json.dumps(item["declaration"], sort_keys=True),
-                json.dumps(item["references"], sort_keys=True),
-            )
-            for item in project_items
-        )
-        self.assertEqual(project_keys, legacy_keys)
-        self.assertEqual(
-            {(item["name"], item["scope"]) for item in project_items if item["category"] == "struct_types"},
-            {("fifo_entry_t", "fifo_storage"), ("fifo_view_t", "fifo_storage")},
-        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", completed.stderr)
+        self.assertEqual(completed.stdout, "")
+        self.assertFalse((root / "gate").exists())
+        self.assertFalse((root / "mapping.json").exists())
+        self.assertFalse((root / "metrics.json").exists())
 
     def test_fifo_project_root_mapping_exact_oracle(self) -> None:
         root, completed, mapping, metrics = self._encrypt(FIFO, "fifo_top")

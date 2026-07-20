@@ -4,12 +4,12 @@
 同时输出可审计、可逆的 mapping。项目支持单文件、显式 filelist 多文件加密，以及
 `project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和默认五组对象加密；
 T031/T032 已为 project-root 增加 module parameter/localparam inventory 和显式 parameter
-rewrite。`parameters` 已交付但仍不进入 project-root 默认 profile；两种多文件工作流的
-默认/手动 category profile 尚未统一，见 [未来事项](docs/future_work.md)。
+rewrite。T034 已统一单文件/filelist 的 13 类默认 profile；filelist multi/ABI category
+以 `CATEGORY_REQUIRES_PROJECT_ROOT` fail-closed，project-root 仍通过手动 profile 处理这些类别。
 `rtl_samples/example_fifo/` 和 `rtl_samples/RISC-V-Vector/` 是当前完整交付样例。
 
-FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、79 个重命名对象、
-299 个被改写 token，PySlang 前端、Yosys formal 和字节级解密恢复均通过。样例还展示了
+FIFO 在当前默认 filelist profile 下的固定验收结果为：4 个 `.sv` 文件、13 个 category、47 个重命名对象、
+178 个被改写 token，PySlang 前端和字节级解密恢复均通过。样例还展示了
 内部 interface signal bundle 和 packed struct 作为 function argument 的实际使用。
 RISC-V-Vector 的 `vector_top` 固定闭包为 19 个文件、17 个 module、1091 个对象和 5741 个
 identifier occurrences；严格 gate 重编译、mapping v3、逐字节解密以及 formal 正负例均纳入验收。
@@ -92,12 +92,12 @@ conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 | 解密命令 | `decrypt` | `decrypt-project` | `decrypt-project` |
 | 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` | `--project-root <dir>` + `--top <module>` |
 | PySlang 分析 | 单个 `.sv` | filelist 中全部 `.sv` | 自动发现依赖，只严格编译 top 闭包 |
-| Category 参数 | 一个底层 category 或 `all` | 普通模式必须显式选择 category；可重复组合 19 个底层 category | 默认五组；可显式选择共 14 个用户组（含 `parameters`），但 debug 目前遍历 13 组 |
+| Category 参数 | 一个底层 category 或 `all` | 普通模式必须显式选择 category；默认 profile 为 13 个底层 category，multi/ABI category 稳定拒绝 | 默认五组；可显式选择共 14 个用户组（含 `parameters`），但 debug 目前遍历 13 组 |
 | Top | 不需要 | 必须提供，保留 top module 和普通 top ports | 必须提供，保留 top module、普通 top ports 和 top ABI |
 | Gate 输出 | 一个文件 | 镜像 filelist 文件 | 只镜像闭包文件并生成 `design.f` |
 | Mapping | version 1 | version 2 | version 3，含编译上下文、闭包和 manifest |
 | Per-file mapping | 不需要 | 可选 | 可选；不生成无 occurrence 的 header 空映射 |
-| `--debug <dir>` | 独立运行 13 类 | 独立运行 19 类 | 独立运行 13 个用户组（暂不含 `parameters`） |
+| `--debug <dir>` | 独立运行 13 类 | 独立运行 13 个默认 category | 独立运行 13 个用户组（暂不含 `parameters`） |
 | 适用场景 | 独立 module、最小复现 | 已有可靠 filelist 的工程 | 只知道工程根目录和 top 的工程 |
 
 只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用 filelist 或
@@ -119,8 +119,9 @@ modules ports interfaces interface_instances interface_ports modports
 ```
 
 单文件模式只接受上述 13 类或 `all`。显式 filelist 的普通模式必须传入至少一个
-`--category`，可重复组合 19 个底层 category；例如先传 `all`，再显式加入需要的 ABI 类别。
-filelist 的 `--debug <directory>` 会从同一份 gold 独立遍历全部 19 个底层 category。
+`--category`，默认 profile 支持 13 个底层 category；multi/ABI category 会以
+`CATEGORY_REQUIRES_PROJECT_ROOT` 稳定拒绝。filelist 的 `--debug <directory>` 从同一份 gold
+独立遍历 13 个默认 category；multi/ABI category 只能通过 project-root 手动 profile 验收。
 
 `project-root + top` 使用面向用户的概念组，不接受 `all` 或底层 category 名：
 
@@ -314,7 +315,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt \
 
 ### 3.8 多文件 debug
 
-FIFO 从同一份 `design.f` 独立运行全部 19 个 category：
+FIFO 从同一份 `design.f` 独立运行全部 13 个默认 category：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \

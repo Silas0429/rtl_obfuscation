@@ -40,12 +40,6 @@ PROJECT_CATEGORIES = {
     "struct_types": (2, 5),
     "struct_fields": (2, 4),
     "union_fields": (2, 6),
-    "modules": (2, 4),
-    "ports": (17, 59),
-    "interfaces": (1, 2),
-    "interface_instances": (1, 15),
-    "interface_ports": (9, 39),
-    "modports": (2, 2),
 }
 
 
@@ -137,7 +131,7 @@ class DebugModeCliTest(unittest.TestCase):
                 )
                 self.assertTrue((category_root / "metrics.json").is_file())
 
-    def test_project_debug_runs_nineteen_categories(self) -> None:
+    def test_project_debug_runs_thirteen_categories(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         gold_root = repository / "rtl_samples" / "example_fifo"
         with TemporaryDirectory() as temporary_directory:
@@ -170,7 +164,7 @@ class DebugModeCliTest(unittest.TestCase):
                 {
                     "debug": True,
                     "mode": "project",
-                    "category_count": 19,
+                    "category_count": 13,
                     "runs": _expected_runs(PROJECT_CATEGORIES, 4),
                 },
             )

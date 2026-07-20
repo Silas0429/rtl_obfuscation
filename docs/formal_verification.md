@@ -22,6 +22,18 @@
 
 Verible 和 Icarus 可以增加语法兼容性证据，但不能替代 PySlang 的语义绑定或 Yosys formal。
 
+### 1.1 RISC-V-Vector Formal 调度边界
+
+RISC-V-Vector 的 `formal-view`、`formal-align` 和 Yosys equivalence 属于专门的 RISC-V-Vector
+验收链路，不属于普通任务的常规验收或全量回归。普通任务可以运行 RISC-V-Vector 的只读
+manifest、closure、PySlang、Verible、Icarus、mapping 和 decrypt 检查，但不得启动其 Formal。
+
+只有活动任务合同明确声明“专门的 RISC-V-Vector Formal 验收”并冻结相应 gold/gate、oracle、
+超时和正负例时，子 Agent 和主 Agent 才运行该链路。其他任务不得以跳过 RISC Formal 为由判定
+自身 RTL Formal 通过；非 RISC 的 rewritten RTL 仍必须按本节执行 Yosys 正负例。常规全量回归
+必须显式排除 `tests.test_risc_v_vector_project_root`，不能用 blanket `unittest discover` 触发
+RISC Formal。
+
 ## 2. PySlang 前端
 
 多文件 FIFO gate 检查：

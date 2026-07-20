@@ -27,12 +27,16 @@
 2. **发现边界变化时**：把问题写入“偏差或阻塞”。不得自行扩大范围。
 3. **完成实现后**：填写变更文件、实际命令、实际输出和未覆盖边界，再把状态改成 `READY_FOR_REVIEW`。
 4. **验证失败时**：保持 `IN_PROGRESS` 或改成 `BLOCKED`，不得标成完成。
-5. **产生改写 RTL 时**：必须按 `docs/formal_verification.md` 运行 Yosys，并在任务单记录 gold、gate、top、退出码和 JSON；失败时不得申请验收。
+5. **产生改写 RTL 时**：必须按 `docs/formal_verification.md` 运行任务合同要求的 Yosys，并在任务单记录 gold、gate、top、退出码和 JSON；失败时不得申请验收。RISC-V-Vector Formal 仅允许在专门的 RISC-V-Vector 验收任务中运行，普通任务不得触发其 formal-view/formal-align/Yosys 流程。
 
 主 Agent 验收后负责：
 
 - 独立执行任务单中的所有命令。
-- 对产生改写 RTL 的任务独立重跑 Yosys formal equivalence。
+- 对产生改写 RTL 的任务独立重跑任务合同要求的 Yosys formal equivalence；RISC-V-Vector Formal
+  不属于常规验收或全量回归，只有专门的 RISC-V-Vector 验收任务明确要求时才运行。
+- 常规全量回归必须显式枚举并排除 `tests.test_risc_v_vector_project_root`；不得用会自动运行该
+  模块的 blanket `unittest discover` 代替。只有专门的 RISC-V-Vector 验收任务或历史合同明确
+  要求时，才运行包含该模块的回归。
 - 对照输入输出而不是只阅读代码。
 - 将状态改成 `ACCEPTED`。
 - 若对外行为发生变化，同步根目录 `README.md`、重命名表或未来事项，

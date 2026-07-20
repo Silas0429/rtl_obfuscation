@@ -22,12 +22,12 @@ class ProjectRegressionCliTest(unittest.TestCase):
             "category_counts": {"signals": 2, "typedefs": 1, "instances": 1},
         },
         {
-            "name": "t016_abi",
+            "name": "t016_default",
             "fixture": "tests/fixtures/t016_module_port",
             "top": "t016_top",
-            "categories": ["modules", "ports"],
-            "summary": {"files": 2, "mapping_entries": 3, "modified_tokens": 8},
-            "category_counts": {"modules": 1, "ports": 2},
+            "categories": ["all"],
+            "summary": {"files": 2, "mapping_entries": 2, "modified_tokens": 4},
+            "category_counts": {"signals": 1, "instances": 1},
         },
         {
             "name": "t017_all",
@@ -36,32 +36,6 @@ class ProjectRegressionCliTest(unittest.TestCase):
             "categories": ["all"],
             "summary": {"files": 3, "mapping_entries": 1, "modified_tokens": 1},
             "category_counts": {"instances": 1},
-        },
-        {
-            "name": "t017_interface",
-            "fixture": "tests/fixtures/t017_interface",
-            "top": "t017_top",
-            "categories": ["interfaces"],
-            "summary": {"files": 3, "mapping_entries": 1, "modified_tokens": 3},
-            "category_counts": {"interfaces": 1},
-        },
-        {
-            "name": "t018_combined",
-            "fixture": "tests/fixtures/t018_interface_member",
-            "top": "t018_top",
-            "categories": [
-                "all",
-                "interface_instances",
-                "interface_ports",
-                "modports",
-            ],
-            "summary": {"files": 3, "mapping_entries": 9, "modified_tokens": 24},
-            "category_counts": {
-                "instances": 1,
-                "interface_instances": 1,
-                "interface_ports": 5,
-                "modports": 2,
-            },
         },
     )
 
