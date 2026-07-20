@@ -352,7 +352,9 @@ modport。top ports 和 top ABI 类型默认进入 preserved 清单；省略 cat
 elaboration；显式 `parameters` 时进入 T031 的 eligible/preserved inventory，并由 T032 加密。
 
 成功时退出码为 0，报告包含候选文件、定义索引、include/macro 依赖、reachable modules/
-interfaces/files、严格编译诊断和精确 source ranges。缺失或歧义 top/module/include/macro 时
+interfaces/files、严格编译诊断和精确 source ranges；同时提供独立的 classification section，
+报告 `single_module`、`multi_module`、`top_abi` profile 的数量、ownership 和可审计 source ranges。
+缺失或歧义 top/module/include/macro 时
 退出码为 1，同时生成带稳定错误码的 `status=error` 报告。
 
 直接加密同一 top 闭包：

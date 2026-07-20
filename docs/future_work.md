@@ -73,11 +73,15 @@ parameter、parameter array/string/real/struct、`defparam`、复杂 hierarchica
 `parameters`，`encrypt-project` 已能直接消费该闭包，生成 mapping v3、gate、metrics 和逐文件
 mapping，并由 `decrypt-project` 字节恢复。后续可扩展：
 
-- 将显式 filelist 与 project-root 的默认/手动 category profile 统一，并让 project-root debug
-  覆盖 `parameters`；
-- T033：在 RISC-V-Vector `vector_top` 上集成并冻结 `v_int_alu` 等真实 parameter oracle，验证
+- T033 已完成：冻结 `single_module`/`multi_module` impact、category ownership、共享 registry 和
+  machine-readable oracle；
+- T034：统一单文件/filelist 默认 profile，filelist 只改列出文件中的 single-module 对象，
+  并对 multi/ABI category fail-closed；
+- T035：开放 project-root 手动 multi-module profile，接通跨 module parameter、module/port/interface
+  改写和 mapping v4 审计；
+- T036：在 RISC-V-Vector `vector_top` 上集成并冻结 `v_int_alu` 等真实 parameter oracle，验证
   参数改写与现有 formal-view/formal-align 链路；
-- T034（条件任务）：在 T033 完成后重新评估是否把 `parameters` 晋级到 project-root 默认 profile，
+- T037（条件任务）：在 T036 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
   并重新冻结 FIFO/RISC-V-Vector 的数量和 formal oracle；
 - library、嵌套 filelist 和更复杂的 include/define 条件组合；
 - 未解析 IP/blackbox 的受控模型；

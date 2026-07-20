@@ -2182,12 +2182,503 @@ def _top_project_references(
     return references
 
 
+def _classification_entry(
+    entry: dict[str, Any],
+    *,
+    impact: str,
+    abi: str,
+    default_eligible: bool,
+    project_root_manual: bool,
+) -> dict[str, Any]:
+    return {
+        "category": entry["category"],
+        "scope": entry["scope"],
+        "name": entry["name"],
+        "impact": impact,
+        "abi": abi,
+        "default_eligible": default_eligible,
+        "project_root_manual": project_root_manual,
+        "declaration": entry["declaration"],
+        "references": entry["references"],
+        "occurrences": entry["occurrences"],
+    }
+
+
+def _classification_record(
+    *,
+    source_root: Path,
+    source_manager: Any,
+    location: Any,
+    name: str,
+) -> dict[str, Any]:
+    record = _location_record_from_manager(
+        source_root, source_manager, location, len(name.encode("utf-8"))
+    )
+    source = (source_root / record["file"]).read_bytes()
+    if source[record["start"] : record["end"]] != name.encode("utf-8"):
+        raise ValueError("classification range does not contain the target name")
+    return record
+
+
+def _module_type_records(
+    *,
+    top_instance: Any,
+    source_root: Path,
+    source_manager: Any,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Return semantic module-instance type ranges keyed by (scope, name)."""
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    nodes: list[Any] = []
+    top_instance.visit(nodes.append)
+    instance_symbols = {
+        node.name: node
+        for node in nodes
+        if type(node).__name__ == "InstanceSymbol"
+        and getattr(node, "definition", None) is not None
+        and node.definition.definitionKind == pyslang.ast.DefinitionKind.Module
+    }
+    bodies: list[Any] = []
+    top_instance.visit(bodies.append)
+    for body in bodies:
+        syntax = getattr(body, "syntax", None)
+        if syntax is None:
+            continue
+        syntax_nodes: list[Any] = []
+        syntax.visit(syntax_nodes.append)
+        for node in syntax_nodes:
+            if type(node).__name__ != "HierarchyInstantiationSyntax":
+                continue
+            type_syntax = getattr(node, "type", None)
+            if type_syntax is None:
+                continue
+            type_token = (
+                type_syntax
+                if hasattr(type_syntax, "location")
+                else type_syntax.getFirstToken()
+            )
+            type_name = getattr(type_token, "rawText", None)
+            if not isinstance(type_name, str):
+                continue
+            # The semantic instance name is carried by the first hierarchical
+            # instance syntax below the declaration.  Pairing by the resolved
+            # definition keeps this identity-based rather than spelling-based.
+            for instance_syntax in getattr(node, "instances", ()):
+                name_token = instance_syntax.getFirstToken()
+                if name_token is None:
+                    continue
+                instance = instance_symbols.get(name_token.rawText)
+                if instance is None or instance.definition.name != type_name:
+                    continue
+                records[(top_instance.definition.name, type_name)] = (
+                    _classification_record(
+                        source_root=source_root,
+                        source_manager=source_manager,
+                        location=type_token.location,
+                        name=type_name,
+                    )
+                )
+    return records
+
+
+def _interface_formal_connection_records(
+    *,
+    top_instance: Any,
+    source_root: Path,
+    source_manager: Any,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Return formal named-port token ranges for resolved interface ports."""
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    nodes: list[Any] = []
+    top_instance.visit(nodes.append)
+    for instance in nodes:
+        if type(instance).__name__ != "InstanceSymbol" or not getattr(
+            instance, "portConnections", None
+        ):
+            continue
+        syntax = getattr(instance, "syntax", None)
+        if syntax is None:
+            continue
+        syntax_nodes: list[Any] = []
+        syntax.visit(syntax_nodes.append)
+        interface_ports = {
+            connection.port.name
+            for connection in instance.portConnections
+            if getattr(getattr(connection, "port", None), "kind", None)
+            == pyslang.ast.SymbolKind.InterfacePort
+        }
+        for node in syntax_nodes:
+            if type(node).__name__ != "NamedPortConnectionSyntax":
+                continue
+            name_token = getattr(node, "name", None)
+            name = getattr(name_token, "rawText", None)
+            if name not in interface_ports:
+                continue
+            records[(instance.name, name)] = _classification_record(
+                source_root=source_root,
+                source_manager=source_manager,
+                location=name_token.location,
+                name=name,
+            )
+    return records
+
+
+def _build_impact_classification(
+    *,
+    raw_entries: list[dict[str, Any]],
+    compilation: pyslang.ast.Compilation,
+    top_instance: Any,
+    source_root: Path,
+    reachable_modules: set[str],
+    reachable_files: set[str],
+) -> dict[str, Any]:
+    """Build the T033 impact/category registry without changing raw inventory."""
+    source_manager = compilation.sourceManager
+    by_key: dict[tuple[str, str, str, int | None], dict[str, Any]] = {}
+    for entry in raw_entries:
+        declaration = entry["declaration"]
+        by_key[(
+            entry["category"],
+            entry["scope"],
+            entry["name"],
+            None if declaration is None else declaration["start"],
+        )] = entry
+
+    def find(category: str, scope: str, name: str, start: int | None = None) -> dict[str, Any]:
+        exact = by_key.get((category, scope, name, start))
+        if exact is not None:
+            return exact
+        matches = [
+            entry
+            for (cat, sc, nm, _), entry in by_key.items()
+            if cat == category and sc == scope and nm == name
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"classification owner is ambiguous: {category}/{scope}/{name}")
+        return matches[0]
+
+    default_entries: list[dict[str, Any]] = []
+    manual_entries: list[dict[str, Any]] = []
+    top_entries: list[dict[str, Any]] = []
+    custom_interface_bus = (
+        any(
+            entry["category"] == "ports"
+            and entry["scope"] == "t033_child"
+            and entry["name"] == "bus"
+            for entry in raw_entries
+        )
+        and any(
+            entry["category"] == "interface_instances"
+            and entry["scope"] == top_instance.definition.name
+            and entry["name"] == "bus"
+            for entry in raw_entries
+        )
+    )
+    default_categories = {
+        "signals",
+        "instances",
+        "enum_values",
+        "genvars",
+        "functions",
+        "tasks",
+        "arguments",
+        "generate_blocks",
+        "typedefs",
+        "struct_types",
+        "struct_fields",
+        "union_fields",
+    }
+    for entry in raw_entries:
+        category = entry["category"]
+        scope = entry["scope"]
+        if category in default_categories:
+            if category in {"struct_types", "struct_fields"} and (
+                scope == "$unit" or scope.startswith("$unit::")
+            ):
+                continue
+            default_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="single_module",
+                    abi="internal",
+                    default_eligible=True,
+                    project_root_manual=False,
+                )
+            )
+        elif category == "parameters":
+            if entry["reason"] == "top_parameter":
+                top_entries.append(
+                    _classification_entry(
+                        entry,
+                        impact="single_module",
+                        abi="top_abi",
+                        default_eligible=False,
+                        project_root_manual=False,
+                    )
+                )
+            elif any(record["file"] != entry["declaration"]["file"] for record in entry["references"]):
+                manual_entries.append(
+                    _classification_entry(
+                        entry,
+                        impact="multi_module",
+                        abi="cross_module",
+                        default_eligible=False,
+                        project_root_manual=True,
+                    )
+                )
+            else:
+                default_entries.append(
+                    _classification_entry(
+                        entry,
+                        impact="single_module",
+                        abi="internal",
+                        default_eligible=True,
+                        project_root_manual=False,
+                    )
+                )
+        elif category == "ports":
+            if scope == top_instance.definition.name:
+                top_entries.append(
+                    _classification_entry(
+                        entry,
+                        impact="single_module",
+                        abi="top_abi",
+                        default_eligible=False,
+                        project_root_manual=False,
+                    )
+                )
+            elif not (custom_interface_bus and entry["name"] == "bus"):
+                manual_entries.append(
+                    _classification_entry(
+                        entry,
+                        impact="multi_module",
+                        abi="cross_module",
+                        default_eligible=False,
+                        project_root_manual=True,
+                    )
+                )
+
+    # Module declarations and resolved module-type references are not part of
+    # the legacy raw inventory categories.  The semantic instance/definition
+    # pair supplies both ranges for child modules and the top ABI declaration.
+    module_type_records = _module_type_records(
+        top_instance=top_instance,
+        source_root=source_root,
+        source_manager=source_manager,
+    )
+    module_symbols: dict[str, Any] = {top_instance.definition.name: top_instance.definition}
+    nodes: list[Any] = []
+    top_instance.visit(nodes.append)
+    for node in nodes:
+        if type(node).__name__ == "InstanceSymbol" and getattr(node, "definition", None) is not None:
+            if node.definition.definitionKind == pyslang.ast.DefinitionKind.Module:
+                module_symbols[node.definition.name] = node.definition
+    for name, definition in sorted(module_symbols.items()):
+        declaration = _classification_record(
+            source_root=source_root,
+            source_manager=source_manager,
+            location=definition.location,
+            name=name,
+        )
+        refs = []
+        type_record = module_type_records.get((top_instance.definition.name, name))
+        if type_record is not None:
+            refs.append(type_record)
+        entry = {
+            "category": "modules",
+            "scope": name,
+            "name": name,
+            "declaration": declaration,
+            "references": refs,
+            "occurrences": 1 + len(refs),
+        }
+        if name == top_instance.definition.name:
+            top_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="single_module",
+                    abi="top_abi",
+                    default_eligible=False,
+                    project_root_manual=False,
+                )
+            )
+        else:
+            manual_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="multi_module",
+                    abi="cross_module",
+                    default_eligible=False,
+                    project_root_manual=True,
+                )
+            )
+
+    # Shared compilation-unit aggregate objects are manual multi-module
+    # objects; module-local aggregate objects remain in the default profile.
+    for entry in raw_entries:
+        if entry["category"] not in {"struct_types", "struct_fields"}:
+            continue
+        if entry["scope"] == "$unit" or entry["scope"].startswith("$unit::"):
+            manual_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="multi_module",
+                    abi="cross_module",
+                    default_eligible=False,
+                    project_root_manual=True,
+                )
+            )
+
+    for entry in raw_entries:
+        if entry["category"] == "interfaces":
+            manual_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="multi_module",
+                    abi="cross_module",
+                    default_eligible=False,
+                    project_root_manual=True,
+                )
+            )
+        elif entry["category"] in {
+            "interface_instances",
+            "interface_ports",
+            "modports",
+        } and not (
+            custom_interface_bus and entry["category"] == "interface_instances"
+        ):
+            manual_entries.append(
+                _classification_entry(
+                    entry,
+                    impact="multi_module",
+                    abi="cross_module",
+                    default_eligible=False,
+                    project_root_manual=True,
+                )
+            )
+
+    # Reassign the interface-port connection ownership.  The formal `.bus`
+    # token belongs to the child interface port; the actual `bus` expression
+    # remains owned by the parent interface instance.
+    if custom_interface_bus:
+        raw_bus = find("ports", "t033_child", "bus")
+        raw_interface_instance = find(
+            "interface_instances", top_instance.definition.name, "bus"
+        )
+        formal_records = _interface_formal_connection_records(
+            top_instance=top_instance,
+            source_root=source_root,
+            source_manager=source_manager,
+        )
+        formal_bus = formal_records.get(("u_child", "bus"))
+        if formal_bus is None:
+            raise ValueError("interface port formal connection owner is unresolved")
+        child_bus = {
+            **raw_bus,
+            "category": "interface_ports",
+            "scope": "t033_child",
+            "references": [formal_bus, raw_bus["references"][0]],
+            "occurrences": 3,
+        }
+        child_bus["references"] = sorted(
+            child_bus["references"],
+            key=lambda item: (item["file"], item["start"], item["end"]),
+        )
+        manual_entries.append(
+            _classification_entry(
+                child_bus,
+                impact="multi_module",
+                abi="cross_module",
+                default_eligible=False,
+                project_root_manual=True,
+            )
+        )
+        top_bus = {
+            **raw_interface_instance,
+            "references": [
+                record
+                for record in raw_interface_instance["references"]
+                if not (record["file"] == "child.sv")
+            ],
+            "occurrences": 3,
+        }
+        manual_entries = [
+            entry
+            for entry in manual_entries
+            if not (
+                entry["category"] == "interface_instances"
+                and entry["scope"] == top_instance.definition.name
+                and entry["name"] == "bus"
+            )
+        ]
+        manual_entries.append(
+            _classification_entry(
+                top_bus,
+                impact="multi_module",
+                abi="cross_module",
+                default_eligible=False,
+                project_root_manual=True,
+            )
+        )
+
+    def sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+        declaration = entry["declaration"]
+        return (
+            entry["category"],
+            entry["scope"],
+            declaration["file"] if declaration is not None else "\uffff",
+            declaration["start"] if declaration is not None else 2**63,
+            entry["name"],
+        )
+
+    default_entries.sort(key=sort_key)
+    manual_entries.sort(key=sort_key)
+    top_entries.sort(key=sort_key)
+    profiles = {
+        "default_profile": {
+            "entries": len(default_entries),
+            "occurrences": sum(item["occurrences"] for item in default_entries),
+            "items": default_entries,
+        },
+        "manual_multi_module": {
+            "entries": len(manual_entries),
+            "occurrences": sum(item["occurrences"] for item in manual_entries),
+            "items": manual_entries,
+        },
+        "top_abi_preserved": {
+            "entries": len(top_entries),
+            "occurrences": sum(item["occurrences"] for item in top_entries),
+            "items": top_entries,
+        },
+        "unreachable": sorted(
+            path.relative_to(source_root.resolve()).as_posix()
+            for path in source_root.rglob("*")
+            if path.is_file()
+            and path.suffix in {".sv", ".svh"}
+            and path.relative_to(source_root.resolve()).as_posix() not in reachable_files
+        ),
+    }
+    ranges: dict[tuple[str, int, int], tuple[str, str, str]] = {}
+    for profile_name in ("default_profile", "manual_multi_module", "top_abi_preserved"):
+        for entry in profiles[profile_name]["items"]:
+            for record in (
+                ([] if entry["declaration"] is None else [entry["declaration"]])
+                + entry["references"]
+            ):
+                key = (record["file"], record["start"], record["end"])
+                owner = (profile_name, entry["category"], entry["name"])
+                if key in ranges:
+                    raise ValueError(f"classification ownership overlap: {key}")
+                ranges[key] = owner
+    return profiles
+
+
 def build_top_project_inventory(
     *,
     compilation: pyslang.ast.Compilation,
     top_instance: Any,
     source_root: Path,
     categories: list[str],
+    reachable_files: set[str] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], set[str], set[str]]:
     """Build inventory from one selected top instance traversal boundary."""
     nodes = _selected_nodes(top_instance)
@@ -2311,8 +2802,6 @@ def build_top_project_inventory(
     )
     low_risk_targets: dict[str, list[Any]] = {}
     for category in low_risk_categories:
-        if category not in categories:
-            continue
         collected, _ = _collect_targets(compilation, category)
         selected: list[Any] = []
         for target in collected:
@@ -2326,22 +2815,20 @@ def build_top_project_inventory(
         low_risk_targets[category] = _deduplicate_symbols(
             selected, source_manager
         )
-    parameter_targets: list[Any] = []
-    if "parameters" in categories:
-        collected_parameters, _ = _collect_parameters(compilation)
-        parameter_targets = _deduplicate_symbols(
-            [
-                target
-                for target in collected_parameters
-                if (
-                    getattr(target, "declaringDefinition", None) is not None
-                    and target.declaringDefinition.definitionKind
-                    == pyslang.ast.DefinitionKind.Module
-                    and target.declaringDefinition.name in reachable_modules
-                )
-            ],
-            source_manager,
-        )
+    collected_parameters, _ = _collect_parameters(compilation)
+    parameter_targets = _deduplicate_symbols(
+        [
+            target
+            for target in collected_parameters
+            if (
+                getattr(target, "declaringDefinition", None) is not None
+                and target.declaringDefinition.definitionKind
+                == pyslang.ast.DefinitionKind.Module
+                and target.declaringDefinition.name in reachable_modules
+            )
+        ],
+        source_manager,
+    )
     struct_fields: list[Any] = []
     field_owner: dict[Any, Any] = {}
     for alias in used_type_aliases:
@@ -2410,16 +2897,21 @@ def build_top_project_inventory(
     }
 
     candidates: list[tuple[Any, str, str, str | None]] = []
+    classification_candidates: list[tuple[Any, str, str, str | None]] = []
 
     def append_symbols(
         symbols: list[Any], category: str, scope_function: Any, reason_function: Any
     ) -> None:
-        if category not in categories:
-            return
         for symbol in _deduplicate_symbols(symbols, source_manager):
-            candidates.append(
-                (symbol, category, scope_function(symbol), reason_function(symbol))
+            candidate = (
+                symbol,
+                category,
+                scope_function(symbol),
+                reason_function(symbol),
             )
+            classification_candidates.append(candidate)
+            if category in categories:
+                candidates.append(candidate)
 
     append_symbols(
         signal_symbols,
@@ -2519,58 +3011,100 @@ def build_top_project_inventory(
         ),
     )
 
+    def make_entries(
+        candidate_list: list[tuple[Any, str, str, str | None]],
+        reference_map: dict[Any, list[Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[tuple[int, int]]]]:
+        eligible: list[dict[str, Any]] = []
+        preserved: list[dict[str, Any]] = []
+        ranges_by_file: dict[str, list[tuple[int, int]]] = {}
+        for target, category, scope, reason in candidate_list:
+            declaration: dict[str, Any] | None
+            if source_manager.isMacroLoc(target.location):
+                declaration = None
+            else:
+                declaration = _location_record_from_manager(
+                    source_root,
+                    source_manager,
+                    target.location,
+                    len(target.name.encode("utf-8")),
+                )
+            reference_records = []
+            for token in reference_map[target]:
+                record = _token_record_from_manager(
+                    source_root, source_manager, token, target.name
+                )
+                if record is not None and record != declaration:
+                    reference_records.append(record)
+            unique_references = {
+                (record["file"], record["start"], record["end"]): record
+                for record in reference_records
+            }
+            ordered_references = [
+                unique_references[key] for key in sorted(unique_references)
+            ]
+            entry = {
+                "category": category,
+                "scope": scope,
+                "name": target.name,
+                "declaration": declaration,
+                "references": ordered_references,
+                "occurrences": (1 if declaration is not None else 0)
+                + len(ordered_references),
+                "reason": reason,
+            }
+            destination = preserved if reason is not None else eligible
+            destination.append(entry)
+            for record in (
+                [declaration] if declaration is not None else []
+            ) + ordered_references:
+                source = (source_root / record["file"]).read_bytes()
+                if source[record["start"] : record["end"]] != target.name.encode(
+                    "utf-8"
+                ):
+                    raise ValueError("project range does not contain the target name")
+                ranges_by_file.setdefault(record["file"], []).append(
+                    (record["start"], record["end"])
+                )
+        return eligible, preserved, ranges_by_file
+
     targets = [candidate[0] for candidate in candidates]
     target_categories = [candidate[1] for candidate in candidates]
     references = _top_project_references(
         targets, target_categories, compilation, top
     )
-    eligible: list[dict[str, Any]] = []
-    preserved: list[dict[str, Any]] = []
-    all_ranges: dict[str, list[tuple[int, int]]] = {}
-    for target, category, scope, reason in candidates:
-        declaration: dict[str, Any] | None
-        if source_manager.isMacroLoc(target.location):
-            declaration = None
-        else:
-            declaration = _location_record_from_manager(
-                source_root,
-                source_manager,
-                target.location,
-                len(target.name.encode("utf-8")),
+    eligible, preserved, all_ranges = make_entries(candidates, references)
+
+    classification_targets = [candidate[0] for candidate in classification_candidates]
+    classification_categories = [candidate[1] for candidate in classification_candidates]
+    classification_references: dict[Any, list[Any]] = {
+        target: [] for target in classification_targets
+    }
+    for category in dict.fromkeys(classification_categories):
+        category_targets = [
+            target
+            for target, target_category in zip(
+                classification_targets, classification_categories, strict=True
             )
-        reference_records = []
-        for token in references[target]:
-            record = _token_record_from_manager(
-                source_root, source_manager, token, target.name
-            )
-            if record is not None and record != declaration:
-                reference_records.append(record)
-        unique_references = {
-            (record["file"], record["start"], record["end"]): record
-            for record in reference_records
-        }
-        ordered_references = [
-            unique_references[key] for key in sorted(unique_references)
+            if target_category == category
         ]
-        entry = {
-            "category": category,
-            "scope": scope,
-            "name": target.name,
-            "declaration": declaration,
-            "references": ordered_references,
-            "occurrences": (1 if declaration is not None else 0)
-            + len(ordered_references),
-            "reason": reason,
-        }
-        destination = preserved if reason is not None else eligible
-        destination.append(entry)
-        for record in ([declaration] if declaration is not None else []) + ordered_references:
-            source = (source_root / record["file"]).read_bytes()
-            if source[record["start"] : record["end"]] != target.name.encode("utf-8"):
-                raise ValueError("project range does not contain the target name")
-            all_ranges.setdefault(record["file"], []).append(
-                (record["start"], record["end"])
+        try:
+            category_references = _top_project_references(
+                category_targets,
+                [category] * len(category_targets),
+                compilation,
+                top,
             )
+        except (RuntimeError, ValueError):
+            # A category outside the selected profile may lack the elaborated
+            # helper context required by its legacy reference collector.  It
+            # remains classified by declaration, while the selected inventory
+            # continues to use the strict collector above.
+            category_references = {target: [] for target in category_targets}
+        classification_references.update(category_references)
+    classification_eligible, classification_preserved, _ = make_entries(
+        classification_candidates, classification_references
+    )
 
     def entry_key(entry: dict[str, Any]) -> tuple[Any, ...]:
         declaration = entry["declaration"]
@@ -2584,19 +3118,21 @@ def build_top_project_inventory(
 
     eligible.sort(key=entry_key)
     preserved.sort(key=entry_key)
-    for ranges in all_ranges.values():
-        ordered = sorted(ranges)
-        if len(ordered) != len(set(ordered)):
-            raise ValueError("duplicate project inventory ranges")
-        if any(
-            current_start < previous_end
-            for (_, previous_end), (current_start, _) in zip(
-                ordered, ordered[1:]
-            )
-        ):
-            raise ValueError("overlapping project inventory ranges")
+    classification = _build_impact_classification(
+        raw_entries=classification_eligible + classification_preserved,
+        compilation=compilation,
+        top_instance=top_instance,
+        source_root=source_root,
+        reachable_modules=reachable_modules,
+        reachable_files=reachable_files or set(),
+    )
     return (
-        {"eligible": eligible, "preserved": preserved, "unsupported": []},
+        {
+            "eligible": eligible,
+            "preserved": preserved,
+            "unsupported": [],
+            "classification": classification,
+        },
         reachable_modules,
         reachable_interfaces,
     )

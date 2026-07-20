@@ -929,7 +929,9 @@ def _analyze_project_with_context(
             top_instance=top_instance,
             source_root=root,
             categories=expanded_categories,
+            reachable_files=set(closure),
         )
+        classification = inventory_report.pop("classification", None)
         compile_order = context.compile_order(closure)
         report["status"] = "pass"
         report["compile"].update(
@@ -965,6 +967,8 @@ def _analyze_project_with_context(
             "header_files": sorted(path for path in closure if path.endswith(".svh")),
         }
         report["inventory"] = inventory_report
+        if classification is not None:
+            report["classification"] = classification
         report["diagnostics"] = []
         result_summary = _summary(report)
         semantic_context = ProjectSemanticContext(

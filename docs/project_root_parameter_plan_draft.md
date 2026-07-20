@@ -94,11 +94,11 @@ Formal verification：`N/A`，因为不产生 rewritten RTL。
 
 mapping 继续使用 v3，不因增加 parameter category 直接升级 schema。
 
-### T033：RISC-V-Vector 集成
+### T036：RISC-V-Vector 集成
 
 以 `vector_top` 为 top，冻结 `v_int_alu` 的 10 个 parameter + 3 个 localparam，以及普通表达式、generate-if、dimension、struct/interface override 的引用 oracle；验证 19-file closure、mapping、formal-view/formal-align 和正负例 formal。
 
-### T034：默认 profile 晋级（条件任务）
+### T037：默认 profile 晋级（条件任务）
 
 T031/T032 先只支持：
 
@@ -107,9 +107,9 @@ T031/T032 先只支持：
 ```
 
 T031/T032 已证明显式 `parameters` 的 inventory/rewrite 闭环，但没有改变当前五组默认 profile。
-T033 仍负责 RISC-V-Vector 参数集成；只有 T033 全部通过后，才可另开条件任务重新评估是否将
-`parameters` 纳入默认 profile，并重新冻结 FIFO/RISC 默认 oracle。两种多文件工作流的 profile
-统一也是后续工作，不属于 T031/T032。
+T033–T035 现在先负责 impact/category oracle、filelist 迁移和 project-root 手动 multi-module
+profile；T036 才负责 RISC-V-Vector 参数集成。只有 T036 全部通过后，才可在 T037 重新评估是否
+将更多 `parameters` 或 shared type 纳入默认 profile，并重新冻结 FIFO/RISC 默认 oracle。
 
 ## 4. 代码改造点
 
@@ -137,8 +137,11 @@ T033 仍负责 RISC-V-Vector 参数集成；只有 T033 全部通过后，才可
 | --- | --- | --- |
 | T031 | inventory、scope、reason、range、determinism、unsupported fail-closed | N/A |
 | T032 | encrypt、strict gate、mapping、metrics、decrypt、byte identity | 正例 PASS；功能负例 FAIL |
-| T033 | RISC closure、`v_int_alu` oracle、formal-view 对称性 | 正例 PASS；功能负例 FAIL |
-| T034 | 默认 profile 数字和文档同步 | 复用 T033 |
+| T033 | impact/category oracle、shared ownership 和 profile registry | N/A（不产生 RTL） |
+| T034 | 默认 profile、filelist scope 和 multi/ABI fail-closed | 正例 PASS；功能负例 FAIL |
+| T035 | project-root multi-module parameter/ABI rewrite | 正例 PASS；功能负例 FAIL |
+| T036 | RISC closure、`v_int_alu` oracle、formal-view 对称性 | 正例 PASS；功能负例 FAIL |
+| T037 | 默认 profile 数字和文档同步 | 复用 T036 |
 
 所有 Python、parser、HDL、test 和 Yosys 命令必须使用：
 
@@ -157,5 +160,6 @@ conda run -n rtl_obfuscation ...
 ## 7. 归档结论
 
 方案已按 T031 → T032 落地：关键的 localparam expression、generate-if、struct/interface
-dimension 和 named override 语义引用均已建立并通过验收。T033（真实 RISC-V-Vector 参数集成）
-和条件性 T034（默认 profile 晋级）仍是未完成的后续任务，不能从本归档文档推断为已实现。
+dimension 和 named override 语义引用均已建立并通过验收。T033–T035 先负责 impact/category
+oracle、filelist 迁移和 project-root 手动 multi-module profile；T036（真实 RISC-V-Vector
+参数集成）和条件性 T037（默认 profile 晋级）仍未完成，不能从本归档文档推断为已实现。
