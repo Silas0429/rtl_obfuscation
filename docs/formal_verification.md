@@ -14,6 +14,12 @@
 5. decrypt 后每个文件与 gold 字节一致；
 6. metrics coverage 为 1，`plaintext_leakage_rate` 为 0。
 
+对 `project-root + top` 的显式 `parameters` rewrite，以上门禁与其他 project-root category
+相同：T032 的正例通过 Yosys equivalence，功能变更负例必须在
+`equiv_status -assert` 留下未证明 `$equiv`。仅执行 `inspect-project --category parameters`
+的 T031 分析不产生 RTL，formal verification 应记录为 `N/A`，不能用 identity comparison
+冒充改写正确性。
+
 Verible 和 Icarus 可以增加语法兼容性证据，但不能替代 PySlang 的语义绑定或 Yosys formal。
 
 ## 2. PySlang 前端
@@ -158,6 +164,10 @@ conda run -n rtl_obfuscation python -c 'from pathlib import Path; g=Path("rtl_sa
 
 formal 要求 gold/gate 的 top module 名、top port 名、方向和位宽一致，filelist 只列显式 `.sv`
 相对路径，设计可由 `prep -flatten` 完整展开且不依赖未提供 blackbox/library。
+
+参数改写的当前支持面是 module value parameter/localparam 及其已验证的 integral expression、
+dimension、generate 和 named override 引用；type/package/class/interface/`$unit` parameter、
+复杂 parameter 类型、`defparam` 和复杂层次引用仍不在 formal/改写交付范围内。
 
 Yosys 的 SystemVerilog frontend 不是完整语言实现。特别是顶层 interface/modport port 可能被
 错误降级或把 member 当作隐式信号；这种情况下即使命令退出 0，也不能将结果视为有效证明。

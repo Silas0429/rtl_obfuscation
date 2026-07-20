@@ -6,7 +6,7 @@
 - 前置任务：T031 `ACCEPTED`
 - 基线提交：`e75b7fd`
 - Formal verification：必须 `PASS`
-- 关联草案：[`docs/project_root_parameter_plan_draft.md`](../project_root_parameter_plan_draft.md)
+- 关联计划归档：[`docs/project_root_parameter_plan_draft.md`](../project_root_parameter_plan_draft.md)
 - T031 fixture：只读，不得修改
 
 ## 1. 单一目标

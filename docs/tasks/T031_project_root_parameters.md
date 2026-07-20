@@ -6,7 +6,7 @@
 - 前置任务：T030 `ACCEPTED`
 - 计划基线：`1d6788b`；T030 acceptance bundle 已由主 Agent 暂存，子 Agent 开始前必须确认其已提交或作为继承工作区明确记录
 - Formal verification：`N/A`（本任务只生成 inventory/source-range，不改写 RTL）
-- 关联草案：[`docs/project_root_parameter_plan_draft.md`](../project_root_parameter_plan_draft.md)
+- 关联计划归档：[`docs/project_root_parameter_plan_draft.md`](../project_root_parameter_plan_draft.md)
 
 ## 1. 单一目标
 

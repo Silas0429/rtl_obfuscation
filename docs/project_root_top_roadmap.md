@@ -20,7 +20,18 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
 本路线图不是活动任务合同。T027—T032 已验收，T006 继续保持 `DRAFT`；parameter inventory
-和显式 parameter rewrite 已交付，parameters 仍不进入默认 profile。
+和显式 parameter rewrite 已交付。`parameters` 仍不进入 project-root 默认 profile，也不进入
+project-root debug；两种多文件工作流的默认/手动 profile 统一列为后续工作。
+
+当前 profile 矩阵：
+
+| 工作流 | 普通模式默认 | 普通模式手动选择 | debug |
+| --- | --- | --- | --- |
+| 显式 filelist | 必须显式传 `--category` | 19 个底层 category；`all` 展开 13 类，6 个 ABI 类需显式追加 | 19 个 category |
+| `project-root + top` | `signals`、`ports`、`instances`、`struct`、`interface` 五组 | 14 个用户组，另含 8 个 T030 低风险组和显式 `parameters` | 13 个非-parameter 用户组 |
+
+project-root 不接受 `all` 或底层 category 名；`struct` 和 `interface` 是概念组展开。当前
+project-root 普通模式显式 `parameters` 已支持 inventory/rewrite，但默认和 debug 尚未晋级。
 
 ## 2. 最终使用模型
 
@@ -58,8 +69,8 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
 默认 ABI 规则：
 
 - top module 名和 top 普通 port 名始终保留；
-- parameter 始终参与 elaboration；省略 category 时不进入 inventory，显式 `parameters` 可报告并
-  加密 eligible/preserved parameter；parameters 仍不进入默认 profile；
+- parameter 始终参与 elaboration；project-root 省略 category 时不进入 inventory，显式 `parameters`
+  可报告并加密 eligible/preserved parameter；parameters 仍不进入默认和 debug profile；
 - 被 top port 直接或间接使用的 interface、modport、interface member、struct type 和 field
   构成 `top_abi` 闭包，默认整体保留；
 - 只修改选定 top 的可综合模块树；不可达 module 即使与可达 module 位于同一 `.sv` 文件，
@@ -235,8 +246,8 @@ CLI 黑盒验收必须程序化断言：
 3. `same_file_unused` 和 `unrelated` 不进入 reachable inventory。
 4. `unrelated` 内的缺失 module 不影响 `project_top` 严格编译。
 5. parse error 和 semantic error 均为 0。
-6. 在 T031 之前 parameter 只出现在 elaboration 信息中；当前 explicit `parameters` inventory
-   已支持，project-root parameter rewrite 仍由 T032 交付。
+6. T027 的历史基线中 parameter 只出现在 elaboration 信息中；当前 explicit `parameters` inventory
+   和 project-root parameter rewrite 已分别由 T031/T032 交付。
 7. top module、top ports 和 `top_abi` 类型全部为 preserved，并有固定 reason。
 8. 所有 source range 回读等于原名，且同一文件中的 ranges 不重叠。
 9. 连续运行两次，报告 SHA-256 相同。
@@ -305,7 +316,8 @@ formal，不再为各 category 建立单独任务。
 - 同文件 reachable/unreachable 定义的区间隔离；
 - gate 使用原 gold 的 include、define、文件顺序和 top 重新严格编译；
 - top ABI 保护闭包；
-- 五个概念组单独运行和组合运行的 debug/metrics 输出；
+- 默认五个概念组及其余 8 个 T030 低风险组的单独/组合运行和 debug/metrics 输出；显式
+  `parameters` 的普通模式闭环由 T032 交付，当前 debug 尚未覆盖该组；
 - 保持现有 `--filelist + --source-root` 和 mapping v2 回归兼容。
 
 mapping v3 至少包含：
@@ -337,7 +349,8 @@ conda run -n rtl_obfuscation python -m unittest \
 1. 每个概念组独立加密一次，组合组再加密一次。
 2. mapping entry 的 `(category, scope, original_name, ranges)` 与 oracle 中该 category 的
    eligible 集合完全相等；不得少项、多项或跨 scope 合并同名对象。
-3. T030 五组默认组合 mapping 不包含 `parameters`；T032 将新增显式 parameter rewrite 组合验收。
+3. T030 五组默认组合 mapping 不包含 `parameters`；T032 已新增显式 parameter-only 和组合
+   rewrite 验收，默认 profile 保持不变。
 4. top module、top ports 和 `top_abi` 对象没有 mapping entry，且出现在 preserved 清单。
 5. mapping 中每个 range 在 gold 中等于 `original_name`，在 gate 中等于 `renamed_name`。
 6. 所有 eligible occurrences 恰好被修改一次；symbol coverage 和 occurrence coverage 均为
@@ -436,7 +449,7 @@ conda run -n rtl_obfuscation python -m unittest \
 1. 校验输入 manifest SHA-256，防止样例版本漂移。
 2. `inspect-project`：17 个 reachable module、19 个 closure files、0 parse error、
    0 semantic error。
-3. 使用五个概念组组合加密；mapping 中 parameter entries 必须为 0；最终 inventory 固定为
+3. 使用 T029 冻结的五个概念组组合加密；该历史 mapping 中 parameter entries 必须为 0；最终 inventory 固定为
    1091 symbols / 5741 occurrences，其中 ports 为 348 symbols / 1853 occurrences。
 4. mapping 的每个 category 数量、occurrences 和 ranges 与冻结 oracle 完全一致。
 5. top module、top ports、top ABI interface/struct 仍在 preserved 清单且源码字节不变。
@@ -500,7 +513,7 @@ byte edits、mapping/metrics、decrypt 和 Yosys formal 主流程。需要新增
 共享预处理上下文、依赖闭包、top-rooted traversal、compilation-unit 类型、mapping v3 和
 formal view。
 
-T027—T030 任务不包含 parameter rewrite；T031 只做 inventory，T032 才交付 parameter rewrite。
+T027—T030 任务不包含 parameter rewrite；T031 只做 inventory，T032 交付显式 parameter rewrite。
 以下范围仍不包含：
 
 - T032 之外的 parameter 重命名扩展（type/package/class/interface parameter、defparam 等）；

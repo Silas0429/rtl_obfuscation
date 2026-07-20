@@ -1,8 +1,15 @@
-# `project-root + top` Parameter 支持实现计划（草案）
+# `project-root + top` Parameter 支持计划与交付记录
 
-- 文档状态：`DRAFT`
+- 文档状态：`COMPLETED`（原草案；T031/T032 已 ACCEPTED）
 - 前置任务：T030 `ACCEPTED`
-- 目标：在保持 top ABI、严格审计和 mapping v3 兼容性的前提下，为 `project-root + top` 增加 module value parameter/localparam 支持。
+- 已交付：在保持 top ABI、严格审计和 mapping v3 兼容性的前提下，为 `project-root + top`
+  增加 module value parameter/localparam inventory（T031）和显式 rewrite 闭环（T032）。
+- 当前限制：`parameters` 仅可在普通模式显式选择，仍不进入五组默认 profile 或 project-root debug；
+  两种多文件工作流的默认/手动 profile 统一尚未实施。
+
+本文件保留原始设计假设、阶段门禁和后续路线，作为 T031/T032 的计划归档；实际验收证据以
+[`docs/tasks/T031_project_root_parameters.md`](tasks/T031_project_root_parameters.md) 和
+[`docs/tasks/T032_project_root_parameter_rewrite.md`](tasks/T032_project_root_parameter_rewrite.md) 为准。
 
 ## 1. 目标输入
 
@@ -99,7 +106,10 @@ T031/T032 先只支持：
 --category parameters
 ```
 
-只有 T033 全部通过后，才另开任务将 `parameters` 纳入默认 profile，并重新冻结 FIFO/RISC 默认 oracle。T031/T032 不得改变当前五组默认 profile。
+T031/T032 已证明显式 `parameters` 的 inventory/rewrite 闭环，但没有改变当前五组默认 profile。
+T033 仍负责 RISC-V-Vector 参数集成；只有 T033 全部通过后，才可另开条件任务重新评估是否将
+`parameters` 纳入默认 profile，并重新冻结 FIFO/RISC 默认 oracle。两种多文件工作流的 profile
+统一也是后续工作，不属于 T031/T032。
 
 ## 4. 代码改造点
 
@@ -144,6 +154,8 @@ conda run -n rtl_obfuscation ...
 - Yosys 不支持的 struct/interface 语法必须使用现有对称 formal-view，不能用 identity formal 冒充；
 - 需要修改 fixture、放宽诊断、改变旧 oracle 或扩大语言边界时，子 Agent 必须暂停等待主 Agent。
 
-## 7. 草案结论
+## 7. 归档结论
 
-方案可行，但不能只把 `parameters` 加入 CLI。关键工作是完整建立 localparam expression、generate-if、struct/interface dimension 和 named override 的语义引用 oracle。建议严格按 T031 → T032 → T033 → 条件性 T034 增量推进。
+方案已按 T031 → T032 落地：关键的 localparam expression、generate-if、struct/interface
+dimension 和 named override 语义引用均已建立并通过验收。T033（真实 RISC-V-Vector 参数集成）
+和条件性 T034（默认 profile 晋级）仍是未完成的后续任务，不能从本归档文档推断为已实现。
