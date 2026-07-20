@@ -49,7 +49,16 @@ _GROUPS = {
         "interface_ports",
         "modports",
     ),
+    "enum_values": ("enum_values",),
+    "genvars": ("genvars",),
+    "functions": ("functions",),
+    "tasks": ("tasks",),
+    "arguments": ("arguments",),
+    "generate_blocks": ("generate_blocks",),
+    "typedefs": ("typedefs",),
+    "union_fields": ("union_fields",),
 }
+_DEFAULT_GROUPS = ("signals", "ports", "instances", "struct", "interface")
 
 
 @dataclass(frozen=True)
@@ -735,7 +744,7 @@ def _validate_configuration(
         normalized_defines[name] = value if separator else "1"
     normalized_categories = list(categories)
     if not normalized_categories:
-        normalized_categories = list(_GROUPS)
+        normalized_categories = list(_DEFAULT_GROUPS)
     if any(category not in _GROUPS for category in normalized_categories):
         raise ValueError("unsupported inspect-project category")
     expanded: list[str] = []

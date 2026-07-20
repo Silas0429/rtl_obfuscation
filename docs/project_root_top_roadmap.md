@@ -95,7 +95,10 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
   "compile": {
     "compilation_unit": "single",
     "include_dirs": [],
-    "defines": {}
+    "defines": [],
+    "compile_order": [],
+    "parse_errors": 0,
+    "semantic_errors": 0
   },
   "candidate_files": [],
   "definitions": [],
@@ -106,7 +109,9 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
   "reachable": {
     "modules": [],
     "interfaces": [],
-    "files": []
+    "files": [],
+    "source_files": [],
+    "header_files": []
   },
   "inventory": {
     "eligible": [],
@@ -120,7 +125,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
 报告必须满足：
 
 - 路径全部相对于 `project-root`，不得包含运行机器的绝对路径；
-- 数组按固定键排序，define 等映射按 key 排序；
+- 报告字段和可推导数组保持稳定顺序，`defines` 规范化为按名称排序的字符串列表；
 - 相同输入连续运行两次时，报告文件 SHA-256 完全相同；
 - 每个 inventory range 包含 `file/start/end`，回读源文件后必须精确等于原 identifier；
 - 错误使用稳定 code，验收不得匹配自由文本 message。
@@ -136,6 +141,7 @@ UNRESOLVED_INTERFACE
 MISSING_INCLUDE
 UNRESOLVED_MACRO
 AMBIGUOUS_MACRO
+AMBIGUOUS_INCLUDE
 PREPROCESS_ERROR
 PARSE_ERROR
 SEMANTIC_ERROR
@@ -152,11 +158,12 @@ UNSUPPORTED_MACRO_IDENTIFIER
 ### 5.2 交付物
 
 - `inspect-project` CLI 和上述 JSON schema；
-- 可复用的 `ProjectDiscovery`、定义索引、依赖解析和 `DesignClosure` 内部接口；
+- 可复用的实际 `_ProjectContext` / `ProjectSemanticContext`、定义索引、依赖解析和闭包接口；
 - 共享预处理上下文，支持重复 `--include-dir` 和重复 `--define NAME[=VALUE]`；
 - collector 只遍历选定 top 实例树，不再无条件遍历全部 compilation root；
 - compilation-unit struct/interface 类型的 inventory 支持；
-- eligible/preserved/unsupported 状态及稳定原因；
+- eligible/preserved inventory 及稳定原因；成功报告中的 `unsupported` 当前保留为空列表，
+  不支持的工程输入通过 `diagnostics` 返回结构化错误；
 - 一个提交到仓库的综合 fixture、固定 oracle 和负向 fixtures；
 - RISC-V-Vector 只读分析回归，不修改该样例。
 

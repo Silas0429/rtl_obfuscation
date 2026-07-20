@@ -2010,7 +2010,7 @@ def _top_project_references(
     generic_targets = [
         target
         for target, category in zip(targets, categories, strict=True)
-        if category == "signals"
+        if category in ("signals", "enum_values", "arguments")
     ]
     port_targets = [
         target
@@ -2083,6 +2083,14 @@ def _top_project_references(
 
     by_helper = (
         (
+            ("genvars",),
+            lambda selected: _genvar_reference_tokens(selected, compilation),
+        ),
+        (
+            ("functions", "tasks"),
+            lambda selected: _subroutine_reference_tokens(selected, compilation),
+        ),
+        (
             ("ports",),
             lambda selected: _module_port_reference_tokens(
                 [
@@ -2104,7 +2112,15 @@ def _top_project_references(
             lambda selected: _type_alias_reference_tokens(selected, compilation),
         ),
         (
+            ("typedefs",),
+            lambda selected: _type_alias_reference_tokens(selected, compilation),
+        ),
+        (
             ("struct_fields",),
+            lambda selected: _struct_union_field_reference_tokens(selected, compilation),
+        ),
+        (
+            ("union_fields",),
             lambda selected: _struct_union_field_reference_tokens(selected, compilation),
         ),
         (
@@ -2252,6 +2268,39 @@ def build_top_project_inventory(
             for value in selected_values
         )
     ]
+
+    # Legacy low-risk collectors already encode the supported semantic
+    # boundaries and source-range helpers.  Reuse those collectors here, but
+    # constrain their targets to declaring modules reachable from the selected
+    # top instance.  This prevents same-file/unreachable module declarations
+    # from leaking into project-root inventory.
+    low_risk_categories = (
+        "enum_values",
+        "genvars",
+        "functions",
+        "tasks",
+        "arguments",
+        "generate_blocks",
+        "typedefs",
+        "union_fields",
+    )
+    low_risk_targets: dict[str, list[Any]] = {}
+    for category in low_risk_categories:
+        if category not in categories:
+            continue
+        collected, _ = _collect_targets(compilation, category)
+        selected: list[Any] = []
+        for target in collected:
+            definition = getattr(target, "declaringDefinition", None)
+            if (
+                definition is not None
+                and definition.definitionKind == pyslang.ast.DefinitionKind.Module
+                and definition.name in reachable_modules
+            ):
+                selected.append(target)
+        low_risk_targets[category] = _deduplicate_symbols(
+            selected, source_manager
+        )
     struct_fields: list[Any] = []
     field_owner: dict[Any, Any] = {}
     for alias in used_type_aliases:
@@ -2402,6 +2451,17 @@ def build_top_project_inventory(
         if symbol.declaringDefinition in top_abi_interfaces
         else None,
     )
+    for category in low_risk_categories:
+        append_symbols(
+            low_risk_targets.get(category, []),
+            category,
+            lambda symbol: symbol.declaringDefinition.name,
+            lambda symbol: (
+                "macro_expansion"
+                if source_manager.isMacroLoc(symbol.location)
+                else None
+            ),
+        )
 
     targets = [candidate[0] for candidate in candidates]
     target_categories = [candidate[1] for candidate in candidates]

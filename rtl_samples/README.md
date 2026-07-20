@@ -41,7 +41,7 @@ PySlang is the primary frontend. Run this check from the sample directory in a
 Python environment where `pyslang` is installed:
 
 ```sh
-python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(bool(tree.diagnostics))'
+conda run -n rtl_obfuscation python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(bool(tree.diagnostics))'
 ```
 
 Verible and Icarus Verilog can be installed for additional syntax checks, but

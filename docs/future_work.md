@@ -15,21 +15,21 @@ module top(bus_if.slave bus);
 endmodule
 ```
 
-保留 top port 名 `bus` 并不足够；`bus_if`、`slave` 和 `data` 都属于顶层 ABI。现有实现尚未
-形成这四类对象的保护闭包，modport 引用和顶层 interface member access 也没有完整收集。
-此外，当前 Icarus/Yosys 对该语法的前端支持不足，Yosys 可能把 `bus.data` 当作隐式信号，
-导致 formal 证明失去意义。
+保留 top port 名 `bus` 并不足够；`bus_if`、`slave` 和 `data` 都属于顶层 ABI。当前
+`project-root + top` inventory 已能识别这类 top ABI，并将 interface definition、modport、member
+和 top port 放入 `preserved`，因此不会把它们误加入 project-root 的 eligible mapping。剩余问题是
+尚未支持对这类 ABI 做安全的重命名；当前 Icarus/Yosys 对该语法的前端支持也不足，Yosys 可能把
+`bus.data` 当作隐式信号，导致 formal 证明失去意义。
 
-当前规避方式：保留该 interface 的定义名、modport、member 和 top port，不启用
-`interfaces`、`interface_ports`、`modports`。若同一 interface 类型同时用于内部和顶层，
-应整体保留。
+当前规避方式：project-root 模式依靠 top ABI 闭包自动保留该 interface 的定义名、modport、member
+和 top port；显式 filelist 模式则不要启用 `interfaces`、`interface_ports`、`modports`。若同一
+interface 类型同时用于内部和顶层，应整体保留。
 
 推荐扩展：
 
-1. 从 top 的 `InterfacePortSymbol` 计算 interface definition、modport 和 member ABI 闭包；
-2. 默认冻结闭包并在 mapping/metrics 中报告 preserved 原因；
-3. 对其他与 top 无关的 interface 继续允许加密；
-4. 为顶层 interface 设计非 vacuous 的验证方式，再开放其 ABI 重命名。
+1. 完善 top interface port 的语义引用收集和源范围审计；
+2. 对其他与 top 无关的 interface 继续允许加密；
+3. 为顶层 interface 设计非 vacuous 的验证方式，再开放其 ABI 重命名。
 
 ### 1.2 Aggregate field/parameter 声明位置遮蔽
 

@@ -25,6 +25,27 @@ GROUP_ORACLE = {
     "struct": (3, 13),
     "interface": (8, 28),
 }
+DEBUG_GROUPS = GROUPS + (
+    "enum_values",
+    "genvars",
+    "functions",
+    "tasks",
+    "arguments",
+    "generate_blocks",
+    "typedefs",
+    "union_fields",
+)
+DEBUG_ORACLE = {
+    **GROUP_ORACLE,
+    "enum_values": (0, 0),
+    "genvars": (0, 0),
+    "functions": (0, 0),
+    "tasks": (0, 0),
+    "arguments": (0, 0),
+    "generate_blocks": (0, 0),
+    "typedefs": (0, 0),
+    "union_fields": (0, 0),
+}
 
 
 class ProjectRootRewriteTests(unittest.TestCase):
@@ -393,7 +414,7 @@ class ProjectRootRewriteTests(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertFalse((root / "audit-restored").exists())
 
-    def test_project_root_debug_runs_five_groups(self) -> None:
+    def test_project_root_debug_runs_thirteen_groups(self) -> None:
         root = self._temporary_root()
         completed = self._run(
             "encrypt-project",
@@ -409,10 +430,10 @@ class ProjectRootRewriteTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         summary = json.loads(completed.stdout)
         self.assertEqual(summary["mode"], "project-root")
-        self.assertEqual(summary["category_count"], 5)
-        self.assertEqual([run["category"] for run in summary["runs"]], list(GROUPS))
+        self.assertEqual(summary["category_count"], 13)
+        self.assertEqual([run["category"] for run in summary["runs"]], list(DEBUG_GROUPS))
         for run in summary["runs"]:
-            self.assertEqual((run["mapping_entries"], run["modified_tokens"]), GROUP_ORACLE[run["category"]])
+            self.assertEqual((run["mapping_entries"], run["modified_tokens"]), DEBUG_ORACLE[run["category"]])
             category_root = root / "debug" / run["category"]
             self.assertTrue((category_root / "gate" / "design.f").is_file())
             self.assertTrue((category_root / "mapping.json").is_file())

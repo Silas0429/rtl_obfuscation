@@ -26,8 +26,17 @@ _PROJECT_ROOT_GROUPS = (
         "interface",
         ("interfaces", "interface_instances", "interface_ports", "modports"),
     ),
+    ("enum_values", ("enum_values",)),
+    ("genvars", ("genvars",)),
+    ("functions", ("functions",)),
+    ("tasks", ("tasks",)),
+    ("arguments", ("arguments",)),
+    ("generate_blocks", ("generate_blocks",)),
+    ("typedefs", ("typedefs",)),
+    ("union_fields", ("union_fields",)),
 )
 _PROJECT_ROOT_GROUP_NAMES = tuple(group for group, _ in _PROJECT_ROOT_GROUPS)
+_PROJECT_ROOT_DEFAULT_GROUP_NAMES = _PROJECT_ROOT_GROUP_NAMES[:5]
 _PROJECT_ROOT_CATEGORIES = tuple(
     category for _, categories in _PROJECT_ROOT_GROUPS for category in categories
 )
@@ -553,7 +562,11 @@ def _debug_encrypt_filelist_project(args: argparse.Namespace) -> dict[str, Any]:
 def _canonical_project_selection(
     requested: list[str] | None,
 ) -> tuple[list[str], list[str]]:
-    requested_set = set(requested or _PROJECT_ROOT_GROUP_NAMES)
+    requested_set = set(
+        _PROJECT_ROOT_DEFAULT_GROUP_NAMES
+        if requested is None
+        else requested
+    )
     selected_groups = [
         group for group in _PROJECT_ROOT_GROUP_NAMES if group in requested_set
     ]
@@ -1747,7 +1760,10 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
             if args.source_root is not None:
                 parser.error("--source-root cannot be used with --project-root")
             if any(category not in _PROJECT_ROOT_GROUP_NAMES for category in (args.category or [])):
-                parser.error("project-root categories are signals, ports, instances, struct, interface")
+                parser.error(
+                    "project-root categories are signals, ports, instances, struct, interface, "
+                    "enum_values, genvars, functions, tasks, arguments, generate_blocks, typedefs, union_fields"
+                )
             conflicts = []
             if args.debug_dir is not None:
                 for option, value in (
@@ -1949,6 +1965,14 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "all",
             "struct",
             "interface",
+            "enum_values",
+            "genvars",
+            "functions",
+            "tasks",
+            "arguments",
+            "generate_blocks",
+            "typedefs",
+            "union_fields",
         ),
     )
     encrypt_project.add_argument(
@@ -1985,7 +2009,21 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         "--category",
         action="append",
         default=[],
-        choices=("signals", "ports", "instances", "struct", "interface"),
+        choices=(
+            "signals",
+            "ports",
+            "instances",
+            "struct",
+            "interface",
+            "enum_values",
+            "genvars",
+            "functions",
+            "tasks",
+            "arguments",
+            "generate_blocks",
+            "typedefs",
+            "union_fields",
+        ),
         dest="categories",
     )
 

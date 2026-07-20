@@ -1,5 +1,9 @@
 # 子 Agent 任务单流程
 
+本目录中的已验收任务单保留当时的合同、命令和验收证据，历史路径或数量不代表当前用户接口。
+当前使用说明以根目录 `README.md`、`docs/systemverilog_renaming_table.md`、
+`docs/formal_verification.md` 和 `docs/future_work.md` 为准。
+
 ## 1. 一次只允许一个活动任务
 
 每个实现步骤对应 `docs/tasks/TNNN_*.md`。同一时间只能有一张任务单处于 `IN_PROGRESS` 或 `READY_FOR_REVIEW`。
@@ -31,7 +35,7 @@
 - 对产生改写 RTL 的任务独立重跑 Yosys formal equivalence。
 - 对照输入输出而不是只阅读代码。
 - 将状态改成 `ACCEPTED`。
-- 若对外行为发生变化，同步根目录 `read.md`、重命名表或未来事项，
+- 若对外行为发生变化，同步根目录 `README.md`、重命名表或未来事项，
   然后再创建下一张任务单。
 - 检查 Git diff，执行 `git add .`、带规定类型前缀的 `git commit` 和 `git push`。
 

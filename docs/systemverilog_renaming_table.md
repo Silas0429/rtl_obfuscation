@@ -11,13 +11,13 @@
 | `parameters` | module value parameter、普通 module localparam | 声明、表达式、dimension、generate header、named override 左侧 | `parameter W=8; logic [W-1:0] d;` | 不含 type/package/class/interface parameter、`defparam`、任意复杂遮蔽 | 9/51 |
 | `enum_values` | module enum member | 声明、赋值、比较和 case 引用 | `enum {IDLE,BUSY}; s=IDLE;` | 不含 package/class enum | 3/6 |
 | `genvars` | generate-for genvar | 声明、条件、步进和 body 引用 | `for (genvar i=0; i<N; i++)` | 不保证任意嵌套 generate 和外部层次引用 | 2/10 |
-| `functions` | module function 名 | 声明和普通调用 | `function f(...); q=f(d);` | 不含 extern、DPI、package/class function | 1/4 |
+| `functions` | module function 名 | 声明、普通调用和已绑定的函数返回变量引用 | `function f(...); q=f(d);` | 不含 extern、DPI、package/class function | 2/7 |
 | `tasks` | module task 名 | 声明和普通调用 | `task clear(...); clear(q);` | 不含 extern、DPI、层次调用 | 1/2 |
-| `arguments` | module function/task 形式参数 | 声明和 subroutine 内引用 | `function f(input logic value);` | 不含 prototype 和命名实参左侧 | 3/7 |
+| `arguments` | module function/task 形式参数 | 声明和 subroutine 内引用 | `function f(input logic value);` | 不含 prototype 和命名实参左侧 | 4/9 |
 | `instances` | 具名 module instance | instance 声明 | `child u_child(...);` | 不改外部层次路径、instance array、primitive/checker | 2/2 |
 | `generate_blocks` | 显式 generate block label | label 声明 | `begin : g_lane` | 不改隐式 `genblkN` 和外部层次路径 | 2/2 |
-| `typedefs` | module 普通 typedef 名 | 声明和已支持的类型引用 | `typedef logic [7:0] word_t;` | 不含 package/class typedef、全部 cast/prototype | 2/6 |
-| `struct_types` | module typedef struct/union 类型名 | 声明和已支持的类型引用 | `typedef struct {...} item_t;` | 不含 package/class scope 和任意嵌套组合 | 2/4 |
+| `typedefs` | module 普通 typedef 名 | 声明和已支持的类型引用 | `typedef logic [7:0] word_t;` | 不含 package/class typedef、全部 cast/prototype | 2/7 |
+| `struct_types` | module 或 compilation-unit typedef struct/union 类型名 | 声明和已支持的类型引用 | `typedef struct {...} item_t;` | 不含 package/class scope 和任意嵌套组合 | 2/5 |
 | `struct_fields` | struct field | 声明和已绑定 member access | `item.valid` | 不含 pattern key、constraint、反射/DPI 依赖 | 2/4 |
 | `union_fields` | union field | 声明和已绑定 member access | `view.raw` | 不含 tagged union、pattern key、constraint | 2/6 |
 
