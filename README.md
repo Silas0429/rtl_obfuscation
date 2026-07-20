@@ -3,6 +3,8 @@
 本项目使用 PySlang 对 SystemVerilog 做语义分析，将可确认绑定关系的标识符随机重命名，
 同时输出可审计、可逆的 mapping。项目支持单文件、显式 filelist 多文件加密，以及
 `project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和五组对象加密；
+T031/T032 已为 project-root 增加 module parameter/localparam inventory 和显式 parameter
+rewrite，parameters 尚未进入默认加密 profile；
 `rtl_samples/example_fifo/` 和 `rtl_samples/RISC-V-Vector/` 是当前完整交付样例。
 
 FIFO 在当前边界内的固定验收结果为：4 个 `.sv` 文件、19 个 category、79 个重命名对象、
@@ -73,7 +75,7 @@ conda run -n rtl_obfuscation python -c 'import pyslang; print("PySlang import OK
 conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 ```
 
-当前基线为 `Ran 82 tests`、`OK`。
+当前基线为 `Ran 104 tests`、`OK`。
 
 ## 3. 基本操作
 
@@ -89,7 +91,7 @@ conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 | 解密命令 | `decrypt` | `decrypt-project` | `decrypt-project` |
 | 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` | `--project-root <dir>` + `--top <module>` |
 | PySlang 分析 | 单个 `.sv` | filelist 中全部 `.sv` | 自动发现依赖，只严格编译 top 闭包 |
-| Category 参数 | 一个底层 category 或 `all` | 可重复组合 19 个底层 category | 可重复选择 `signals/ports/instances/struct/interface` 五组；省略即全部 |
+| Category 参数 | 一个底层 category 或 `all` | 可重复组合 19 个底层 category | 默认五组可显式加入 `parameters` 加密；parameters 不进入默认 profile |
 | Top | 不需要 | 必须提供，保留 top module 和普通 top ports | 必须提供，保留 top module、普通 top ports 和 top ABI |
 | Gate 输出 | 一个文件 | 镜像 filelist 文件 | 只镜像闭包文件并生成 `design.f` |
 | Mapping | version 1 | version 2 | version 3，含编译上下文、闭包和 manifest |
@@ -317,7 +319,10 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
 ### 3.9 `project-root + top` 自动工程流程
 
 `inspect-project` 从工程目录递归发现 `.sv/.svh`，唯一定位 top，解析 active include、宏和
-compilation-unit 类型依赖，只严格编译 top 闭包，并输出五个概念组的 AST inventory：
+compilation-unit 类型依赖，只严格编译 top 闭包，并输出五个默认概念组的 AST inventory。
+T031/T032 另支持显式 `--category parameters`，收集并加密 reachable module value parameter/localparam 的
+声明、表达式、dimension、generate 和 named override ranges；该 inventory 能力已接受，
+parameter rewrite、strict gate、mapping v3、decrypt 和 formal 已接受：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
@@ -327,10 +332,10 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
 ```
 
 可重复使用 `--include-dir`、`--define NAME[=VALUE]` 和
-`--category signals|ports|instances|struct|interface`。省略 category 时分析全部五组；
+`--category signals|ports|instances|struct|interface|parameters`。省略 category 时分析全部五组；
 `struct` 展开为 struct type/field，`interface` 展开为 interface definition/instance/member/
-modport。top ports 和 top ABI 类型默认进入 preserved 清单，parameter 参与 elaboration 但不进入
-eligible inventory。
+modport。top ports 和 top ABI 类型默认进入 preserved 清单；省略 category 时 parameter 只参与
+elaboration；显式 `parameters` 时进入 T031 的 eligible/preserved inventory，并由 T032 加密。
 
 成功时退出码为 0，报告包含候选文件、定义索引、include/macro 依赖、reachable modules/
 interfaces/files、严格编译诊断和精确 source ranges。缺失或歧义 top/module/include/macro 时

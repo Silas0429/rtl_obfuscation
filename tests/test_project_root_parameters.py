@@ -186,7 +186,7 @@ class ProjectRootParameterTests(unittest.TestCase):
         self.assertEqual(report["diagnostics"][0]["code"], "UNSUPPORTED_PARAMETER_KIND")
         self.assertEqual(report["inventory"]["eligible"], [])
 
-    def test_parameters_are_not_connected_to_project_encrypt(self) -> None:
+    def test_parameters_are_connected_to_project_encrypt(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t031-encrypt-")
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -207,9 +207,11 @@ class ProjectRootParameterTests(unittest.TestCase):
             "--name-length",
             "8",
         )
-        self.assertEqual(completed.returncode, 2)
-        self.assertFalse((root / "gate").exists())
-        self.assertFalse((root / "mapping.json").exists())
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        mapping = json.loads((root / "mapping.json").read_text())
+        self.assertEqual(mapping["selected_groups"], ["parameters"])
+        self.assertEqual(len(mapping["entries"]), 7)
+        self.assertTrue((root / "gate" / "design.f").is_file())
 
     def test_legacy_single_file_parameter_behavior_remains_available(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t031-legacy-")

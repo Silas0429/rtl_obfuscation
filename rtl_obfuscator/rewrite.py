@@ -36,9 +36,18 @@ _PROJECT_ROOT_GROUPS = (
     ("union_fields", ("union_fields",)),
 )
 _PROJECT_ROOT_GROUP_NAMES = tuple(group for group, _ in _PROJECT_ROOT_GROUPS)
+_PROJECT_ROOT_PARAMETER_GROUP = ("parameters", ("parameters",))
+_PROJECT_ROOT_SELECTION_GROUPS = _PROJECT_ROOT_GROUPS + (
+    _PROJECT_ROOT_PARAMETER_GROUP,
+)
+_PROJECT_ROOT_SELECTION_GROUP_NAMES = tuple(
+    group for group, _ in _PROJECT_ROOT_SELECTION_GROUPS
+)
 _PROJECT_ROOT_DEFAULT_GROUP_NAMES = _PROJECT_ROOT_GROUP_NAMES[:5]
 _PROJECT_ROOT_CATEGORIES = tuple(
-    category for _, categories in _PROJECT_ROOT_GROUPS for category in categories
+    category
+    for _, categories in _PROJECT_ROOT_SELECTION_GROUPS
+    for category in categories
 )
 
 
@@ -568,11 +577,13 @@ def _canonical_project_selection(
         else requested
     )
     selected_groups = [
-        group for group in _PROJECT_ROOT_GROUP_NAMES if group in requested_set
+        group
+        for group in _PROJECT_ROOT_SELECTION_GROUP_NAMES
+        if group in requested_set
     ]
     selected_categories = [
         category
-        for group, categories in _PROJECT_ROOT_GROUPS
+        for group, categories in _PROJECT_ROOT_SELECTION_GROUPS
         if group in requested_set
         for category in categories
     ]
@@ -1230,7 +1241,7 @@ def _validate_occurrence_count(value: Any, expected: int, label: str) -> None:
     if (
         not isinstance(value, int)
         or isinstance(value, bool)
-        or value < 1
+        or value < 0
         or value != expected
     ):
         raise ValueError(f"{label} occurrence count mismatch")
@@ -1759,10 +1770,13 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
         if has_project_root:
             if args.source_root is not None:
                 parser.error("--source-root cannot be used with --project-root")
-            if any(category not in _PROJECT_ROOT_GROUP_NAMES for category in (args.category or [])):
+            if any(
+                category not in _PROJECT_ROOT_SELECTION_GROUP_NAMES
+                for category in (args.category or [])
+            ):
                 parser.error(
                     "project-root categories are signals, ports, instances, struct, interface, "
-                    "enum_values, genvars, functions, tasks, arguments, generate_blocks, typedefs, union_fields"
+                    "enum_values, genvars, functions, tasks, arguments, generate_blocks, typedefs, union_fields, parameters"
                 )
             conflicts = []
             if args.debug_dir is not None:

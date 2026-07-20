@@ -2,22 +2,25 @@
 
 ## 1. 目标与任务粒度
 
-本路线图把 `project-root + top` 能力拆成三张粗粒度任务单，而不是为文件发现、宏、闭包、
-inventory 和每一种重命名对象分别建立任务。三张任务单分别交付一条可独立运行的纵向能力：
+本路线图把 `project-root + top` 能力拆成可独立验收的粗粒度任务单，而不是为文件发现、宏、闭包、
+inventory 和每一种重命名对象分别建立任务。当前状态如下：
 
 | 任务 | 状态 | 一次性交付的能力 | 是否产生重写 RTL |
 | --- | --- | --- | --- |
 | T027 | `ACCEPTED` | 工程发现、预处理依赖、top 闭包、严格编译、AST inventory 和精确 source ranges | 否 |
 | T028 | `ACCEPTED` | 对闭包执行五类对象的选择、加密、mapping、重编译、解密和小型工程 formal | 是 |
 | T029 | `ACCEPTED` | RISC-V-Vector 可综合视图、真实工程加密、解密和 formal 集成验收 | 是 |
+| T030 | `ACCEPTED` | project-root 八类低风险对象迁移，扩展为 13 个用户选择组 | 是 |
+| T031 | `ACCEPTED` | module parameter/localparam inventory、source ranges 和 fail-closed diagnostics | 否 |
+| T032 | `ACCEPTED` | parameter rewrite、mapping v3、strict gate、decrypt 和 formal 闭环 | 是 |
 
 每张任务单内部可以有多个按顺序执行的门禁，但只在整张任务完成后发生一次
 `READY_FOR_REVIEW -> ACCEPTED` 交接。仍然遵守
 [`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
-本路线图不是活动任务合同。T027、T028、T029 已验收。T006 继续保持 `DRAFT`，
-本路线图不实现或重命名 parameter。
+本路线图不是活动任务合同。T027—T032 已验收，T006 继续保持 `DRAFT`；parameter inventory
+和显式 parameter rewrite 已交付，parameters 仍不进入默认 profile。
 
 ## 2. 最终使用模型
 
@@ -55,7 +58,8 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
 默认 ABI 规则：
 
 - top module 名和 top 普通 port 名始终保留；
-- parameter 参与 elaboration，但不进入 eligible inventory，也不被重命名；
+- parameter 始终参与 elaboration；省略 category 时不进入 inventory，显式 `parameters` 可报告并
+  加密 eligible/preserved parameter；parameters 仍不进入默认 profile；
 - 被 top port 直接或间接使用的 interface、modport、interface member、struct type 和 field
   构成 `top_abi` 闭包，默认整体保留；
 - 只修改选定 top 的可综合模块树；不可达 module 即使与可达 module 位于同一 `.sv` 文件，
@@ -231,7 +235,8 @@ CLI 黑盒验收必须程序化断言：
 3. `same_file_unused` 和 `unrelated` 不进入 reachable inventory。
 4. `unrelated` 内的缺失 module 不影响 `project_top` 严格编译。
 5. parse error 和 semantic error 均为 0。
-6. parameter 只出现在 elaboration 信息中，不出现在 eligible inventory。
+6. 在 T031 之前 parameter 只出现在 elaboration 信息中；当前 explicit `parameters` inventory
+   已支持，project-root parameter rewrite 仍由 T032 交付。
 7. top module、top ports 和 `top_abi` 类型全部为 preserved，并有固定 reason。
 8. 所有 source range 回读等于原名，且同一文件中的 ranges 不重叠。
 9. 连续运行两次，报告 SHA-256 相同。
@@ -332,7 +337,7 @@ conda run -n rtl_obfuscation python -m unittest \
 1. 每个概念组独立加密一次，组合组再加密一次。
 2. mapping entry 的 `(category, scope, original_name, ranges)` 与 oracle 中该 category 的
    eligible 集合完全相等；不得少项、多项或跨 scope 合并同名对象。
-3. 五组组合 mapping 不包含 `parameters`。
+3. T030 五组默认组合 mapping 不包含 `parameters`；T032 将新增显式 parameter rewrite 组合验收。
 4. top module、top ports 和 `top_abi` 对象没有 mapping entry，且出现在 preserved 清单。
 5. mapping 中每个 range 在 gold 中等于 `original_name`，在 gate 中等于 `renamed_name`。
 6. 所有 eligible occurrences 恰好被修改一次；symbol coverage 和 occurrence coverage 均为
@@ -495,9 +500,10 @@ byte edits、mapping/metrics、decrypt 和 Yosys formal 主流程。需要新增
 共享预处理上下文、依赖闭包、top-rooted traversal、compilation-unit 类型、mapping v3 和
 formal view。
 
-三张任务均不包含：
+T027—T030 任务不包含 parameter rewrite；T031 只做 inventory，T032 才交付 parameter rewrite。
+以下范围仍不包含：
 
-- parameter 重命名；
+- T032 之外的 parameter 重命名扩展（type/package/class/interface parameter、defparam 等）；
 - 自动解析 Vivado/Quartus Tcl 工程、IP catalog 或预编译 library；
 - 未提供定义的 blackbox/IP 自动建模；
 - DPI、class、virtual interface、bind、checker、primitive；

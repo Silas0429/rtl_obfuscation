@@ -538,11 +538,12 @@ class ProjectRootRewriteTests(unittest.TestCase):
 
         missing_source = self._run("decrypt-project", "--gate-dir", str(root / "gate"), "--map", str(root / "mapping.json"), "--output-dir", str(root / "missing-source"))
         self.assertEqual(missing_source.returncode, 2)
-        invalid_category = self._run(
+        parameter_category = self._run(
             "encrypt-project", "--project-root", str(INTEGRATION), "--top", "project_top", "--output-dir", str(root / "invalid-gate"),
             "--map", str(root / "invalid-map.json"), "--metrics", str(root / "invalid-metrics.json"), "--category", "parameters", "--name-length", "8",
         )
-        self.assertEqual(invalid_category.returncode, 2)
+        self.assertEqual(parameter_category.returncode, 0, parameter_category.stderr)
+        self.assertEqual(json.loads((root / "invalid-map.json").read_text())["selected_groups"], ["parameters"])
         conflicting_input = self._run(
             "encrypt-project", "--project-root", str(INTEGRATION), "--filelist", str(FIFO / "design.f"), "--top", "project_top",
             "--output-dir", str(root / "conflict-gate"), "--map", str(root / "conflict-map.json"), "--metrics", str(root / "conflict-metrics.json"), "--name-length", "8",
