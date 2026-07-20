@@ -2023,6 +2023,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "generate_blocks",
             "typedefs",
             "union_fields",
+            "parameters",
         ),
         dest="categories",
     )

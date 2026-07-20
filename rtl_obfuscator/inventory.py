@@ -1591,6 +1591,11 @@ def _parameter_dimension_reference_tokens(
                     continue
                 syntax = getattr(node, "syntax", None)
                 identifier = getattr(syntax, "identifier", None)
+                if identifier is not None:
+                    if compilation.sourceManager.isMacroLoc(identifier.location):
+                        continue
+                elif compilation.sourceManager.isMacroLoc(node.sourceRange.start):
+                    continue
                 references[target].append(
                     identifier if identifier is not None else node.sourceRange
                 )
@@ -2010,7 +2015,7 @@ def _top_project_references(
     generic_targets = [
         target
         for target, category in zip(targets, categories, strict=True)
-        if category in ("signals", "enum_values", "arguments")
+        if category in ("signals", "enum_values", "arguments", "parameters")
     ]
     port_targets = [
         target
@@ -2023,6 +2028,11 @@ def _top_project_references(
         for target in port_targets
         if target.internalSymbol is not None
     }
+    parameter_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "parameters"
+    ]
 
     def visitor(node: Any) -> None:
         if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
@@ -2032,6 +2042,12 @@ def _top_project_references(
                 continue
             syntax = getattr(node, "syntax", None)
             identifier = getattr(syntax, "identifier", None)
+            if target in parameter_targets:
+                if identifier is not None:
+                    if compilation.sourceManager.isMacroLoc(identifier.location):
+                        continue
+                elif compilation.sourceManager.isMacroLoc(node.sourceRange.start):
+                    continue
             references[target].append(
                 identifier if identifier is not None else node.sourceRange
             )
@@ -2080,6 +2096,15 @@ def _top_project_references(
                         if parent_bound is internal:
                             references[target].append(identifier)
                             break
+
+    for target, tokens in _parameter_dimension_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    for target, tokens in _named_parameter_override_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
 
     by_helper = (
         (
@@ -2301,6 +2326,22 @@ def build_top_project_inventory(
         low_risk_targets[category] = _deduplicate_symbols(
             selected, source_manager
         )
+    parameter_targets: list[Any] = []
+    if "parameters" in categories:
+        collected_parameters, _ = _collect_parameters(compilation)
+        parameter_targets = _deduplicate_symbols(
+            [
+                target
+                for target in collected_parameters
+                if (
+                    getattr(target, "declaringDefinition", None) is not None
+                    and target.declaringDefinition.definitionKind
+                    == pyslang.ast.DefinitionKind.Module
+                    and target.declaringDefinition.name in reachable_modules
+                )
+            ],
+            source_manager,
+        )
     struct_fields: list[Any] = []
     field_owner: dict[Any, Any] = {}
     for alias in used_type_aliases:
@@ -2462,6 +2503,21 @@ def build_top_project_inventory(
                 else None
             ),
         )
+    append_symbols(
+        parameter_targets,
+        "parameters",
+        lambda symbol: symbol.declaringDefinition.name,
+        lambda symbol: (
+            "macro_expansion"
+            if source_manager.isMacroLoc(symbol.location)
+            else (
+                "top_parameter"
+                if symbol.declaringDefinition.name == top
+                and not getattr(symbol, "isLocalParam", False)
+                else None
+            )
+        ),
+    )
 
     targets = [candidate[0] for candidate in candidates]
     target_categories = [candidate[1] for candidate in candidates]

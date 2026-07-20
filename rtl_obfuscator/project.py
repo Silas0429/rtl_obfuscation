@@ -57,6 +57,7 @@ _GROUPS = {
     "generate_blocks": ("generate_blocks",),
     "typedefs": ("typedefs",),
     "union_fields": ("union_fields",),
+    "parameters": ("parameters",),
 }
 _DEFAULT_GROUPS = ("signals", "ports", "instances", "struct", "interface")
 
@@ -904,6 +905,25 @@ def _analyze_project_with_context(
                 "SEMANTIC_ERROR", "strict compilation did not select exactly one top"
             )
         top_instance = tops[0]
+        if "parameters" in expanded_categories:
+            for node in inventory._selected_nodes(top_instance):
+                if getattr(node, "kind", None) != pyslang.ast.SymbolKind.TypeParameter:
+                    continue
+                definition = getattr(node, "declaringDefinition", None)
+                if (
+                    definition is not None
+                    and definition.definitionKind
+                    == pyslang.ast.DefinitionKind.Module
+                ):
+                    raise ProjectAnalysisError(
+                        "UNSUPPORTED_PARAMETER_KIND",
+                        f"type parameter is outside T031 scope: {node.name}",
+                        file=_relative_path(
+                            root,
+                            Path(manager.getFullPath(node.location.buffer)),
+                        ),
+                        start=node.location.offset,
+                    )
         inventory_report, modules, interfaces = inventory.build_top_project_inventory(
             compilation=compilation,
             top_instance=top_instance,
