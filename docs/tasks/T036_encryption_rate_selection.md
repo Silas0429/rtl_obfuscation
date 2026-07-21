@@ -391,7 +391,7 @@ review_request: |
 
 ```text
 acceptance_time: 2026-07-21 13:48:58 CST
-acceptance_head: 8adb0f8 before acceptance-record update
+acceptance_head: 09edaf1
 independent_commands: |
   - `conda run -n rtl_obfuscation python -m unittest tests.test_t036_encryption_rate -v`
   - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/inventory.py rtl_obfuscator/project.py rtl_obfuscator/rewrite.py rtl_obfuscator/category_profile.py tests/test_t036_encryption_rate.py`
@@ -411,7 +411,9 @@ formal_recheck: |
   Intentional negative gate changed `assign data_o = Ptyuqqo9;` to `assign data_o = ~Ptyuqqo9;`: exit 1, reached `equiv_status -assert` with 8 unproven `$equiv` cells; not a parse or hierarchy failure.
   RISC-V-Vector Formal/view/align/Yosys was not run.
 git_status: |
-  Before acceptance-record update: `main...origin/main [ahead 3]`; T036 implementation, tests and docs were unstaged; no unrelated source changes observed beyond the preserved T035 roadmap change.
-staged_diff_review: pending Git handoff after acceptance.
-acceptance_conclusion: PASS; T036 is ACCEPTED by the Main Agent.
+  Staged diff review passed for the six T036 implementation/test/documentation files. Commit created:
+  `09edaf1 [FEAT] Add encryption-rate mapping selection`. Worktree was clean after commit.
+  `git push` was not completed: the environment safety policy rejected exporting repository contents to the unverified external GitHub remote.
+staged_diff_review: PASS; staged file list and `git diff --cached --check` passed before commit.
+acceptance_conclusion: PASS; T036 is ACCEPTED by the Main Agent and committed locally. Push remains pending explicit user approval of the remote export.
 ```
