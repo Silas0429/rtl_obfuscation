@@ -177,9 +177,10 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
 ```
 
 率模式先建立当前 profile 的完整候选 mapping，再按候选声明和全部引用覆盖的唯一物理行
-选择不可拆分的 mapping。分母包含本次 gate 对应的全部 RTL 文件的物理行，包括空行、注释行
-和未以换行符结尾的最后一行；同一行只计一次。实际结果位于 `metrics.json` 的
-`encryption_rate` 对象，并在 stdout 汇总中提供精简字段。目标不可达时会成功选择全部候选，
+选择不可拆分的 mapping。分母使用本次 gate 对应 RTL 文件中的 effective lines：非空、非纯
+`//` 注释行；同一行只计一次，未以换行符结尾的最后一行仍计数。`metrics.json` 中的
+`encryption_rate.total_lines` 与 `affected_lines.total` 使用同一分母。实际结果位于
+`metrics.json` 的 `encryption_rate` 对象，并在 stdout 汇总中提供精简字段。目标不可达时会成功选择全部候选，
 同时报告 `target_unreachable` 和 `maximum_rate`；候选为空时 gate 与 gold 相同且仍可解密。
 不提供该参数时不会新增 rate metrics 字段，也不会改变既有 mapping 版本或输出摘要。
 率参数必须满足 `0 < rate <= 1`，非法值返回 `ENCRYPTION_RATE_INVALID`；它不能和
@@ -645,8 +646,10 @@ module fifo #(parameter WIDTH=8, parameter DEPTH=16);
 endmodule
 ```
 
-已验证的常见遮蔽包括：不同 module 的同名 parameter、named override 左右同名、module
-parameter 与 generate-local genvar 同名、不同 aggregate 类型中的同名 field。
+已在小型 fixture 中验证的常见遮蔽包括：不同 module 的同名 parameter、named override 左右
+同名、不同 aggregate 类型中的同名 field。RISC-V-Vector 当前发现 generate-loop elaboration
+parameter 可能被误收为 module parameter；该边界由 T038 专项修复，在修复完成前不要在该样例
+上把 `parameters` 加入手动 category。
 
 以下输入不在可靠交付范围：
 

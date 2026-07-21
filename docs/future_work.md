@@ -8,7 +8,8 @@ parameter/localparam inventory 和 rewrite；T035 已统一两种多文件入口
 和 19 类 manual profile。filelist manual profile 已在显式 filelist 内建立 bounded closure，
 旧 v1/v2/v3 mapping 继续只读解密兼容，manual workflow 使用 mapping v4；T035 实现与非 RISC
 回归已完成并验收。T036 已实现按唯一物理行目标选择 mapping、报告实际率并兼容三种入口；
-T037 已完成 RISC-V-Vector Formal 专项验收和 `encrypt.py` 演示脚本。
+T037 已完成 RISC-V-Vector Formal 专项验收和 `encrypt.py` 演示脚本；T038 当前修复
+RISC-V-Vector 手动 parameter/genvar 边界，并统一加密率 metrics 的 effective-line 分母。
 
 ## 1. 优先解决的问题
 
@@ -82,7 +83,8 @@ v4、gate audit、metrics 和逐文件 mapping，并由 `decrypt-project` 字节
 - T036：为三种加密入口增加目标加密率、唯一物理行选择、实际率报告和不可达时全候选加密；
 - T037：完成 RISC-V-Vector `vector_top` 的 formal-view/formal-align/Yosys 正负例验收，并提供
   根目录 `encrypt.py` 加密/解密演示命令；
-- T038（条件任务）：在 T037 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
+- T038：修复 RISC-V-Vector parameter/genvar 误分类和 gate 失败，并统一加密率的总行数口径；
+- T039（条件任务）：在 T038 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
   并重新冻结 FIFO/RISC-V-Vector 的数量和 formal oracle；
 - library、嵌套 filelist 和更复杂的 include/define 条件组合；
 - 未解析 IP/blackbox 的受控模型；

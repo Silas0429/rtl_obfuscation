@@ -66,7 +66,8 @@ child #(.WIDTH(WIDTH)) u_child (...);
 当前已经验证：
 
 - 不同 module 中同名的 value parameter 会生成不同 mapping entry；
-- module parameter 与 generate-local genvar 同名时，不会把 genvar 引用误收为 parameter；
+- 小型 fixture 中 module parameter 与 generate-local genvar 同名时可以按 owner 分离；
+  RISC-V-Vector 的 elaborated generate-loop parameter 误分类边界由 T038 专项修复；
 - 不同 struct/union 类型中的同名 field 不会合并；
 - ANSI port 的底层 variable/net 不会再次作为 `signals` 重复重命名。
 

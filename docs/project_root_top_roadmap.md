@@ -18,18 +18,18 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 | T035 | `ACCEPTED` | filelist/project-root 默认与手动 profile 统一、跨 module parameter 和 ABI 改写 | 是 |
 | T036 | `ACCEPTED` | 三种入口按目标加密率选择 mapping，并报告实际唯一物理行率 | 是 |
 | T037 | `ACCEPTED` | RISC-V-Vector Formal 验收与根目录 encrypt.py 加密/解密演示 | 是 |
-| T038 | `DRAFT` | 条件性默认 profile 晋级与 FIFO/RISC oracle 重冻结 | 是 |
+| T038 | `READY` | RISC-V-Vector parameter/genvar 修复与加密率分母统一 | 是 |
 
 每张任务单内部可以有多个按顺序执行的门禁，但只在整张任务完成后发生一次
 `READY_FOR_REVIEW -> ACCEPTED` 交接。仍然遵守
 [`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
-本路线图不是活动任务合同。T027—T037 已验收，T006 继续保持 `DRAFT`；T037 合同见
-[`docs/tasks/T037_risc_v_vector_formal_demo.md`](tasks/T037_risc_v_vector_formal_demo.md)。
+本路线图不是活动任务合同。T027—T037 已验收，T006 继续保持 `DRAFT`；T038 合同见
+[`docs/tasks/T038_risc_v_vector_parameter_genvar_rate.md`](tasks/T038_risc_v_vector_parameter_genvar_rate.md)。
 T035 的 shared canonical registry、两入口的 13 类 default profile、19 类 manual profile、
 filelist bounded closure、top ABI preservation 和 mapping v4，以及 T036 的加密率选择已完成。
-RISC-V-Vector Formal 只在 T037 这类专门 RISC 验收任务中运行。
+RISC-V-Vector Formal 只在 T037/T038 这类专门 RISC 验收任务中运行。
 
 当前 profile 矩阵：
 
@@ -42,7 +42,7 @@ RISC-V-Vector Formal 只在 T037 这类专门 RISC 验收任务中运行。
 impact/category 与单文件/filelist default profile 已完成；T035 的两入口 default/manual profile、
 filelist bounded manual closure、project-root multi-module/ABI 和 mapping v4 已实现并完成非 RISC
 回归；T036 的加密率选择和 T037 的 RISC-V-Vector Formal 与演示脚本已验收，
-T038 的条件性 profile 晋级尚未实现。
+T038 当前修复 RISC parameter/genvar 边界并统一加密率分母，尚不晋级更多 default category。
 
 T035 当前实现矩阵（mapping v4 主要用于 manual profile；旧 default mapping 继续只读兼容）：
 
