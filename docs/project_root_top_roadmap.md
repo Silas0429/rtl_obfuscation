@@ -15,7 +15,7 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 | T032 | `ACCEPTED` | parameter rewrite、mapping v3、strict gate、decrypt 和 formal 闭环 | 是 |
 | T033 | `ACCEPTED` | impact/category oracle、single/multi-module classification、category ownership 和 shared registry | 否 |
 | T034 | `ACCEPTED` | 单文件/filelist 默认 single-module profile 与 multi/ABI fail-closed | 是 |
-| T035 | `DRAFT` | project-root 手动 multi-module profile、跨 module parameter 和 ABI 改写 | 是 |
+| T035 | `IN_PROGRESS` | filelist/project-root 默认与手动 profile 统一、跨 module parameter 和 ABI 改写 | 是 |
 | T036 | `DRAFT` | RISC-V-Vector `v_int_alu` 参数集成与 formal-view 验证 | 是 |
 | T037 | `DRAFT` | 条件性默认 profile 晋级与 FIFO/RISC oracle 重冻结 | 是 |
 
@@ -24,20 +24,31 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 [`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
-本路线图不是活动任务合同。T027—T034 已验收，T006 继续保持 `DRAFT`；T035 尚未冻结为活动任务；parameter inventory
-和显式 parameter rewrite 已交付。`parameters` 仍不进入 project-root 默认 profile，也不进入
-project-root debug；两种多文件工作流的默认/手动 profile 统一列为后续工作。
+本路线图不是活动任务合同。T027—T034 已验收，T006 继续保持 `DRAFT`；T035 当前为
+`IN_PROGRESS`。其实现范围包括 shared canonical registry、两入口的 13 类 default profile、
+19 类 manual profile、filelist bounded closure、top ABI preservation 和 mapping v4；实现与非 RISC
+回归已完成，当前等待 T035 执行记录进入 `READY_FOR_REVIEW`。RISC-V-Vector Formal 仍只属于
+专门的 RISC 验收任务。
 
 当前 profile 矩阵：
 
 | 工作流 | 普通模式默认 | 普通模式手动选择 | debug |
 | --- | --- | --- | --- |
-| 显式 filelist | 必须显式传 `--category` | 13 个默认 category；6 个 multi/ABI category 稳定拒绝；`all` 展开 13 类 | 13 个 category |
-| `project-root + top` | `signals`、`ports`、`instances`、`struct`、`interface` 五组 | 14 个用户组，另含 8 个 T030 低风险组和显式 `parameters` | 13 个非-parameter 用户组 |
+| 显式 filelist | 13 个 canonical default category；省略/`all` | 19 个 canonical category 与 alias；manual 采用 filelist bounded closure | 默认全 filelist，manual 只改 closure |
+| `project-root + top` | 同一 13 个 canonical default category；省略/`all` | 同一 19 个 canonical category 与 alias；manual 采用 top closure | 自动发现 top closure |
 
-project-root 不接受 `all` 或底层 category 名；`struct` 和 `interface` 是概念组展开。当前
-project-root 普通模式显式 `parameters` 已支持 inventory/rewrite，但默认和 debug 尚未晋级。
-T033/T034 的 impact/category 与单文件/filelist profile 已完成；T035–T037 的 project-root multi-module、RISC 参数集成和条件性 profile 晋级尚未实现。
+`struct` 和 `interface` 是共享 registry alias，解析后使用 canonical category。T033/T034 的
+impact/category 与单文件/filelist default profile 已完成；T035 的两入口 default/manual profile、
+filelist bounded manual closure、project-root multi-module/ABI 和 mapping v4 已实现并完成非 RISC
+回归；T036–T037
+的 RISC 参数集成和条件性 profile 晋级尚未实现。
+
+T035 当前实现矩阵（mapping v4 主要用于 manual profile；旧 default mapping 继续只读兼容）：
+
+| 工作流 | default profile | manual profile | closure |
+| --- | --- | --- | --- |
+| 显式 filelist | 13 个 canonical category；全 filelist scope | 19 个 canonical category/alias；使用 filelist 内 `--top` bounded closure | 默认全文件，手动只改 closure |
+| `project-root + top` | 同一 13 个 canonical category；`all` 等价 | 同一 19 个 canonical category/alias | 自动发现 top closure |
 RISC-V-Vector 的 formal-view、formal-align 和 Yosys equivalence 只在专门的 RISC-V-Vector 验收任务中运行，不属于普通任务的常规验收或全量回归。
 
 ## 2. 最终使用模型
@@ -76,8 +87,9 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
 默认 ABI 规则：
 
 - top module 名和 top 普通 port 名始终保留；
-- parameter 始终参与 elaboration；project-root 省略 category 时不进入 inventory，显式 `parameters`
-  可报告并加密 eligible/preserved parameter；parameters 仍不进入默认和 debug profile；
+- parameter 始终参与 elaboration；default profile 包含 `parameters`，但只改写
+  `single_module/internal` 对象，top/cross-module binding 进入 preserved；manual profile 可在
+  确认 closure 内处理跨 module parameter override；
 - 被 top port 直接或间接使用的 interface、modport、interface member、struct type 和 field
   构成 `top_abi` 闭包，默认整体保留；
 - 只修改选定 top 的可综合模块树；不可达 module 即使与可达 module 位于同一 `.sv` 文件，
@@ -323,8 +335,8 @@ formal，不再为各 category 建立单独任务。
 - 同文件 reachable/unreachable 定义的区间隔离；
 - gate 使用原 gold 的 include、define、文件顺序和 top 重新严格编译；
 - top ABI 保护闭包；
-- 默认五个概念组及其余 8 个 T030 低风险组的单独/组合运行和 debug/metrics 输出；显式
-  `parameters` 的普通模式闭环由 T032 交付，当前 debug 尚未覆盖该组；
+- 默认 13 个 canonical category 的单独/组合运行和 debug/metrics 输出；manual profile 的
+  multi/ABI 与 alias 通过 mapping v4 处理；
 - 保持现有 `--filelist + --source-root` 和 mapping v2 回归兼容。
 
 mapping v3 至少包含：
@@ -356,8 +368,8 @@ conda run -n rtl_obfuscation python -m unittest \
 1. 每个概念组独立加密一次，组合组再加密一次。
 2. mapping entry 的 `(category, scope, original_name, ranges)` 与 oracle 中该 category 的
    eligible 集合完全相等；不得少项、多项或跨 scope 合并同名对象。
-3. T030 五组默认组合 mapping 不包含 `parameters`；T032 已新增显式 parameter-only 和组合
-   rewrite 验收，默认 profile 保持不变。
+3. T035 默认 profile 的 13 个 canonical category 包含 `parameters`；top parameter 和跨 module
+   binding 仍必须 preserved，manual profile 的 parameter override 才可改写。
 4. top module、top ports 和 `top_abi` 对象没有 mapping entry，且出现在 preserved 清单。
 5. mapping 中每个 range 在 gold 中等于 `original_name`，在 gate 中等于 `renamed_name`。
 6. 所有 eligible occurrences 恰好被修改一次；symbol coverage 和 occurrence coverage 均为

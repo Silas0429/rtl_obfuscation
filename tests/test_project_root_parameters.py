@@ -87,30 +87,30 @@ class ProjectRootParameterTests(unittest.TestCase):
                 "candidate_files": 3,
                 "closure_files": 3,
                 "definitions": 4,
-                "eligible_occurrences": 19,
-                "eligible_symbols": 7,
+                "eligible_occurrences": 9,
+                "eligible_symbols": 5,
                 "reachable_interfaces": 1,
                 "reachable_modules": 2,
                 "status": "pass",
                 "top": "parameter_top",
             },
         )
-        self.assertEqual(len(report["inventory"]["eligible"]), 7)
-        self.assertEqual(sum(x["occurrences"] for x in report["inventory"]["eligible"]), 19)
-        self.assertEqual(len(report["inventory"]["preserved"]), 3)
-        self.assertEqual(sum(x["occurrences"] for x in report["inventory"]["preserved"]), 16)
+        self.assertEqual(len(report["inventory"]["eligible"]), 5)
+        self.assertEqual(sum(x["occurrences"] for x in report["inventory"]["eligible"]), 9)
+        self.assertEqual(len(report["inventory"]["preserved"]), 6)
+        self.assertEqual(sum(x["occurrences"] for x in report["inventory"]["preserved"]), 23)
         self.assertEqual(
             self._digest(report["inventory"]["eligible"]),
-            "0a602a2aa4eee4899707481c927b0620025b0f1561e4ff76dfe0dc780096f6f4",
+            "236d7147469bcd733e562242af51d13650f5729b2e1507b78eb7a1e17e1a7e65",
         )
         self.assertEqual(
             self._digest(report["inventory"]["preserved"]),
-            "33d7a2f06c13d3c9534fa51c7a7134dba9fbffdca737075f0506a864c4905bc3",
+            "e77ef3efc9395ac0f671587a0c325c26019a771d24cd5fcf8cd8b30afbbbb8e6",
         )
         all_entries = report["inventory"]["eligible"] + report["inventory"]["preserved"]
         self.assertEqual(
             self._digest(all_entries),
-            "44f893c8cd48d1031236155113e83b89beaed9cb0dc244e2b7a4717aaafde056",
+            "4fd5b403b0c02062d0fae975eccf0fe449c3d4c4054bb3be4e62deea37728721",
         )
 
     def test_ranges_read_back_and_reports_are_deterministic(self) -> None:
@@ -143,7 +143,9 @@ class ProjectRootParameterTests(unittest.TestCase):
         self.assertNotIn("unreachable_parameter_decoy", report["reachable"]["modules"])
 
     def test_shadowing_and_named_overrides_bind_by_identity(self) -> None:
-        _, completed, report = self._report()
+        _, completed, report = self._report(
+            categories=("parameters", "ports", "instances")
+        )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         child_width = next(item for item in report["inventory"]["eligible"] if item["scope"] == "parameter_child" and item["name"] == "WIDTH")
         child_depth = next(item for item in report["inventory"]["eligible"] if item["scope"] == "parameter_child" and item["name"] == "DEPTH")
@@ -160,10 +162,19 @@ class ProjectRootParameterTests(unittest.TestCase):
         self.assertEqual(report["reachable"]["modules"], ["parameter_child", "parameter_top"])
         self.assertEqual(report["reachable"]["interfaces"], ["bus_if"])
 
-    def test_default_profile_remains_five_groups(self) -> None:
+    def test_default_profile_includes_parameters_with_top_abi_preserved(self) -> None:
         _, completed, report = self._report(categories=())
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertFalse(any(item["category"] == "parameters" for item in report["inventory"]["eligible"] + report["inventory"]["preserved"]))
+        self.assertEqual(report["selected_categories"], [
+            "signals", "parameters", "enum_values", "genvars", "functions",
+            "tasks", "arguments", "instances", "generate_blocks", "typedefs",
+            "struct_types", "struct_fields", "union_fields",
+        ])
+        self.assertTrue(any(item["category"] == "parameters" for item in report["inventory"]["eligible"]))
+        self.assertTrue(any(
+            item["category"] == "parameters" and item["reason"] == "top_parameter"
+            for item in report["inventory"]["preserved"]
+        ))
 
     def test_type_parameter_fails_closed(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t031-negative-")
@@ -210,7 +221,7 @@ class ProjectRootParameterTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         mapping = json.loads((root / "mapping.json").read_text())
         self.assertEqual(mapping["selected_groups"], ["parameters"])
-        self.assertEqual(len(mapping["entries"]), 7)
+        self.assertEqual(len(mapping["entries"]), 5)
         self.assertTrue((root / "gate" / "design.f").is_file())
 
     def test_legacy_single_file_parameter_behavior_remains_available(self) -> None:

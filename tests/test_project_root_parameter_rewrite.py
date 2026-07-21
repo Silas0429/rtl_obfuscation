@@ -81,21 +81,25 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
         self.assertEqual(mapping["selected_groups"], ["parameters"])
         self.assertEqual(mapping["selected_categories"], ["parameters"])
         self.assertEqual(mapping["files"], ["bus_if.sv", "child.sv", "top.sv"])
-        self.assertEqual(len(mapping["entries"]), 7)
-        self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), 19)
+        self.assertEqual(len(mapping["entries"]), 5)
+        self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), 9)
         self.assertEqual(
             {(item["name"], item["reason"]) for item in mapping["preserved"]},
             {
                 ("DATA_WIDTH", "top_parameter"),
                 ("LANES", "top_parameter"),
                 ("MACRO_LOCAL", "macro_expansion"),
+                ("parameter_top", "top_abi"),
+                ("bus_inst", "top_interface_instance"),
+                ("data_i", "top_port"),
+                ("data_o", "top_port"),
             },
         )
         self.assertEqual(mapping["input_manifest_sha256"], self._manifest(FIXTURE, mapping["files"]))
         self.assertEqual(mapping["gate_manifest_sha256"], self._manifest(root / "gate", mapping["files"]))
         self.assertNotEqual(mapping["input_manifest_sha256"], mapping["gate_manifest_sha256"])
-        self.assertEqual(metrics["symbols"], {"renamed": 7, "eligible": 7, "coverage": 1.0})
-        self.assertEqual(metrics["occurrences"], {"renamed": 19, "eligible": 19, "coverage": 1.0})
+        self.assertEqual(metrics["symbols"], {"renamed": 5, "eligible": 5, "coverage": 1.0})
+        self.assertEqual(metrics["occurrences"], {"renamed": 9, "eligible": 9, "coverage": 1.0})
         self.assertEqual(metrics["effective_coverage"], 1.0)
         self.assertEqual(metrics["plaintext_leakage_rate"], 0.0)
 
@@ -118,8 +122,8 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
         self.assertEqual(report["compile"]["parse_errors"], 0)
         self.assertEqual(report["compile"]["semantic_errors"], 0)
         self.assertEqual(report["reachable"]["files"], mapping["files"])
-        self.assertEqual(len(report["inventory"]["eligible"]), 7)
-        self.assertEqual(sum(item["occurrences"] for item in report["inventory"]["eligible"]), 19)
+        self.assertEqual(len(report["inventory"]["eligible"]), 5)
+        self.assertEqual(sum(item["occurrences"] for item in report["inventory"]["eligible"]), 9)
         self.assertFalse((root / "maps" / "bus_if.json").exists())
         self.assertTrue((root / "maps" / "child.json").is_file())
         self.assertTrue((root / "maps" / "top.json").is_file())
@@ -134,7 +138,7 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
             str(root / "restored"),
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), {"files": 3, "mapping_entries": 7, "modified_tokens": 19})
+        self.assertEqual(json.loads(completed.stdout), {"files": 3, "mapping_entries": 5, "modified_tokens": 9})
         for relative_file in mapping["files"]:
             self.assertEqual(
                 (FIXTURE / relative_file).read_bytes(),
@@ -145,8 +149,12 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
         root, mapping, _ = self._encrypt(
             groups=("signals", "ports", "instances", "struct", "interface", "parameters")
         )
+        self.assertEqual(mapping["version"], 4)
+        self.assertEqual(mapping["profile"], "manual")
+        self.assertEqual(len(mapping["entries"]), 24)
+        self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), 67)
         self.assertEqual(
-            mapping["selected_groups"],
+            mapping["requested_categories"],
             ["signals", "ports", "instances", "struct", "interface", "parameters"],
         )
         self.assertIn("parameters", mapping["selected_categories"])
@@ -170,11 +178,16 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         default_mapping = json.loads((default_root / "mapping.json").read_text())
+        self.assertEqual(default_mapping["version"], 3)
         self.assertEqual(
             default_mapping["selected_groups"],
-            ["signals", "ports", "instances", "struct", "interface"],
+            [
+                "signals", "parameters", "enum_values", "genvars", "functions",
+                "tasks", "arguments", "instances", "generate_blocks", "typedefs",
+                "struct_types", "struct_fields", "union_fields",
+            ],
         )
-        self.assertNotIn("parameters", default_mapping["selected_categories"])
+        self.assertIn("parameters", default_mapping["selected_categories"])
 
     def test_legacy_parameter_workflow_and_project_category_validation(self) -> None:
         root = self._temporary_root()
@@ -215,8 +228,8 @@ class ProjectRootParameterRewriteTests(unittest.TestCase):
             file_maps=False,
         )
         self.assertEqual(mapping["files"], ["child.sv", "top.sv"])
-        self.assertEqual(len(mapping["entries"]), 5)
-        self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), 16)
+        self.assertEqual(len(mapping["entries"]), 3)
+        self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), 6)
         completed = subprocess.run(
             [
                 "conda",

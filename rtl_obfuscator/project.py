@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 import pyslang
 
-from . import inventory
+from . import category_profile, inventory
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
@@ -39,27 +39,11 @@ _DIRECTIVES = frozenset(
     }
 )
 _GROUPS = {
-    "signals": ("signals",),
-    "ports": ("ports",),
-    "instances": ("instances",),
-    "struct": ("struct_types", "struct_fields"),
-    "interface": (
-        "interfaces",
-        "interface_instances",
-        "interface_ports",
-        "modports",
-    ),
-    "enum_values": ("enum_values",),
-    "genvars": ("genvars",),
-    "functions": ("functions",),
-    "tasks": ("tasks",),
-    "arguments": ("arguments",),
-    "generate_blocks": ("generate_blocks",),
-    "typedefs": ("typedefs",),
-    "union_fields": ("union_fields",),
-    "parameters": ("parameters",),
+    category: (category,) for category in category_profile.CANONICAL_CATEGORIES
 }
-_DEFAULT_GROUPS = ("signals", "ports", "instances", "struct", "interface")
+_GROUPS.update(category_profile.ALIASES)
+_GROUPS["all"] = category_profile.DEFAULT_CATEGORIES
+_DEFAULT_GROUPS = category_profile.DEFAULT_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -110,6 +94,8 @@ class ProjectSemanticContext:
     source_manager: Any
     closure: tuple[str, ...]
     compile_order: tuple[str, ...]
+    candidate_files: tuple[str, ...] = ()
+    scope_policy: str = "project_discovered"
 
 
 class ProjectAnalysisError(Exception):
@@ -218,13 +204,16 @@ class _ProjectContext:
         include_dirs: list[str],
         defines: dict[str, str],
         categories: list[str],
+        candidate_files: Iterable[str] | None = None,
     ) -> None:
         self.root = root
         self.top = top
         self.include_dirs = include_dirs
         self.defines = defines
         self.categories = categories
-        self.candidates = _discover_files(root)
+        self.candidates = sorted(
+            candidate_files if candidate_files is not None else _discover_files(root)
+        )
         self.candidate_set = set(self.candidates)
         self.candidate_dirs = sorted(
             {str(PurePosixPath(path).parent) for path in self.candidates}
@@ -743,17 +732,18 @@ def _validate_configuration(
             raise ValueError("--define must be NAME or NAME=VALUE")
         name, separator, value = item.partition("=")
         normalized_defines[name] = value if separator else "1"
-    normalized_categories = list(categories)
-    if not normalized_categories:
-        normalized_categories = list(_DEFAULT_GROUPS)
-    if any(category not in _GROUPS for category in normalized_categories):
-        raise ValueError("unsupported inspect-project category")
-    expanded: list[str] = []
-    for category in normalized_categories:
-        for concrete in _GROUPS[category]:
-            if concrete not in expanded:
-                expanded.append(concrete)
-    return root, normalized_include_dirs, normalized_defines, expanded
+    try:
+        selection = category_profile.resolve(
+            categories, mode=category_profile.MODE_PROJECT_ROOT
+        )
+    except category_profile.ProfileResolutionError as error:
+        raise ValueError(str(error)) from error
+    return (
+        root,
+        normalized_include_dirs,
+        normalized_defines,
+        list(selection.selected_categories),
+    )
 
 
 def _empty_report(
@@ -854,7 +844,14 @@ def _analyze_project_with_context(
     root, normalized_dirs, normalized_defines, expanded_categories = (
         _validate_configuration(project_root, top, include_dirs, defines, categories)
     )
+    selection = category_profile.resolve(
+        categories, mode=category_profile.MODE_PROJECT_ROOT
+    )
     report = _empty_report(top, normalized_dirs, normalized_defines)
+    report["profile"] = selection.profile
+    report["requested_categories"] = list(selection.requested_categories)
+    report["selected_categories"] = list(selection.selected_categories)
+    report["scope_policy"] = "project_discovered"
     try:
         context = _ProjectContext(
             root, top, normalized_dirs, normalized_defines, expanded_categories
@@ -969,6 +966,50 @@ def _analyze_project_with_context(
         report["inventory"] = inventory_report
         if classification is not None:
             report["classification"] = classification
+            # The default project profile has no rewrite authority over the
+            # top ABI categories, but the ABI still belongs in the audit
+            # inventory as preserved.  Keep module declarations in the
+            # classification registry (their legacy raw inventory category
+            # is intentionally absent) while exposing all other top ABI
+            # objects here.
+            if selection.profile == category_profile.PROFILE_SINGLE_MODULE:
+                def inventory_item(item: dict[str, Any], reason: str | None) -> dict[str, Any]:
+                    return {
+                        field: item[field]
+                        for field in (
+                            "category", "scope", "name", "declaration",
+                            "references", "occurrences",
+                        )
+                    } | {"reason": reason}
+
+                default_eligible: list[dict[str, Any]] = []
+                default_preserved: list[dict[str, Any]] = []
+                selected = set(selection.selected_categories)
+                for item in classification["default_profile"]["items"]:
+                    if item["category"] not in selected:
+                        continue
+                    destination = default_preserved if item.get("reason") else default_eligible
+                    destination.append(inventory_item(item, item.get("reason")))
+                for item in classification["top_abi_preserved"]["items"]:
+                    if item["category"] == "modules":
+                        continue
+                    default_preserved.append(
+                        inventory_item(item, item.get("reason") or "top_abi")
+                    )
+
+                def inventory_key(item: dict[str, Any]) -> tuple[Any, ...]:
+                    declaration = item["declaration"]
+                    return (
+                        item["category"], item["scope"],
+                        declaration["file"] if declaration else "\uffff",
+                        declaration["start"] if declaration else 2**63,
+                        item["name"],
+                    )
+
+                default_eligible.sort(key=inventory_key)
+                default_preserved.sort(key=inventory_key)
+                inventory_report["eligible"] = default_eligible
+                inventory_report["preserved"] = default_preserved
         report["diagnostics"] = []
         result_summary = _summary(report)
         semantic_context = ProjectSemanticContext(
@@ -1032,6 +1073,193 @@ def analyze_project(
         categories=categories,
     )
     return report, summary, success
+
+
+def _read_filelist_candidates(filelist: Path, source_root: Path) -> list[str]:
+    """Read a bounded filelist without discovering files outside it."""
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for line in filelist.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        path = PurePosixPath(text)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("FILELIST_PATH_OUTSIDE_SOURCE_ROOT: " + text)
+        relative = path.as_posix()
+        if relative in seen:
+            raise ValueError("DUPLICATE_FILELIST_ENTRY: " + relative)
+        absolute = (source_root / relative).resolve()
+        try:
+            absolute.relative_to(source_root.resolve())
+        except ValueError as error:
+            raise ValueError("FILELIST_PATH_OUTSIDE_SOURCE_ROOT: " + relative) from error
+        if not absolute.is_file():
+            raise ValueError("MISSING_FILELIST_ENTRY: " + relative)
+        if absolute.suffix not in (".sv", ".svh"):
+            raise ValueError("UNSUPPORTED_FILELIST_ENTRY: " + relative)
+        seen.add(relative)
+        candidates.append(relative)
+    if not candidates:
+        raise ValueError("EMPTY_FILELIST")
+    return candidates
+
+
+def analyze_filelist_context(
+    *,
+    filelist: Path,
+    source_root: Path,
+    top: str,
+    categories: Iterable[str] = (),
+    bounded: bool,
+    include_dirs: Iterable[Path | str] = (),
+    defines: Iterable[str] = (),
+) -> tuple[
+    dict[str, Any], dict[str, Any], bool, ProjectSemanticContext | None
+]:
+    """Analyze either all listed files or a strict top closure within a filelist."""
+
+    root = source_root.expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError("--source-root must be an existing directory")
+    if _IDENTIFIER.fullmatch(top) is None:
+        raise ValueError("--top must be a SystemVerilog identifier")
+    candidates = _read_filelist_candidates(filelist.expanduser().resolve(), root)
+    normalized_dirs: list[str] = []
+    for include_dir in include_dirs:
+        path = Path(include_dir)
+        absolute = (root / path).resolve() if not path.is_absolute() else path.resolve()
+        try:
+            relative = absolute.relative_to(root).as_posix()
+        except ValueError as error:
+            raise ValueError("--include-dir must be inside --source-root") from error
+        if not absolute.is_dir():
+            raise ValueError("--include-dir must be an existing directory")
+        normalized_dirs.append(relative)
+    normalized_defines: dict[str, str] = {}
+    for item in defines:
+        if _DEFINE_ARGUMENT.fullmatch(item) is None:
+            raise ValueError("--define must be NAME or NAME=VALUE")
+        name, separator, value = item.partition("=")
+        normalized_defines[name] = value if separator else "1"
+    try:
+        selection = category_profile.resolve(
+            categories, mode=category_profile.MODE_FILELIST
+        )
+    except category_profile.ProfileResolutionError as error:
+        raise ValueError(str(error)) from error
+
+    report = _empty_report(top, normalized_dirs, normalized_defines)
+    report["candidate_files"] = list(candidates)
+    context: _ProjectContext | None = None
+    try:
+        context = _ProjectContext(
+            root,
+            top,
+            normalized_dirs,
+            normalized_defines,
+            list(selection.selected_categories),
+            candidate_files=candidates,
+        )
+        report["definitions"] = [
+            definition.report_record() for definition in context.definitions
+        ]
+        top_definitions = context.definitions_by_name.get(top, [])
+        if not top_definitions:
+            raise ProjectAnalysisError("TOP_NOT_FOUND", f"top definition not found: {top}")
+        if len(top_definitions) != 1:
+            raise ProjectAnalysisError(
+                "AMBIGUOUS_TOP",
+                f"top definition is ambiguous: {top}",
+                details=[definition.report_record() for definition in top_definitions],
+            )
+        if top_definitions[0].kind != "module":
+            raise ProjectAnalysisError("TOP_NOT_FOUND", f"top is not a module: {top}")
+
+        closure = {top_definitions[0].file}
+        if bounded:
+            compilation, root_symbol, manager, parse_errors, semantic_errors = (
+                context.expand_hierarchy(closure)
+            )
+        else:
+            closure = set(candidates)
+            compilation, root_symbol, manager, parse_errors, semantic_errors = (
+                context.compile(closure)
+            )
+        if parse_errors:
+            relative, start = context._diagnostic_position(parse_errors[0], manager)
+            raise ProjectAnalysisError(
+                "PARSE_ERROR", "strict filelist compilation contains parse errors", file=relative, start=start
+            )
+        if semantic_errors:
+            relative, start = context._diagnostic_position(semantic_errors[0], manager)
+            raise ProjectAnalysisError(
+                "SEMANTIC_ERROR", "strict filelist compilation contains semantic errors", file=relative, start=start,
+                details=[{"code": str(item.code)} for item in semantic_errors],
+            )
+        tops = [instance for instance in root_symbol.topInstances if instance.name == top]
+        if len(tops) != 1:
+            raise ProjectAnalysisError("SEMANTIC_ERROR", "strict compilation did not select exactly one top")
+        top_instance = tops[0]
+        compile_order = context.compile_order(closure)
+        report["status"] = "pass"
+        report["compile"].update(
+            {"compile_order": compile_order, "parse_errors": 0, "semantic_errors": 0}
+        )
+        report["dependencies"] = {
+            "includes": [
+                edge.report_record()
+                for edge in sorted(context.include_edges, key=lambda item: (item.provider, item.consumer, item.name))
+                if not bounded or edge.consumer in closure
+            ],
+            "macros": [
+                edge.report_record()
+                for edge in sorted(context.macro_edges, key=lambda item: (item.provider, item.consumer, item.name))
+                if not bounded or edge.consumer in closure
+            ],
+        }
+        modules = sorted(
+            definition.name
+            for definition in context.definitions
+            if definition.kind == "module" and definition.file in closure
+        )
+        interfaces = sorted(
+            definition.name
+            for definition in context.definitions
+            if definition.kind == "interface" and definition.file in closure
+        )
+        report["reachable"] = {
+            "modules": modules,
+            "interfaces": interfaces,
+            "files": sorted(closure),
+            "source_files": sorted(path for path in closure if path.endswith(".sv")),
+            "header_files": sorted(path for path in closure if path.endswith(".svh")),
+        }
+        report["profile"] = selection.profile
+        report["requested_categories"] = list(selection.requested_categories)
+        report["selected_categories"] = list(selection.selected_categories)
+        report["scope_policy"] = "filelist_bounded" if bounded else "all_filelist_files"
+        report["diagnostics"] = []
+        result_summary = _summary(report)
+        semantic_context = ProjectSemanticContext(
+            project_root=root,
+            compilation=compilation,
+            top_instance=top_instance,
+            source_manager=manager,
+            closure=tuple(sorted(closure)),
+            compile_order=tuple(compile_order),
+            candidate_files=tuple(candidates),
+            scope_policy="filelist_bounded" if bounded else "all_filelist_files",
+        )
+        return report, result_summary, True, semantic_context
+    except (ProjectAnalysisError, OSError, RuntimeError, ValueError) as error:
+        if not isinstance(error, ProjectAnalysisError):
+            error = ProjectAnalysisError("SEMANTIC_ERROR", f"filelist analysis failed: {error}")
+        report["diagnostics"] = [error.diagnostic()]
+        if context is not None:
+            report["definitions"] = [definition.report_record() for definition in context.definitions]
+        return report, _error_summary(report), False, None
 
 
 def analyze_project_context(

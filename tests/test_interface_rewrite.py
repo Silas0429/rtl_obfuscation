@@ -11,7 +11,7 @@ import unittest
 
 
 class InterfaceRewriteCliTest(unittest.TestCase):
-    def test_interface_category_requires_project_root(self) -> None:
+    def test_filelist_interface_category_uses_bounded_manual_profile(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         filelist = Path("tests/fixtures/t017_interface/design.f")
         source_root = Path("tests/fixtures/t017_interface")
@@ -50,12 +50,11 @@ class InterfaceRewriteCliTest(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            self.assertEqual(encrypt.returncode, 2)
-            self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", encrypt.stderr)
-            self.assertEqual(encrypt.stdout, "")
-            self.assertFalse(gate_dir.exists())
-            self.assertFalse(mapping_file.exists())
-            self.assertFalse(metrics_file.exists())
+            self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
+            mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
+            self.assertEqual(mapping["version"], 4)
+            self.assertEqual(mapping["profile"], "manual")
+            self.assertTrue(gate_dir.is_dir())
 
     def test_interface_is_not_implicit_in_project_all(self) -> None:
         repository = Path(__file__).resolve().parents[1]

@@ -26,11 +26,18 @@ LOW_RISK_GROUPS = (
 )
 ALL_GROUPS = (
     "signals",
-    "ports",
+    "parameters",
+    "enum_values",
+    "genvars",
+    "functions",
+    "tasks",
+    "arguments",
     "instances",
-    "struct",
-    "interface",
-    *LOW_RISK_GROUPS,
+    "generate_blocks",
+    "typedefs",
+    "struct_types",
+    "struct_fields",
+    "union_fields",
 )
 LOW_RISK_ORACLE = {
     "enum_values": (2, 5),
@@ -163,9 +170,12 @@ class ProjectRootLowRiskTests(unittest.TestCase):
         self.assertEqual(inspected.returncode, 0, inspected.stderr)
         report = json.loads(report_path.read_text())
         self.assertEqual(report["inventory"]["eligible"], [])
-        self.assertEqual(len(report["inventory"]["preserved"]), 1)
-        self.assertEqual(report["inventory"]["preserved"][0]["reason"], "macro_expansion")
-        self.assertIsNone(report["inventory"]["preserved"][0]["declaration"])
+        macro_items = [
+            item for item in report["inventory"]["preserved"]
+            if item["reason"] == "macro_expansion"
+        ]
+        self.assertEqual(len(macro_items), 1)
+        self.assertIsNone(macro_items[0]["declaration"])
 
         encrypted_root = self._temporary_root()
         completed, mapping, metrics = self._encrypt(
@@ -279,12 +289,12 @@ class ProjectRootLowRiskTests(unittest.TestCase):
     def test_default_profile_remains_five_groups(self) -> None:
         fixture_root = self._temporary_root()
         completed, mapping, _ = self._encrypt(fixture_root, FIXTURE, "lowrisk_top", None)
-        self.assertEqual(json.loads(completed.stdout), {"files": 2, "mapping_entries": 9, "modified_tokens": 26})
-        self.assertEqual(mapping["selected_groups"], ["signals", "ports", "instances", "struct", "interface"])
+        self.assertEqual(json.loads(completed.stdout), {"files": 2, "mapping_entries": 19, "modified_tokens": 53})
+        self.assertEqual(mapping["selected_groups"], list(ALL_GROUPS))
         fifo_root = self._temporary_root()
         completed, mapping, _ = self._encrypt(fifo_root, FIFO, "fifo_top", None)
-        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 50, "modified_tokens": 195})
-        self.assertEqual(mapping["selected_groups"], ["signals", "ports", "instances", "struct", "interface"])
+        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 38, "modified_tokens": 127})
+        self.assertEqual(mapping["selected_groups"], list(ALL_GROUPS))
 
     def test_debug_runs_thirteen_groups(self) -> None:
         root = self._temporary_root()
@@ -306,11 +316,11 @@ class ProjectRootLowRiskTests(unittest.TestCase):
         self.assertEqual([run["category"] for run in summary["runs"]], list(ALL_GROUPS))
         expected = {
             "signals": (4, 14),
-            "ports": (3, 9),
-            "instances": (1, 1),
-            "struct": (1, 2),
-            "interface": (0, 0),
+            "parameters": (0, 0),
             **LOW_RISK_ORACLE,
+            "instances": (1, 1),
+            "struct_types": (1, 2),
+            "struct_fields": (0, 0),
         }
         for run in summary["runs"]:
             self.assertEqual((run["mapping_entries"], run["modified_tokens"]), expected[run["category"]])
@@ -375,21 +385,16 @@ class ProjectRootLowRiskTests(unittest.TestCase):
     def test_fifo_explicit_thirteen_group_summary(self) -> None:
         root = self._temporary_root()
         completed, mapping, _ = self._encrypt(root, FIFO, "fifo_top", ALL_GROUPS)
-        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 68, "modified_tokens": 244})
+        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 38, "modified_tokens": 127})
         self.assertEqual(mapping["selected_groups"], list(ALL_GROUPS))
         counts = Counter(item["category"] for item in mapping["entries"])
         self.assertEqual(
             counts,
             Counter({
                 "signals": 14,
-                "ports": 17,
                 "instances": 2,
                 "struct_types": 2,
                 "struct_fields": 2,
-                "interfaces": 1,
-                "interface_instances": 1,
-                "interface_ports": 9,
-                "modports": 2,
                 "enum_values": 3,
                 "genvars": 2,
                 "functions": 2,

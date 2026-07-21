@@ -114,39 +114,16 @@ class ProjectRootInspectTests(unittest.TestCase):
             ("signals", "project_child", "child_signal"): 3,
             ("signals", "project_leaf", "leaf_packet"): 6,
             ("signals", "project_leaf", "leaf_signal"): 4,
-            ("ports", "project_child", "clk"): 3,
-            ("ports", "project_child", "reset_n"): 3,
-            ("ports", "project_child", "child_valid_i"): 3,
-            ("ports", "project_child", "child_data_i"): 3,
-            ("ports", "project_child", "child_valid_o"): 3,
-            ("ports", "project_child", "child_data_o"): 3,
-            ("ports", "project_leaf", "clk"): 3,
-            ("ports", "project_leaf", "reset_n"): 3,
-            ("ports", "project_leaf", "leaf_valid_i"): 4,
-            ("ports", "project_leaf", "leaf_data_i"): 3,
-            ("ports", "project_leaf", "leaf_valid_o"): 3,
-            ("ports", "project_leaf", "leaf_data_o"): 3,
             ("instances", "project_top", "u_child"): 1,
             ("instances", "project_child", "u_leaf"): 1,
-            ("struct_types", "$unit", "packet_t"): 3,
-            ("struct_fields", "$unit::packet_t", "packet_valid"): 5,
-            ("struct_fields", "$unit::packet_t", "packet_payload"): 5,
-            ("interfaces", "$unit", "internal_if"): 2,
-            ("interface_instances", "project_top", "top_bus"): 7,
-            ("interface_ports", "internal_if", "clk"): 2,
-            ("interface_ports", "internal_if", "if_request"): 5,
-            ("interface_ports", "internal_if", "if_acknowledge"): 5,
-            ("interface_ports", "internal_if", "if_data"): 5,
-            ("modports", "internal_if", "producer"): 1,
-            ("modports", "internal_if", "consumer"): 1,
         }
         actual = {
             (item["category"], item["scope"], item["name"]): item["occurrences"]
             for item in report["inventory"]["eligible"]
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(actual), 32)
-        self.assertEqual(sum(actual.values()), 107)
+        self.assertEqual(len(actual), 9)
+        self.assertEqual(sum(actual.values()), 29)
         self.assertEqual(
             {
                 (item["category"], item["name"], item["reason"])
@@ -162,7 +139,8 @@ class ProjectRootInspectTests(unittest.TestCase):
                     "top_valid_o",
                     "top_data_o",
                 )
-            },
+            }
+            | {("interface_instances", "top_bus", "top_interface_instance")},
         )
         forbidden = {"same_file_secret", "unused_i", "unused_o", "u_missing", "value_i"}
         self.assertFalse(

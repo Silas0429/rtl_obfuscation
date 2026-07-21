@@ -14,26 +14,15 @@ from typing import Any
 
 import pyslang
 
-from rtl_obfuscator import formal_view, inventory, project
+from rtl_obfuscator import category_profile, formal_view, inventory, project
 
 
-_PROJECT_ROOT_GROUPS = (
-    ("signals", ("signals",)),
-    ("ports", ("ports",)),
-    ("instances", ("instances",)),
-    ("struct", ("struct_types", "struct_fields")),
-    (
-        "interface",
-        ("interfaces", "interface_instances", "interface_ports", "modports"),
-    ),
-    ("enum_values", ("enum_values",)),
-    ("genvars", ("genvars",)),
-    ("functions", ("functions",)),
-    ("tasks", ("tasks",)),
-    ("arguments", ("arguments",)),
-    ("generate_blocks", ("generate_blocks",)),
-    ("typedefs", ("typedefs",)),
-    ("union_fields", ("union_fields",)),
+_PROJECT_ROOT_GROUPS = tuple(
+    (category, (category,))
+    for category in category_profile.CANONICAL_CATEGORIES
+)
+_PROJECT_ROOT_GROUPS = _PROJECT_ROOT_GROUPS + tuple(
+    (alias, categories) for alias, categories in category_profile.ALIASES.items()
 )
 _PROJECT_ROOT_GROUP_NAMES = tuple(group for group, _ in _PROJECT_ROOT_GROUPS)
 _PROJECT_ROOT_PARAMETER_GROUP = ("parameters", ("parameters",))
@@ -43,7 +32,7 @@ _PROJECT_ROOT_SELECTION_GROUPS = _PROJECT_ROOT_GROUPS + (
 _PROJECT_ROOT_SELECTION_GROUP_NAMES = tuple(
     group for group, _ in _PROJECT_ROOT_SELECTION_GROUPS
 )
-_PROJECT_ROOT_DEFAULT_GROUP_NAMES = _PROJECT_ROOT_GROUP_NAMES[:5]
+_PROJECT_ROOT_DEFAULT_GROUP_NAMES = tuple(category_profile.DEFAULT_CATEGORIES)
 _PROJECT_ROOT_CATEGORIES = tuple(
     category
     for _, categories in _PROJECT_ROOT_SELECTION_GROUPS
@@ -497,49 +486,445 @@ def _write_project_file_maps(
         _write_json(output_path, per_file_mapping)
 
 
-def _encrypt_filelist_project(args: argparse.Namespace) -> dict[str, int]:
-    mapping = inventory._build_project_inventory(
-        args.filelist,
-        args.source_root,
-        args.name_length,
-        args.category,
-        args.top,
-    )
-    entries = mapping["entries"]
-    relative_files = mapping["files"]
+def _classification_items(
+    inventory_report: dict[str, Any],
+    selection: category_profile.ProfileSelection,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Select disjoint classified entries for the T035 mapping boundary."""
 
+    classification = inventory_report.get("classification", {})
+    selected = set(selection.selected_categories)
+    eligible: list[dict[str, Any]] = []
+    preserved: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def key(item: dict[str, Any]) -> tuple[Any, ...]:
+        declaration = item["declaration"]
+        return (
+            item["category"],
+            item["scope"],
+            item["name"],
+            None if declaration is None else declaration["file"],
+            None if declaration is None else declaration["start"],
+        )
+
+    def add(
+        item: dict[str, Any],
+        *,
+        preserve: bool,
+        allow_unselected: bool = False,
+    ) -> None:
+        if item["category"] not in selected and not allow_unselected:
+            return
+        item_key = key(item)
+        if item_key in seen:
+            return
+        seen.add(item_key)
+        if preserve:
+            preserved.append(item)
+        else:
+            eligible.append(item)
+
+    for item in classification.get("default_profile", {}).get("items", []):
+        reason = item.get("reason")
+        add(item, preserve=reason is not None)
+    if selection.is_manual:
+        for item in classification.get("manual_multi_module", {}).get("items", []):
+            add(item, preserve=False)
+    for item in classification.get("top_abi_preserved", {}).get("items", []):
+        # ABI objects are immutable regardless of the requested profile.  A
+        # manual request for only ``modules`` must not rewrite the top
+        # port/interface/type contract.
+        add(item, preserve=True, allow_unselected=True)
+
+    def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        declaration = item["declaration"]
+        return (
+            declaration["file"] if declaration is not None else "\uffff",
+            declaration["start"] if declaration is not None else 2**63,
+            item["category"],
+            item["scope"],
+            item["name"],
+        )
+
+    eligible.sort(key=sort_key)
+    preserved.sort(key=sort_key)
+    return eligible, preserved
+
+
+def _v4_entries_and_preserved(
+    *,
+    inventory_report: dict[str, Any],
+    selection: category_profile.ProfileSelection,
+    source_root: Path,
+    files: list[str],
+    name_length: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    classified_entries, classified_preserved = _classification_items(
+        inventory_report, selection
+    )
+    unavailable: set[str] = set(inventory._SYSTEMVERILOG_KEYWORDS)
+    for relative_file in files:
+        unavailable.update(
+            re.findall(
+                r"[A-Za-z_][A-Za-z0-9_$]*",
+                (source_root / relative_file).read_text(encoding="utf-8"),
+            )
+        )
+
+    entries: list[dict[str, Any]] = []
+    for item in classified_entries:
+        renamed_name = inventory._new_name(name_length, unavailable)
+        entries.append(
+            {
+                "category": item["category"],
+                "scope": item["scope"],
+                "original_name": item["name"],
+                "renamed_name": renamed_name,
+                "declaration": item["declaration"],
+                "references": item["references"],
+                "occurrences": item["occurrences"],
+            }
+        )
+
+    preserved: list[dict[str, Any]] = []
+    for item in classified_preserved:
+        reason = item.get("reason") or "top_abi"
+        preserved.append(
+            {
+                "category": item["category"],
+                "scope": item["scope"],
+                "name": item["name"],
+                "declaration": item["declaration"],
+                "references": item["references"],
+                "occurrences": item["occurrences"],
+                "reason": reason,
+            }
+        )
+    return entries, preserved
+
+
+def _v4_skipped_out_of_closure(
+    files: list[str], closure_files: set[str]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "file": relative_file,
+            "reason": "out_of_top_closure",
+            "declaration": None,
+            "references": [],
+            "occurrences": 0,
+        }
+        for relative_file in files
+        if relative_file not in closure_files
+    ]
+
+
+def _build_v4_mapping(
+    *,
+    mode: str,
+    selection: category_profile.ProfileSelection,
+    report: dict[str, Any],
+    inventory_report: dict[str, Any],
+    source_root: Path,
+    files: list[str],
+    closure_files: set[str],
+    name_length: int,
+) -> dict[str, Any]:
+    entries, preserved = _v4_entries_and_preserved(
+        inventory_report=inventory_report,
+        selection=selection,
+        source_root=source_root,
+        files=files,
+        name_length=name_length,
+    )
+    return {
+        "version": 4,
+        "mode": mode,
+        "profile": selection.profile,
+        "top": report["top"],
+        "requested_categories": list(selection.requested_categories),
+        "selected_categories": list(selection.selected_categories),
+        "files": list(files),
+        "source_files": [path for path in files if path.endswith(".sv")],
+        "header_files": [path for path in files if path.endswith(".svh")],
+        "closure": {
+            "policy": "filelist_bounded" if mode == category_profile.MODE_FILELIST else "project_discovered",
+            "modules": list(report["reachable"]["modules"]),
+            "interfaces": list(report["reachable"]["interfaces"]),
+            "files": sorted(closure_files),
+        },
+        "compile_context": {
+            "compilation_unit": report["compile"]["compilation_unit"],
+            "include_dirs": list(report["compile"]["include_dirs"]),
+            "defines": list(report["compile"]["defines"]),
+            "compile_order": list(report["compile"]["compile_order"]),
+        },
+        "entries": entries,
+        "preserved": preserved,
+        "skipped": _v4_skipped_out_of_closure(files, closure_files),
+        "name_length": name_length,
+        "input_manifest_sha256": _project_manifest(source_root, files),
+        "gate_manifest_sha256": "",
+    }
+
+
+def _audit_v4_gate(
+    mapping: dict[str, Any],
+    gate_report: dict[str, Any],
+    gate_root: Path,
+) -> None:
+    if gate_report.get("status") != "pass":
+        raise ValueError("MAPPING_V4_GATE_ANALYSIS_FAILED")
+    closure = mapping["closure"]
+    if gate_report["reachable"]["files"] != closure["files"]:
+        raise ValueError("MAPPING_V4_GATE_CLOSURE_MISMATCH")
+    module_names = {
+        entry["original_name"]: entry["renamed_name"]
+        for entry in mapping["entries"]
+        if entry["category"] == "modules"
+    }
+    interface_names = {
+        entry["original_name"]: entry["renamed_name"]
+        for entry in mapping["entries"]
+        if entry["category"] == "interfaces"
+    }
+    if gate_report["reachable"]["modules"] != sorted(
+        module_names.get(name, name) for name in closure["modules"]
+    ):
+        raise ValueError("MAPPING_V4_GATE_MODULE_SCOPE_MISMATCH")
+    if gate_report["reachable"]["interfaces"] != sorted(
+        interface_names.get(name, name) for name in closure["interfaces"]
+    ):
+        raise ValueError("MAPPING_V4_GATE_INTERFACE_SCOPE_MISMATCH")
+
+    edits_by_file = _entry_edits_by_file(mapping["entries"])
+    gate_bytes = {
+        relative_file: (gate_root / relative_file).read_bytes()
+        for relative_file in mapping["files"]
+    }
+
+    def check_records(records: list[dict[str, Any]], name: str) -> None:
+        for source_record, gate_record in zip(
+            records,
+            _expected_gate_ranges(records, name, edits_by_file),
+            strict=True,
+        ):
+            content = gate_bytes[gate_record["file"]]
+            if content[gate_record["start"] : gate_record["end"]] != name.encode():
+                raise ValueError("MAPPING_V4_GATE_RANGE_MISMATCH")
+            if source_record["end"] <= source_record["start"]:
+                raise ValueError("MAPPING_V4_INVALID_SOURCE_RANGE")
+
+    ranges: list[tuple[str, int, int]] = []
+    for entry in mapping["entries"]:
+        records = [entry["declaration"], *entry["references"]]
+        check_records(records, entry["renamed_name"])
+        ranges.extend((record["file"], record["start"], record["end"]) for record in records)
+    for item in mapping["preserved"]:
+        records = ([] if item["declaration"] is None else [item["declaration"]]) + item["references"]
+        check_records(records, item["name"])
+        ranges.extend((record["file"], record["start"], record["end"]) for record in records)
+    if len(ranges) != len(set(ranges)):
+        raise ValueError("MAPPING_V4_DUPLICATE_RANGE")
+    for relative_file in mapping["files"]:
+        file_ranges = sorted((start, end) for file, start, end in ranges if file == relative_file)
+        if any(current_start < previous_end for (_, previous_end), (current_start, _) in zip(file_ranges, file_ranges[1:])):
+            raise ValueError("MAPPING_V4_OVERLAPPING_RANGE")
+
+
+def _encrypt_filelist_manual_v4(
+    args: argparse.Namespace,
+    selection: category_profile.ProfileSelection,
+) -> dict[str, int]:
+    report, _, success, semantic = project.analyze_filelist_context(
+        filelist=args.filelist,
+        source_root=args.source_root,
+        top=args.top,
+        categories=selection.requested_categories,
+        bounded=True,
+    )
+    if not success or semantic is None:
+        raise ValueError(report["diagnostics"][0]["code"])
+    inventory_report, _, _ = inventory.build_top_project_inventory(
+        compilation=semantic.compilation,
+        top_instance=semantic.top_instance,
+        source_root=args.source_root.resolve(),
+        categories=list(selection.selected_categories),
+        reachable_files=set(semantic.closure),
+    )
+    files = list(semantic.candidate_files)
+    mapping = _build_v4_mapping(
+        mode=category_profile.MODE_FILELIST,
+        selection=selection,
+        report=report,
+        inventory_report=inventory_report,
+        source_root=args.source_root.resolve(),
+        files=files,
+        closure_files=set(semantic.closure),
+        name_length=args.name_length,
+    )
+    edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
+    for entry in mapping["entries"]:
+        for record in _entry_ranges(entry):
+            edits_by_file.setdefault(record["file"], []).append(
+                (record, entry["original_name"], entry["renamed_name"])
+            )
+
+    with tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t035-") as temporary:
+        staging_root = Path(temporary)
+        staging_gate = staging_root / "gate"
+        for relative_file in files:
+            source = (args.source_root / relative_file).read_bytes()
+            _write_bytes(
+                staging_gate / relative_file,
+                _apply_edits(source, edits_by_file.get(relative_file, [])),
+            )
+        _write_bytes(
+            staging_gate / args.filelist.name,
+            args.filelist.read_bytes(),
+        )
+        gate_report, _, gate_success, _ = project.analyze_filelist_context(
+            filelist=staging_gate / args.filelist.name,
+            source_root=staging_gate,
+            top=args.top,
+            categories=selection.requested_categories,
+            bounded=True,
+        )
+        if not gate_success:
+            raise ValueError("MAPPING_V4_GATE_ANALYSIS_FAILED")
+        _audit_v4_gate(mapping, gate_report, staging_gate)
+        mapping["gate_manifest_sha256"] = _project_manifest(staging_gate, files)
+        metrics = _project_metrics(args.source_root, staging_gate, files, mapping["entries"])
+        staging_mapping = staging_root / "mapping.json"
+        staging_metrics = staging_root / "metrics.json"
+        project._write_json_atomic(staging_mapping, mapping)
+        project._write_json_atomic(staging_metrics, metrics)
+        artifacts: list[tuple[Path, Path]] = [
+            (staging_gate, args.output_dir),
+            (staging_mapping, args.map_file),
+            (staging_metrics, args.metrics_file),
+        ]
+        if args.file_map_dir is not None:
+            staging_maps = staging_root / "maps"
+            staging_maps.mkdir(parents=True, exist_ok=True)
+            _write_project_file_maps(mapping, staging_maps, include_empty=False)
+            artifacts.append((staging_maps, args.file_map_dir))
+        _publish_project_root_artifacts(artifacts)
+
+    return {
+        "files": len(files),
+        "mapping_entries": len(mapping["entries"]),
+        "modified_tokens": sum(entry["occurrences"] for entry in mapping["entries"]),
+    }
+
+
+def _encrypt_filelist_default_legacy(
+    args: argparse.Namespace,
+    selection: category_profile.ProfileSelection,
+) -> dict[str, int]:
+    """Keep the accepted v2 surface while using T035 full-file semantics."""
+
+    report, _, success, semantic = project.analyze_filelist_context(
+        filelist=args.filelist,
+        source_root=args.source_root,
+        top=args.top,
+        categories=selection.requested_categories,
+        bounded=False,
+    )
+    if not success or semantic is None:
+        raise ValueError(report["diagnostics"][0]["code"])
+    closure_report, _, closure_success, _ = project.analyze_filelist_context(
+        filelist=args.filelist,
+        source_root=args.source_root,
+        top=args.top,
+        categories=selection.requested_categories,
+        bounded=True,
+    )
+    if not closure_success:
+        raise ValueError(closure_report["diagnostics"][0]["code"])
+    inventory_report = inventory.build_filelist_default_inventory(
+        compilation=semantic.compilation,
+        top_instance=semantic.top_instance,
+        source_root=args.source_root.resolve(),
+        files=list(semantic.candidate_files),
+        categories=list(selection.selected_categories),
+        reachable_files=set(closure_report["reachable"]["files"]),
+    )
+    files = list(semantic.candidate_files)
+    unavailable: set[str] = set(inventory._SYSTEMVERILOG_KEYWORDS)
+    for relative_file in files:
+        unavailable.update(
+            re.findall(
+                r"[A-Za-z_][A-Za-z0-9_$]*",
+                (args.source_root / relative_file).read_text(encoding="utf-8"),
+            )
+        )
+    entries: list[dict[str, Any]] = []
+    for item in inventory_report["eligible"]:
+        entries.append(
+            {
+                "category": item["category"],
+                "scope": item["scope"],
+                "original_name": item["name"],
+                "renamed_name": inventory._new_name(args.name_length, unavailable),
+                "declaration": item["declaration"],
+                "references": item["references"],
+            }
+        )
+    mapping = {
+        "version": 2,
+        "name_length": args.name_length,
+        "files": files,
+        "top": args.top,
+        "entries": entries,
+    }
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry in entries:
         for record in _entry_ranges(entry):
             edits_by_file.setdefault(record["file"], []).append(
                 (record, entry["original_name"], entry["renamed_name"])
             )
-
-    for rel_file in relative_files:
-        source = (args.source_root / rel_file).read_bytes()
-        file_edits = edits_by_file.get(rel_file, [])
-        gate = _apply_edits(source, file_edits)
-        output_path = args.output_dir / rel_file
-        _write_bytes(output_path, gate)
-
-    # Copy filelist to output directory
-    filelist_name = args.filelist.name
-    filelist_content = args.filelist.read_text(encoding="utf-8")
-    _write_bytes(args.output_dir / filelist_name, filelist_content.encode("utf-8"))
-
-    modified_tokens = sum(len(edits) for edits in edits_by_file.values())
-
-    _write_json(args.map_file, mapping)
-    _write_json(args.metrics_file, _project_metrics(
-        args.source_root, args.output_dir, relative_files, entries
-    ))
-    if args.file_map_dir is not None:
-        _write_project_file_maps(mapping, args.file_map_dir)
+    with tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t035-") as temporary:
+        staging_root = Path(temporary)
+        staging_gate = staging_root / "gate"
+        for relative_file in files:
+            source = (args.source_root / relative_file).read_bytes()
+            _write_bytes(
+                staging_gate / relative_file,
+                _apply_edits(source, edits_by_file.get(relative_file, [])),
+            )
+        _write_bytes(staging_gate / args.filelist.name, args.filelist.read_bytes())
+        metrics = _project_metrics(args.source_root, staging_gate, files, entries)
+        staging_mapping = staging_root / "mapping.json"
+        staging_metrics = staging_root / "metrics.json"
+        project._write_json_atomic(staging_mapping, mapping)
+        project._write_json_atomic(staging_metrics, metrics)
+        artifacts: list[tuple[Path, Path]] = [
+            (staging_gate, args.output_dir),
+            (staging_mapping, args.map_file),
+            (staging_metrics, args.metrics_file),
+        ]
+        if args.file_map_dir is not None:
+            staging_maps = staging_root / "maps"
+            staging_maps.mkdir(parents=True, exist_ok=True)
+            _write_project_file_maps(mapping, staging_maps)
+            artifacts.append((staging_maps, args.file_map_dir))
+        _publish_project_root_artifacts(artifacts)
     return {
-        "files": len(relative_files),
+        "files": len(files),
         "mapping_entries": len(entries),
-        "modified_tokens": modified_tokens,
+        "modified_tokens": sum(len(_entry_ranges(entry)) for entry in entries),
     }
+
+
+def _encrypt_filelist_project(args: argparse.Namespace) -> dict[str, int]:
+    selection = category_profile.resolve(
+        args.category or (), mode=category_profile.MODE_FILELIST
+    )
+    if selection.is_manual:
+        return _encrypt_filelist_manual_v4(args, selection)
+    return _encrypt_filelist_default_legacy(args, selection)
 
 
 def _debug_encrypt_filelist_project(args: argparse.Namespace) -> dict[str, Any]:
@@ -571,23 +956,11 @@ def _debug_encrypt_filelist_project(args: argparse.Namespace) -> dict[str, Any]:
 def _canonical_project_selection(
     requested: list[str] | None,
 ) -> tuple[list[str], list[str]]:
-    requested_set = set(
-        _PROJECT_ROOT_DEFAULT_GROUP_NAMES
-        if requested is None
-        else requested
+    selection = category_profile.resolve(
+        requested or (), mode=category_profile.MODE_PROJECT_ROOT
     )
-    selected_groups = [
-        group
-        for group in _PROJECT_ROOT_SELECTION_GROUP_NAMES
-        if group in requested_set
-    ]
-    selected_categories = [
-        category
-        for group, categories in _PROJECT_ROOT_SELECTION_GROUPS
-        if group in requested_set
-        for category in categories
-    ]
-    return selected_groups, selected_categories
+    selected = list(selection.selected_categories)
+    return selected, selected
 
 
 def _project_manifest(root: Path, files: list[str]) -> str:
@@ -634,6 +1007,51 @@ def _project_mapping_entries(
         )
     )
     return entries
+
+
+def _legacy_profile_report(
+    report: dict[str, Any], selection: category_profile.ProfileSelection
+) -> dict[str, Any]:
+    """Project v3 compatibility view filtered through the T035 classifier."""
+
+    filtered = dict(report)
+    inventory_view = dict(report["inventory"])
+    classification = report.get("classification", {})
+    eligible: list[dict[str, Any]] = []
+    preserved: list[dict[str, Any]] = []
+    selected = set(selection.selected_categories)
+
+    def convert(item: dict[str, Any], reason: str | None) -> dict[str, Any]:
+        return {
+            "category": item["category"],
+            "scope": item["scope"],
+            "name": item["name"],
+            "declaration": item["declaration"],
+            "references": item["references"],
+            "occurrences": item["occurrences"],
+            "reason": reason,
+        }
+
+    for item in classification.get("default_profile", {}).get("items", []):
+        if item["category"] not in selected:
+            continue
+        reason = item.get("reason")
+        (preserved if reason is not None else eligible).append(convert(item, reason))
+    for item in classification.get("top_abi_preserved", {}).get("items", []):
+        preserved.append(convert(item, item.get("reason") or "top_abi"))
+    preserved.sort(
+        key=lambda item: (
+            item["category"],
+            item["scope"],
+            item["declaration"]["file"] if item["declaration"] else "\uffff",
+            item["declaration"]["start"] if item["declaration"] else 2**63,
+            item["name"],
+        )
+    )
+    inventory_view["eligible"] = eligible
+    inventory_view["preserved"] = preserved
+    filtered["inventory"] = inventory_view
+    return filtered
 
 
 def _gate_scope(entry: dict[str, Any], entries: list[dict[str, Any]]) -> str:
@@ -796,6 +1214,87 @@ def _project_root_metrics(
     return metrics
 
 
+def _encrypt_project_root_manual_v4(
+    args: argparse.Namespace,
+    selection: category_profile.ProfileSelection,
+) -> dict[str, int]:
+    report, _, success = project.analyze_project(
+        project_root=args.project_root,
+        top=args.top,
+        include_dirs=args.include_dirs,
+        defines=args.defines,
+        categories=selection.requested_categories,
+    )
+    if not success:
+        raise ValueError(report["diagnostics"][0]["code"])
+    files = list(report["reachable"]["files"])
+    manual_inventory = dict(report["inventory"])
+    manual_inventory["classification"] = report.get("classification", {})
+    mapping = _build_v4_mapping(
+        mode=category_profile.MODE_PROJECT_ROOT,
+        selection=selection,
+        report=report,
+        inventory_report=manual_inventory,
+        source_root=args.project_root.resolve(),
+        files=files,
+        closure_files=set(files),
+        name_length=args.name_length,
+    )
+    edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
+    for entry in mapping["entries"]:
+        for record in _entry_ranges(entry):
+            edits_by_file.setdefault(record["file"], []).append(
+                (record, entry["original_name"], entry["renamed_name"])
+            )
+
+    with tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t035-") as temporary:
+        staging_root = Path(temporary)
+        staging_gate = staging_root / "gate"
+        for relative_file in files:
+            source = (args.project_root / relative_file).read_bytes()
+            _write_bytes(
+                staging_gate / relative_file,
+                _apply_edits(source, edits_by_file.get(relative_file, [])),
+            )
+        _write_bytes(
+            staging_gate / "design.f",
+            "".join(f"{relative_file}\n" for relative_file in report["compile"]["compile_order"]).encode(),
+        )
+        gate_report, _, gate_success = project.analyze_project(
+            project_root=staging_gate,
+            top=args.top,
+            include_dirs=mapping["compile_context"]["include_dirs"],
+            defines=mapping["compile_context"]["defines"],
+            categories=selection.requested_categories,
+        )
+        if not gate_success:
+            raise ValueError("MAPPING_V4_GATE_ANALYSIS_FAILED")
+        _audit_v4_gate(mapping, gate_report, staging_gate)
+        mapping["gate_manifest_sha256"] = _project_manifest(staging_gate, files)
+        metrics = _project_metrics(args.project_root, staging_gate, files, mapping["entries"])
+        staging_mapping = staging_root / "mapping.json"
+        staging_metrics = staging_root / "metrics.json"
+        project._write_json_atomic(staging_mapping, mapping)
+        project._write_json_atomic(staging_metrics, metrics)
+        artifacts: list[tuple[Path, Path]] = [
+            (staging_gate, args.output_dir),
+            (staging_mapping, args.map_file),
+            (staging_metrics, args.metrics_file),
+        ]
+        if args.file_map_dir is not None:
+            staging_maps = staging_root / "maps"
+            staging_maps.mkdir(parents=True, exist_ok=True)
+            _write_project_file_maps(mapping, staging_maps, include_empty=False)
+            artifacts.append((staging_maps, args.file_map_dir))
+        _publish_project_root_artifacts(artifacts)
+
+    return {
+        "files": len(files),
+        "mapping_entries": len(mapping["entries"]),
+        "modified_tokens": sum(entry["occurrences"] for entry in mapping["entries"]),
+    }
+
+
 def _build_project_root_mapping(
     *,
     report: dict[str, Any],
@@ -897,6 +1396,11 @@ def _publish_project_root_artifacts(
 
 
 def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
+    selection = category_profile.resolve(
+        args.category or (), mode=category_profile.MODE_PROJECT_ROOT
+    )
+    if selection.is_manual:
+        return _encrypt_project_root_manual_v4(args, selection)
     selected_groups, selected_categories = _canonical_project_selection(args.category)
     report, _, success = project.analyze_project(
         project_root=args.project_root,
@@ -907,6 +1411,7 @@ def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
     )
     if not success:
         raise ValueError(report["diagnostics"][0]["code"])
+    report = _legacy_profile_report(report, selection)
     mapping = _build_project_root_mapping(
         report=report,
         source_root=args.project_root.resolve(),
@@ -943,7 +1448,11 @@ def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
             categories=selected_groups,
         )
         if not gate_success:
-            raise ValueError("gate strict project analysis failed")
+            raise ValueError(
+                "gate strict project analysis failed: "
+                + str(gate_report.get("diagnostics", []))
+            )
+        gate_report = _legacy_profile_report(gate_report, selection)
         _audit_gate_report(mapping, gate_report)
         mapping["gate_manifest_sha256"] = _project_manifest(
             staging_gate, mapping["files"]
@@ -987,7 +1496,7 @@ def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
 
 def _debug_encrypt_project_root(args: argparse.Namespace) -> dict[str, Any]:
     runs: list[dict[str, Any]] = []
-    for group in _PROJECT_ROOT_GROUP_NAMES:
+    for group in category_profile.DEFAULT_CATEGORIES:
         category_root = args.debug_dir / group
         summary = _encrypt_project_root(
             argparse.Namespace(
@@ -1447,7 +1956,10 @@ def _validate_project_root_mapping(mapping: Any) -> dict[str, Any]:
             "reason",
         }:
             raise ValueError("invalid mapping v3 preserved entry")
-        if item["category"] not in selected_categories:
+        if item["category"] not in selected_categories and not (
+            isinstance(item.get("reason"), str)
+            and item["reason"].startswith("top_")
+        ):
             raise ValueError("preserved category was not selected")
         if not isinstance(item["references"], list) or not isinstance(
             item["reason"], str
@@ -1560,6 +2072,236 @@ def _decrypt_project_root(
     }
 
 
+def _validate_mapping_v4(mapping: Any) -> dict[str, Any]:
+    required = {
+        "version",
+        "mode",
+        "profile",
+        "top",
+        "requested_categories",
+        "selected_categories",
+        "files",
+        "source_files",
+        "header_files",
+        "closure",
+        "compile_context",
+        "entries",
+        "preserved",
+        "skipped",
+        "name_length",
+        "input_manifest_sha256",
+        "gate_manifest_sha256",
+    }
+    if not isinstance(mapping, dict) or set(mapping) != required:
+        raise ValueError("invalid mapping v4 schema")
+    if mapping["version"] != 4 or mapping["mode"] not in {
+        category_profile.MODE_FILELIST,
+        category_profile.MODE_PROJECT_ROOT,
+    }:
+        raise ValueError("unsupported mapping v4 version or mode")
+    if mapping["profile"] not in {
+        category_profile.PROFILE_SINGLE_MODULE,
+        category_profile.PROFILE_MANUAL,
+    }:
+        raise ValueError("invalid mapping v4 profile")
+    if not isinstance(mapping["top"], str) or not mapping["top"]:
+        raise ValueError("invalid mapping v4 top")
+    if not isinstance(mapping["requested_categories"], list) or not all(
+        isinstance(item, str) for item in mapping["requested_categories"]
+    ):
+        raise ValueError("invalid mapping v4 requested categories")
+    try:
+        selection = category_profile.resolve(
+            mapping["requested_categories"], mode=mapping["mode"]
+        )
+    except category_profile.ProfileResolutionError as error:
+        raise ValueError(str(error)) from error
+    if mapping["selected_categories"] != list(selection.selected_categories):
+        raise ValueError("mapping v4 categories are not canonical")
+    if mapping["profile"] != selection.profile:
+        raise ValueError("mapping v4 profile does not match categories")
+
+    name_length = mapping["name_length"]
+    if not isinstance(name_length, int) or isinstance(name_length, bool) or name_length < 4:
+        raise ValueError("invalid mapping v4 name length")
+    files = mapping["files"]
+    if not isinstance(files, list) or not files or len(files) != len(set(files)):
+        raise ValueError("invalid mapping v4 files")
+    if not all(
+        isinstance(path, str)
+        and path
+        and not Path(path).is_absolute()
+        and ".." not in Path(path).parts
+        and Path(path).as_posix() == path
+        for path in files
+    ):
+        raise ValueError("invalid mapping v4 file path")
+    if mapping["source_files"] != [path for path in files if path.endswith(".sv")]:
+        raise ValueError("invalid mapping v4 source files")
+    if mapping["header_files"] != [path for path in files if path.endswith(".svh")]:
+        raise ValueError("invalid mapping v4 header files")
+    closure = mapping["closure"]
+    if not isinstance(closure, dict) or set(closure) != {
+        "policy", "modules", "interfaces", "files"
+    }:
+        raise ValueError("invalid mapping v4 closure")
+    expected_policy = "filelist_bounded" if mapping["mode"] == category_profile.MODE_FILELIST else "project_discovered"
+    if closure["policy"] != expected_policy:
+        raise ValueError("invalid mapping v4 closure policy")
+    if not isinstance(closure["files"], list) or closure["files"] != sorted(set(closure["files"])):
+        raise ValueError("invalid mapping v4 closure files")
+    if not set(closure["files"]).issubset(set(files)):
+        raise ValueError("mapping v4 closure is outside files")
+    if mapping["mode"] == category_profile.MODE_PROJECT_ROOT and closure["files"] != sorted(files):
+        raise ValueError("project-root mapping v4 closure must cover files")
+    if not isinstance(closure["modules"], list) or closure["modules"] != sorted(set(closure["modules"])):
+        raise ValueError("invalid mapping v4 closure modules")
+    if not isinstance(closure["interfaces"], list) or closure["interfaces"] != sorted(set(closure["interfaces"])):
+        raise ValueError("invalid mapping v4 closure interfaces")
+    compile_context = mapping["compile_context"]
+    if not isinstance(compile_context, dict) or set(compile_context) != {
+        "compilation_unit", "include_dirs", "defines", "compile_order"
+    }:
+        raise ValueError("invalid mapping v4 compile context")
+    if not isinstance(compile_context["include_dirs"], list) or not isinstance(compile_context["defines"], list) or not isinstance(compile_context["compile_order"], list):
+        raise ValueError("invalid mapping v4 compile context values")
+    for field in ("input_manifest_sha256", "gate_manifest_sha256"):
+        if not isinstance(mapping[field], str) or re.fullmatch(r"[0-9a-f]{64}", mapping[field]) is None:
+            raise ValueError("invalid mapping v4 manifest hash")
+
+    entry_ranges: set[tuple[str, int, int]] = set()
+    ranges_by_file: dict[str, list[tuple[int, int]]] = {}
+    renamed_names: set[str] = set()
+    original_names: set[str] = set()
+
+    def validate_item(item: Any, *, entry: bool) -> None:
+        fields = (
+            {"category", "scope", "original_name", "renamed_name", "declaration", "references", "occurrences"}
+            if entry
+            else {"category", "scope", "name", "declaration", "references", "occurrences", "reason"}
+        )
+        if not isinstance(item, dict) or set(item) != fields:
+            raise ValueError("invalid mapping v4 entry")
+        name = item["original_name"] if entry else item["name"]
+        if (
+            (
+                item["category"] not in selection.selected_categories
+                and not (
+                    not entry
+                    and isinstance(item.get("reason"), str)
+                    and item["reason"].startswith("top_")
+                )
+            )
+            or not isinstance(item["scope"], str)
+            or not isinstance(name, str)
+        ):
+            raise ValueError("invalid mapping v4 item identity")
+        if (
+            not isinstance(item["references"], list)
+            or not isinstance(item["occurrences"], int)
+            or isinstance(item["occurrences"], bool)
+            or item["occurrences"] < 0
+        ):
+            raise ValueError("invalid mapping v4 item occurrences")
+        declaration = item["declaration"]
+        records = ([] if declaration is None else [declaration]) + item["references"]
+        if item["occurrences"] != len(records):
+            raise ValueError("mapping v4 occurrence count mismatch")
+        width = len(name.encode())
+        for record in records:
+            _validate_range_record(record, set(files))
+            if record["end"] - record["start"] != width:
+                raise ValueError("mapping v4 range width mismatch")
+            key = (record["file"], record["start"], record["end"])
+            if key in entry_ranges:
+                raise ValueError("MAPPING_V4_DUPLICATE_RANGE")
+            entry_ranges.add(key)
+            ranges_by_file.setdefault(record["file"], []).append((record["start"], record["end"]))
+        if entry:
+            renamed = item["renamed_name"]
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", renamed) is None or len(renamed) != name_length or renamed in renamed_names or renamed in inventory._SYSTEMVERILOG_KEYWORDS:
+                raise ValueError("invalid mapping v4 renamed identifier")
+            renamed_names.add(renamed)
+            original_names.add(name)
+        else:
+            if not isinstance(item["reason"], str) or not item["reason"]:
+                raise ValueError("invalid mapping v4 preserved reason")
+
+    for item in mapping["entries"]:
+        validate_item(item, entry=True)
+    for item in mapping["preserved"]:
+        validate_item(item, entry=False)
+    if renamed_names & original_names:
+        raise ValueError("mapping v4 renamed name collides with original name")
+    for ranges in ranges_by_file.values():
+        ordered = sorted(ranges)
+        if any(current_start < previous_end for (_, previous_end), (current_start, _) in zip(ordered, ordered[1:])):
+            raise ValueError("MAPPING_V4_OVERLAPPING_RANGE")
+    if mapping["entries"] != sorted(
+        mapping["entries"],
+        key=lambda item: (item["declaration"]["file"], item["declaration"]["start"], item["category"], item["scope"], item["original_name"]),
+    ):
+        raise ValueError("mapping v4 entries are not sorted")
+    if mapping["preserved"] != sorted(
+        mapping["preserved"],
+        key=lambda item: (item["declaration"]["file"] if item["declaration"] else "\uffff", item["declaration"]["start"] if item["declaration"] else 2**63, item["category"], item["scope"], item["name"]),
+    ):
+        raise ValueError("mapping v4 preserved entries are not sorted")
+    skipped = mapping["skipped"]
+    if not isinstance(skipped, list):
+        raise ValueError("invalid mapping v4 skipped inventory")
+    skipped_files = set(mapping["files"])
+    for item in skipped:
+        if not isinstance(item, dict) or set(item) != {
+            "file", "reason", "declaration", "references", "occurrences"
+        }:
+            raise ValueError("invalid mapping v4 skipped entry")
+        if (
+            not isinstance(item["file"], str)
+            or item["file"] not in skipped_files
+            or not isinstance(item["reason"], str)
+            or not item["reason"]
+            or item["declaration"] is not None
+            or item["references"] != []
+            or item["occurrences"] != 0
+        ):
+            raise ValueError("invalid mapping v4 skipped entry")
+    if skipped != sorted(skipped, key=lambda item: (item["file"], item["reason"])):
+        raise ValueError("mapping v4 skipped entries are not sorted")
+    return mapping
+
+
+def _decrypt_project_v4(
+    args: argparse.Namespace, mapping: dict[str, Any]
+) -> dict[str, int]:
+    mapping = _validate_mapping_v4(mapping)
+    if _project_manifest(args.gate_dir, mapping["files"]) != mapping["gate_manifest_sha256"]:
+        raise ValueError("mapping v4 gate manifest does not match gate")
+    _validate_mapping_ranges_against_gate(mapping, args.gate_dir)
+    edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
+    for entry in mapping["entries"]:
+        source_records = [entry["declaration"], *entry["references"]]
+        gate_records = _expected_gate_ranges(source_records, entry["renamed_name"], _entry_edits_by_file(mapping["entries"]))
+        for record in gate_records:
+            edits_by_file.setdefault(record["file"], []).append((record, entry["renamed_name"], entry["original_name"]))
+
+    with tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t035-decrypt-") as temporary:
+        staging = Path(temporary) / "restored"
+        for relative_file in mapping["files"]:
+            gate = (args.gate_dir / relative_file).read_bytes()
+            _write_bytes(staging / relative_file, _apply_edits(gate, edits_by_file.get(relative_file, [])))
+        if args.source_root is not None and _project_manifest(args.source_root, mapping["files"]) != mapping["input_manifest_sha256"]:
+            raise ValueError("mapping v4 input manifest does not match source root")
+        if args.source_root is not None and _project_manifest(staging, mapping["files"]) != _project_manifest(args.source_root, mapping["files"]):
+            raise ValueError("mapping v4 restored manifest does not match source root")
+        _publish_project_root_artifacts([(staging, args.output_dir)])
+    return {
+        "files": len(mapping["files"]),
+        "mapping_entries": len(mapping["entries"]),
+        "modified_tokens": sum(entry["occurrences"] for entry in mapping["entries"]),
+    }
+
+
 def _validate_project_gate(
     mapping: dict[str, Any], gate_dir: Path
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1577,6 +2319,10 @@ def _validate_project_gate(
     )
     if not success:
         raise ValueError("gate strict project analysis failed")
+    selection = category_profile.resolve(
+        mapping["selected_groups"], mode=category_profile.MODE_PROJECT_ROOT
+    )
+    gate_report = _legacy_profile_report(gate_report, selection)
     _audit_gate_report(mapping, gate_report)
     return mapping, gate_report
 
@@ -1602,6 +2348,8 @@ def _formal_align(args: argparse.Namespace) -> dict[str, Any]:
 def _decrypt_project(args: argparse.Namespace) -> dict[str, int]:
     with args.map_file.open(encoding="utf-8") as stream:
         mapping = json.load(stream)
+    if isinstance(mapping, dict) and mapping.get("version") == 4:
+        return _decrypt_project_v4(args, mapping)
     if isinstance(mapping, dict) and mapping.get("version") == 3:
         return _decrypt_project_root(args, mapping)
     return _decrypt_filelist_project(args, mapping)
@@ -1770,14 +2518,12 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
         if has_project_root:
             if args.source_root is not None:
                 parser.error("--source-root cannot be used with --project-root")
-            if any(
-                category not in _PROJECT_ROOT_SELECTION_GROUP_NAMES
-                for category in (args.category or [])
-            ):
-                parser.error(
-                    "project-root categories are signals, ports, instances, struct, interface, "
-                    "enum_values, genvars, functions, tasks, arguments, generate_blocks, typedefs, union_fields, parameters"
+            try:
+                category_profile.resolve(
+                    args.category or (), mode=category_profile.MODE_PROJECT_ROOT
                 )
+            except category_profile.ProfileResolutionError as error:
+                parser.error(str(error))
             conflicts = []
             if args.debug_dir is not None:
                 for option, value in (
@@ -1805,7 +2551,11 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
         else:
             if args.debug_dir is None:
                 try:
-                    inventory._expand_default_profile(args.category or [])
+                    category_profile.resolve(
+                        args.category or (), mode=category_profile.MODE_FILELIST
+                    )
+                except category_profile.ProfileResolutionError as error:
+                    parser.error(str(error))
                 except ValueError as error:
                     parser.error(str(error))
             if args.source_root is None:
@@ -1815,8 +2565,10 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
     elif args.operation == "encrypt":
         if args.debug_dir is None:
             try:
-                inventory._expand_default_profile(args.category or [])
-            except ValueError as error:
+                category_profile.resolve(
+                    args.category or (), mode=category_profile.MODE_SINGLE_FILE
+                )
+            except (ValueError, category_profile.ProfileResolutionError) as error:
                 parser.error(str(error))
     elif args.operation == "decrypt-project":
         try:
@@ -1829,7 +2581,7 @@ def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Na
                     version = json.load(stream).get("version")
             except (OSError, ValueError, AttributeError):
                 version = None
-            if version != 3:
+            if version not in (3, 4):
                 parser.error("--source-root is required for mapping v2")
     elif args.operation == "formal-view":
         try:
@@ -2000,20 +2752,9 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         choices=(
-            "signals",
-            "ports",
-            "instances",
-            "struct",
-            "interface",
-            "enum_values",
-            "genvars",
-            "functions",
-            "tasks",
-            "arguments",
-            "generate_blocks",
-            "typedefs",
-            "union_fields",
-            "parameters",
+            *category_profile.CANONICAL_CATEGORIES,
+            *category_profile.ALIASES,
+            "all",
         ),
         dest="categories",
     )

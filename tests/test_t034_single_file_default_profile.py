@@ -397,7 +397,7 @@ class SingleFileDefaultProfileTests(unittest.TestCase):
             self.assertEqual(summary["category_count"], 13)
             self.assertEqual([item["category"] for item in summary["runs"]], list(DEFAULT_CATEGORIES))
 
-        for mode in ("single", "filelist"):
+        for mode in ("single",):
             for category in REQUIRES_PROJECT_ROOT:
                 with self.subTest(mode=mode, category=category), TemporaryDirectory(prefix="rtl-obfuscation-t034-reject-") as temporary:
                     root = Path(temporary)
@@ -488,9 +488,17 @@ class SingleFileDefaultProfileTests(unittest.TestCase):
                     ]
                 arguments.extend(("--category", "all", "--category", "ports", "--name-length", "8"))
                 completed = self._run(*arguments)
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", completed.stderr)
-                self.assertEqual(completed.stdout, "")
+                if mode == "single":
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", completed.stderr)
+                    self.assertEqual(completed.stdout, "")
+                else:
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(json.loads(completed.stdout)["files"], 3)
+                    self.assertEqual(
+                        json.loads((root / "mapping.json").read_text())["version"],
+                        4,
+                    )
 
 
 if __name__ == "__main__":

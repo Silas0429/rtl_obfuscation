@@ -12,7 +12,7 @@ import unittest
 
 CATEGORIES = {
     "signals": (14, 67),
-    "parameters": (9, 51),
+    "parameters": (6, 43),
     "enum_values": (3, 6),
     "genvars": (2, 10),
     "functions": (2, 7),
@@ -88,8 +88,8 @@ class ExampleFifoProjectTest(unittest.TestCase):
             self.assertEqual(full.returncode, 0, full.stderr)
             self.assertEqual(json.loads(full.stdout), {
                 "files": 4,
-                "mapping_entries": 47,
-                "modified_tokens": 178,
+                "mapping_entries": 44,
+                "modified_tokens": 170,
             })
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
             self.assertEqual(mapping["version"], 2)
@@ -152,7 +152,7 @@ class ExampleFifoProjectTest(unittest.TestCase):
             metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
             self.assertEqual(metrics["symbols"]["coverage"], 1.0)
             self.assertEqual(metrics["occurrences"], {
-                "renamed": 178, "eligible": 178, "coverage": 1.0,
+                "renamed": 170, "eligible": 170, "coverage": 1.0,
             })
             self.assertEqual(metrics["plaintext_leakage_rate"], 0.0)
             self.assertEqual(metrics["effective_coverage"], 1.0)

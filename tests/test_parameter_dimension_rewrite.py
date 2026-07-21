@@ -60,8 +60,6 @@ class ParameterDimensionRewriteTest(unittest.TestCase):
             self.assertEqual(set(entries), {
                 ("child", "WIDTH"),
                 ("child", "DEPTH"),
-                ("top", "WIDTH"),
-                ("top", "DEPTH"),
             })
 
             # Every mapped source range must contain the semantic original.
@@ -76,13 +74,11 @@ class ParameterDimensionRewriteTest(unittest.TestCase):
             # The named override's left side belongs to child, while the
             # right side is bound to top; positional values add no fake LHS.
             child_width = entries[("child", "WIDTH")]
-            top_width = entries[("top", "WIDTH")]
             child_width_ranges = [r["start"] for r in child_width["references"]]
-            top_width_ranges = [r["start"] for r in top_width["references"]]
             named_left = source.index(".WIDTH") + 1
             named_right = source.index("(WIDTH)") + 1
             self.assertIn(named_left, child_width_ranges)
-            self.assertIn(named_right, top_width_ranges)
+            self.assertNotIn(named_right, child_width_ranges)
             self.assertNotIn(source.index("16"), child_width_ranges)
 
             decrypt = subprocess.run(
@@ -168,32 +164,16 @@ endmodule
             self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
             self.assertEqual(json.loads(encrypt.stdout), {
                 "files": 1,
-                "mapping_entries": 1,
-                "modified_tokens": 1,
+                "mapping_entries": 0,
+                "modified_tokens": 0,
             })
 
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
-            self.assertEqual(len(mapping["entries"]), 1)
-            parameter = mapping["entries"][0]
-            self.assertEqual(parameter["original_name"], "DEPTH")
-            self.assertEqual(parameter["references"], [])
+            self.assertEqual(mapping["entries"], [])
 
             gate = gate_dir / "design.sv"
             gate_text = gate.read_text(encoding="utf-8")
-            self.assertIn(
-                "for (genvar DEPTH = 0; DEPTH < 2; DEPTH++)",
-                gate_text,
-            )
-            self.assertIn("logic [DEPTH:0] local_data;", gate_text)
-            self.assertIn(
-                "assign widths[DEPTH*2 +: 2] = $bits(local_data);",
-                gate_text,
-            )
-            self.assertNotEqual(parameter["renamed_name"], "DEPTH")
-            self.assertIn(
-                f"parameter int {parameter['renamed_name']} = 4",
-                gate_text,
-            )
+            self.assertEqual(gate_text, source)
 
             compilation = pyslang.ast.Compilation()
             compilation.addSyntaxTree(pyslang.syntax.SyntaxTree.fromFile(str(gate)))
@@ -218,10 +198,7 @@ endmodule
                 check=False,
             )
             self.assertEqual(formal.returncode, 0, formal.stderr)
-            self.assertEqual(
-                json.loads(formal.stdout)["formal_equivalence"],
-                "pass",
-            )
+            self.assertEqual(json.loads(formal.stdout)["formal_equivalence"], "pass")
 
 
 if __name__ == "__main__":

@@ -3,11 +3,11 @@
 本文件只记录当前交付范围之外的事项。已经实现的功能和使用方法见根目录
 [`README.md`](../README.md)，不要在本文件复制使用说明。
 
-当前状态校准：T030 已交付 project-root 的 13 个非-parameter 用户组；T031/T032 已交付
-module value parameter/localparam 的显式 inventory 和 rewrite。`parameters` 目前只能在
-project-root 普通模式通过 `--category parameters` 启用，仍不在五组默认 profile 和
-project-root debug 中；显式 filelist 采用 13 类默认 profile，6 个 multi/ABI category
-fail-closed，multi/ABI 改写继续由 project-root 手动 profile 承担。
+当前状态校准：T030 已交付低风险 category；T031/T032 已交付 module value
+parameter/localparam inventory 和 rewrite；T035 已统一两种多文件入口的 13 类 default profile
+和 19 类 manual profile。filelist manual profile 已在显式 filelist 内建立 bounded closure，
+旧 v1/v2/v3 mapping 继续只读解密兼容，manual workflow 使用 mapping v4；T035 实现与非 RISC
+回归已完成，等待 review。
 
 ## 1. 优先解决的问题
 
@@ -27,9 +27,9 @@ endmodule
 尚未支持对这类 ABI 做安全的重命名；当前 Icarus/Yosys 对该语法的前端支持也不足，Yosys 可能把
 `bus.data` 当作隐式信号，导致 formal 证明失去意义。
 
-当前规避方式：project-root 模式依靠 top ABI 闭包自动保留该 interface 的定义名、modport、member
-和 top port；显式 filelist 模式则不要启用 `interfaces`、`interface_ports`、`modports`。若同一
-interface 类型同时用于内部和顶层，应整体保留。
+当前规避方式：两种多文件模式依靠 top ABI 闭包自动保留该 interface 的定义名、modport、member
+和 top port；内部、非 top ABI 的 interface 对象可在 manual profile 中改写。若同一 interface
+类型同时用于内部和顶层，应整体保留其 top ABI 部分。
 
 推荐扩展：
 
@@ -70,16 +70,14 @@ parameter、parameter array/string/real/struct、`defparam`、复杂 hierarchica
 ## 3. 工程输入与外部 ABI
 
 当前 `inspect-project` 已支持 `project-root + top` 的递归发现、active include/宏依赖、top 闭包、
-严格编译和默认五组 AST inventory；普通模式还支持其余 8 个 T030 低风险用户组及显式
-`parameters`，`encrypt-project` 已能直接消费该闭包，生成 mapping v3、gate、metrics 和逐文件
-mapping，并由 `decrypt-project` 字节恢复。后续可扩展：
+严格编译和共享 13 类 AST inventory；`encrypt-project` 也支持两入口的 manual profile、mapping
+v4、gate audit、metrics 和逐文件 mapping，并由 `decrypt-project` 字节恢复。后续可扩展：
 
 - T033 已完成：冻结 `single_module`/`multi_module` impact、category ownership、共享 registry 和
   machine-readable oracle；
-- T034 已完成：统一单文件/filelist 默认 profile，filelist 只改列出文件中的 single-module 对象，
-  并对 multi/ABI category fail-closed；
-- T035：开放 project-root 手动 multi-module profile，接通跨 module parameter、module/port/interface
-  改写和 mapping v4 审计；
+- T034 已完成：统一单文件/filelist 默认 profile；
+- T035：两入口 manual multi-module/ABI profile、bounded closure、跨 module parameter、
+  module/port/interface 改写和 mapping v4 审计已完成；RISC-V-Vector Formal 不属于其常规验收；
 - T036：在 RISC-V-Vector `vector_top` 上集成并冻结 `v_int_alu` 等真实 parameter oracle，验证
   参数改写与现有 formal-view/formal-align 链路；
 - T037（条件任务）：在 T036 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，

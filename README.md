@@ -2,17 +2,18 @@
 
 本项目使用 PySlang 对 SystemVerilog 做语义分析，将可确认绑定关系的标识符随机重命名，
 同时输出可审计、可逆的 mapping。项目支持单文件、显式 filelist 多文件加密，以及
-`project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和默认五组对象加密；
-T031/T032 已为 project-root 增加 module parameter/localparam inventory 和显式 parameter
-rewrite。T034 已统一单文件/filelist 的 13 类默认 profile；filelist multi/ABI category
-以 `CATEGORY_REQUIRES_PROJECT_ROOT` fail-closed，project-root 仍通过手动 profile 处理这些类别。
+`project-root + top` 的自动工程发现、依赖闭包、严格编译、AST inventory 和 13 类 canonical
+默认 profile。T031/T032 已为 project-root 增加 module parameter/localparam inventory 和显式
+parameter rewrite；T035 统一了 filelist/project-root 的 default/manual profile、ownership 和
+bounded closure。filelist 手动 multi/ABI category 现在使用显式 `--top` 建立 bounded closure，
+单文件入口仍以 `CATEGORY_REQUIRES_PROJECT_ROOT` fail-closed。
 `rtl_samples/example_fifo/` 和 `rtl_samples/RISC-V-Vector/` 是当前完整交付样例。
 
-FIFO 在当前默认 filelist profile 下的固定验收结果为：4 个 `.sv` 文件、13 个 category、47 个重命名对象、
-178 个被改写 token，PySlang 前端和字节级解密恢复均通过。样例还展示了
+FIFO 在当前默认 filelist profile 下的固定验收结果为：4 个 `.sv` 文件、13 个 category、44 个重命名对象、
+170 个被改写 token，PySlang 前端和字节级解密恢复均通过。样例还展示了
 内部 interface signal bundle 和 packed struct 作为 function argument 的实际使用。
 RISC-V-Vector 的 `vector_top` 固定闭包为 19 个文件、17 个 module、1091 个对象和 5741 个
-identifier occurrences；严格 gate 重编译、mapping v3、逐字节解密以及 formal 正负例均纳入验收。
+identifier occurrences；其 formal-view/formal-align 和 Yosys formal 只在专门的 RISC 验收任务中执行。
 
 ## 1. 项目结构
 
@@ -70,13 +71,30 @@ Icarus 或正则表达式替代 PySlang 的符号绑定。
 conda run -n rtl_obfuscation python -c 'import pyslang; print("PySlang import OK")'
 ```
 
-运行完整回归：
+运行非 RISC 常规回归时必须使用显式测试清单，排除
+`tests.test_risc_v_vector_project_root`；不要用会自动发现该模块的 blanket discovery：
 
 ```sh
-conda run -n rtl_obfuscation python -m unittest discover -s tests -v
+conda run -n rtl_obfuscation python -m unittest \
+  tests.test_all_category_rewrite tests.test_debug_mode tests.test_enum_value_rewrite \
+  tests.test_example_fifo_project tests.test_formal_equivalence \
+  tests.test_genvar_rewrite tests.test_hierarchy_name_rewrite \
+  tests.test_interface_member_rewrite tests.test_interface_rewrite \
+  tests.test_localparam_rewrite tests.test_module_port_rewrite \
+  tests.test_multi_signal_rewrite tests.test_multifile_project \
+  tests.test_parameter_dimension_rewrite tests.test_project_regression \
+  tests.test_project_root_inspect tests.test_project_root_low_risk \
+  tests.test_project_root_parameter_rewrite tests.test_project_root_parameters \
+  tests.test_project_root_rewrite tests.test_signal_net_rewrite \
+  tests.test_struct_field_rewrite tests.test_struct_type_rewrite \
+  tests.test_subroutine_rewrite tests.test_supported_integration \
+  tests.test_t033_impact_category tests.test_t034_single_file_default_profile \
+  tests.test_t035_profile_unification tests.test_typedef_rewrite \
+  tests.test_union_field_rewrite tests.test_value_parameter_rewrite \
+  tests.test_variable_inventory tests.test_variable_ranges tests.test_variable_rewrite -v
 ```
 
-当前基线为 `Ran 109 tests`、`OK`。
+当前 T035 非 RISC 基线为 `Ran 106 tests`、`OK`。
 
 ## 3. 基本操作
 
@@ -92,12 +110,12 @@ conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 | 解密命令 | `decrypt` | `decrypt-project` | `decrypt-project` |
 | 输入 | `--input <file.sv>` | `--filelist <design.f>` + `--source-root <dir>` | `--project-root <dir>` + `--top <module>` |
 | PySlang 分析 | 单个 `.sv` | filelist 中全部 `.sv` | 自动发现依赖，只严格编译 top 闭包 |
-| Category 参数 | 一个底层 category 或 `all` | 普通模式必须显式选择 category；默认 profile 为 13 个底层 category，multi/ABI category 稳定拒绝 | 默认五组；可显式选择共 14 个用户组（含 `parameters`），但 debug 目前遍历 13 组 |
+| Category 参数 | 一个底层 category 或 `all` | 默认 profile 为 13 个 canonical category；手动 profile 支持 19 个 canonical category 与 `struct`/`interface` alias | 默认同一 13 类；手动 profile 支持同一套 19 类 |
 | Top | 不需要 | 必须提供，保留 top module 和普通 top ports | 必须提供，保留 top module、普通 top ports 和 top ABI |
 | Gate 输出 | 一个文件 | 镜像 filelist 文件 | 只镜像闭包文件并生成 `design.f` |
-| Mapping | version 1 | version 2 | version 3，含编译上下文、闭包和 manifest |
+| Mapping | version 1 | 默认兼容 version 2；手动 profile version 4 | 默认兼容 version 3；手动 profile version 4 |
 | Per-file mapping | 不需要 | 可选 | 可选；不生成无 occurrence 的 header 空映射 |
-| `--debug <dir>` | 独立运行 13 类 | 独立运行 13 个默认 category | 独立运行 13 个用户组（暂不含 `parameters`） |
+| `--debug <dir>` | 独立运行 13 类 | 独立运行 13 个默认 category | 独立运行 13 个默认 canonical category |
 | 适用场景 | 独立 module、最小复现 | 已有可靠 filelist 的工程 | 只知道工程根目录和 top 的工程 |
 
 只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用 filelist 或
@@ -105,7 +123,7 @@ conda run -n rtl_obfuscation python -m unittest discover -s tests -v
 
 ### 3.2 Category 选择
 
-`--category all` 只启用 13 个默认内部类别（单文件和显式 filelist 普通模式）：
+`--category all` 只启用以下 13 个默认 canonical category：
 
 ```text
 signals parameters enum_values genvars functions tasks arguments instances
@@ -118,20 +136,20 @@ generate_blocks typedefs struct_types struct_fields union_fields
 modules ports interfaces interface_instances interface_ports modports
 ```
 
-单文件模式只接受上述 13 类或 `all`。显式 filelist 的普通模式必须传入至少一个
-`--category`，默认 profile 支持 13 个底层 category；multi/ABI category 会以
-`CATEGORY_REQUIRES_PROJECT_ROOT` 稳定拒绝。filelist 的 `--debug <directory>` 从同一份 gold
-独立遍历 13 个默认 category；multi/ABI category 只能通过 project-root 手动 profile 验收。
+单文件模式只接受上述 13 类或 `all`；选择 multi/ABI category 会以
+`CATEGORY_REQUIRES_PROJECT_ROOT` 稳定拒绝。filelist 和 project-root 都接受 19 个 canonical
+category，以及 `struct`/`interface` alias；filelist 手动 profile 会在 filelist 内以 `--top`
+建立 bounded closure，closure 外文件只镜像并记录 `out_of_top_closure`。
 
-`project-root + top` 使用面向用户的概念组，不接受 `all` 或底层 category 名：
+`project-root + top` 使用共享 canonical registry，也接受 `all` 和 alias：
 
 | project-root 工作流 | 用户可选集合 | 当前实际行为 |
 | --- | --- | --- |
-| 普通模式省略 `--category` | `signals ports instances struct interface` | 默认五组 |
-| 普通模式显式选择 | 上述五组，加 `enum_values genvars functions tasks arguments generate_blocks typedefs union_fields parameters` | 共 14 个用户组；`parameters` 显式启用后进入 inventory/rewrite |
-| `--debug` | 同一套已交付的 13 个非-parameter 用户组 | 独立运行 13 组；当前不遍历 `parameters` |
+| 普通模式省略 `--category` 或选择 `all` | 13 个默认 canonical category | 自动发现 top closure |
+| 普通模式显式选择 | 19 个 canonical category 与两个 alias | 选择 multi/ABI 或 alias 时为 manual profile |
+| `--debug` | 13 个默认 canonical category | 独立运行 13 组 |
 
-project-root 普通模式仍可重复传入 `--category`；`struct` 展开为
+两种多文件入口都可重复传入 `--category`；`struct` 展开为
 `struct_types + struct_fields`，`interface` 展开为
 `interfaces + interface_instances + interface_ports + modports`。debug 时不再传
 `--category` 或普通模式的输出参数。
@@ -333,10 +351,9 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
 ### 3.9 `project-root + top` 自动工程流程
 
 `inspect-project` 从工程目录递归发现 `.sv/.svh`，唯一定位 top，解析 active include、宏和
-compilation-unit 类型依赖，只严格编译 top 闭包，并输出五个默认概念组的 AST inventory。
-T031/T032 另支持显式 `--category parameters`，收集并加密 reachable module value parameter/localparam 的
-声明、表达式、dimension、generate 和 named override ranges；该 inventory 能力已接受，
-parameter rewrite、strict gate、mapping v3、decrypt 和 formal 已接受：
+compilation-unit 类型依赖，只严格编译 top 闭包，并输出共享 13 个 canonical category 的 AST
+inventory。T035 还统一支持 19 个 canonical category、`struct`/`interface` alias、manual
+profile、top ABI preserved/skipped 清单和 mapping v4；旧 mapping v1/v2/v3 继续只读解密兼容：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
@@ -345,12 +362,12 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
   --report /tmp/fifo-project/inspect.json
 ```
 
-可重复使用 `--include-dir`、`--define NAME[=VALUE]` 和 project-root 用户组
-`signals|ports|instances|struct|interface|enum_values|genvars|functions|tasks|arguments|generate_blocks|typedefs|union_fields|parameters`。
-省略 category 时分析全部五组；
+可重复使用 `--include-dir`、`--define NAME[=VALUE]` 和共享 registry 中的 19 个 canonical
+category，另支持 `struct`/`interface` alias。省略 category 或选择 `all` 时分析 13 个默认类；
 `struct` 展开为 struct type/field，`interface` 展开为 interface definition/instance/member/
-modport。top ports 和 top ABI 类型默认进入 preserved 清单；省略 category 时 parameter 只参与
-elaboration；显式 `parameters` 时进入 T031 的 eligible/preserved inventory，并由 T032 加密。
+modport。top module、top ports、top parameter 和 top ABI 类型始终进入 preserved 清单；default
+profile 只改写 classification 标为 `single_module/internal` 的 parameter，manual profile 可在
+已确认 closure 内处理跨 module parameter override。
 
 成功时退出码为 0，报告包含候选文件、定义索引、include/macro 依赖、reachable modules/
 interfaces/files、严格编译诊断和精确 source ranges；同时提供独立的 classification section，
@@ -371,9 +388,10 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
   --name-length 8
 ```
 
-省略 `--category` 默认启用五组；该样例固定摘要为 4 files / 50 entries / 195 tokens。
-gate 只包含 top 闭包和生成的 `design.f`，mapping version 3 记录原/gate manifest、编译上下文、
-精确 ranges 和 preserved top ABI。解密不需要原工程路径：
+省略 `--category` 默认启用 13 个 canonical category；该 FIFO project-root 样例固定摘要为
+4 files / 38 entries / 127 tokens。gate 只包含 top 闭包和生成的 `design.f`，默认 mapping
+version 3 记录原/gate manifest、编译上下文、精确 ranges 和 preserved top ABI；manual profile
+使用 mapping version 4。解密不需要原工程路径：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
@@ -382,14 +400,18 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
   --output-dir /tmp/fifo-project/restored
 ```
 
-若只需某一组，可重复传入 `--category`；默认五组之外，还可以显式选择
-`enum_values`、`genvars`、`functions`、`tasks`、`arguments`、`generate_blocks`、`typedefs`、
-`union_fields` 和 `parameters`。debug 模式会从同一 gold 独立运行 13 个非-parameter 用户组。
+若只需某一组，可重复传入 `--category`；19 个 canonical category 均可显式选择，并可使用
+`struct`/`interface` alias。选择 multi/ABI category、alias 或混合 profile 后，改写范围限制在
+确认的 top closure 内；filelist closure 外文件只镜像并记录 `out_of_top_closure`。debug 模式会
+从同一 gold 独立运行 13 个默认 category。
 RISC-V-Vector/vector_top 的固定组合摘要为 19 files / 1091 entries / 5741 tokens，其中
 ports 为 348 entries / 1853 tokens；该 T029 固定组合未选择 `parameters`，因此 parameter、top
 module、top ports 和 top ABI 仍保持不变。
 
 ### 3.10 RISC-V-Vector `project-root + top` 完整流程
+
+本节是专门 RISC-V-Vector 验收任务的历史/专项流程，不属于 T035 常规 Formal 或非 RISC
+全量回归；T035 只保留 RISC closure inspect 证据。
 
 `rtl_samples/RISC-V-Vector/` 是一个真实的多文件 SystemVerilog 向量处理器 datapath 样例。
 以 `vector_top` 为 top 时，工程目录中有 56 个候选 `.sv/.svh` 文件，实际 top 闭包为 19 个文件、
@@ -528,9 +550,9 @@ conda run -n rtl_obfuscation python scripts/t029_acceptance.py --work-dir /tmp/r
 4. 随机名称长度由 `--name-length` 指定，最小为 4；名称避开关键字、已有 identifier 和
    本轮已分配名称。
 5. source edit 按字节区间从后向前应用，因此不同长度的新名称不会移动尚未处理的 gold range。
-6. 单文件 mapping 使用 version 1，filelist mapping 使用 version 2，project-root mapping 使用
-   version 3；per-file mapping 是全局 occurrence 的文件投影。
-7. version 3 解密先校验 manifest、range 宽度/边界和 gate AST occurrence，再逆向应用 mapping，
+6. 单文件 mapping 使用 version 1；多文件 default 保留 filelist v2/project-root v3 兼容表面，
+   manual profile 使用 version 4；per-file mapping 是全局 occurrence 的文件投影。
+7. v3/v4 解密先校验 manifest、range 宽度/边界和 gate AST occurrence，再逆向应用 mapping，
    不依赖原始名称的文本搜索。
 
 例如：
@@ -544,7 +566,9 @@ child #(.WIDTH(WIDTH)) u_child (...);
 
 ## 5. 验证加密结果
 
-加密命令成功只表示完成了改写，不表示 gate 已经可交付。至少执行 PySlang 和 Yosys。
+加密命令成功只表示完成了改写，不表示 gate 已经可交付。至少执行 PySlang 和 Yosys；T035
+常规验收只覆盖非 RISC fixture，RISC-V-Vector 的 `formal-view`/`formal-align`/Yosys 仅在
+专门 RISC 验收任务中执行。
 
 PySlang 检查 FIFO gate：
 
@@ -571,8 +595,9 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 
 当前可靠覆盖 module value parameter/localparam、普通 integral expression、packed/unpacked
 dimension、generate header、struct/interface member dimension 和可解析的 named parameter
-override。对于 project-root，必须显式传 `--category parameters`；省略 category 时 parameter
-只参与 elaboration，不进入 mapping：
+override。default profile 也包含 `parameters`，但只改写 `single_module/internal` 对象；top
+parameter、跨 module binding 和复杂边界进入 preserved/skipped。manual profile 才在确认 closure
+内处理跨 module parameter override：
 
 ```systemverilog
 module fifo #(parameter WIDTH=8, parameter DEPTH=16);

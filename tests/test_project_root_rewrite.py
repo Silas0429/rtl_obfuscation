@@ -23,27 +23,36 @@ GROUP_ORACLE = {
     "ports": (12, 37),
     "instances": (2, 2),
     "struct": (3, 13),
-    "interface": (8, 28),
+    "interface": (7, 21),
 }
-DEBUG_GROUPS = GROUPS + (
+DEBUG_GROUPS = (
+    "signals",
+    "parameters",
     "enum_values",
     "genvars",
     "functions",
     "tasks",
     "arguments",
+    "instances",
     "generate_blocks",
     "typedefs",
+    "struct_types",
+    "struct_fields",
     "union_fields",
 )
 DEBUG_ORACLE = {
-    **GROUP_ORACLE,
+    "signals": (7, 27),
+    "parameters": (0, 0),
     "enum_values": (0, 0),
     "genvars": (0, 0),
     "functions": (0, 0),
     "tasks": (0, 0),
     "arguments": (0, 0),
+    "instances": (2, 2),
     "generate_blocks": (0, 0),
     "typedefs": (0, 0),
+    "struct_types": (0, 0),
+    "struct_fields": (0, 0),
     "union_fields": (0, 0),
 }
 
@@ -106,7 +115,11 @@ class ProjectRootRewriteTests(unittest.TestCase):
             json.loads(completed.stdout),
             {"files": 6, "mapping_entries": entries, "modified_tokens": tokens},
         )
-        self.assertEqual(mapping["selected_groups"], [group])
+        if group in {"ports", "struct", "interface"}:
+            self.assertEqual(mapping["version"], 4)
+            self.assertEqual(mapping["profile"], "manual")
+        else:
+            self.assertEqual(mapping["selected_groups"], [group])
         self.assertEqual(len(mapping["entries"]), entries)
         self.assertEqual(sum(item["occurrences"] for item in mapping["entries"]), tokens)
         self.assertEqual(metrics["symbols"]["coverage"], 1.0)
@@ -141,43 +154,46 @@ class ProjectRootRewriteTests(unittest.TestCase):
     def test_integration_interface_group(self) -> None:
         self._assert_group("interface")
 
-    def test_integration_combined_mapping_v3_exact_oracle(self) -> None:
+    def test_integration_combined_mapping_v4_exact_oracle(self) -> None:
         root, completed, mapping, metrics = self._encrypt(file_maps=True)
         self.assertEqual(
             json.loads(completed.stdout),
-            {"files": 6, "mapping_entries": 32, "modified_tokens": 107},
+            {"files": 6, "mapping_entries": 31, "modified_tokens": 100},
         )
         self.assertEqual(
             list(mapping),
             [
                 "version",
                 "mode",
-                "name_length",
+                "profile",
                 "top",
-                "selected_groups",
+                "requested_categories",
                 "selected_categories",
                 "files",
                 "source_files",
                 "header_files",
-                "compile_context",
                 "closure",
-                "input_manifest_sha256",
-                "gate_manifest_sha256",
+                "compile_context",
                 "entries",
                 "preserved",
+                "skipped",
+                "name_length",
+                "input_manifest_sha256",
+                "gate_manifest_sha256",
             ],
         )
-        self.assertEqual(mapping["version"], 3)
+        self.assertEqual(mapping["version"], 4)
         self.assertEqual(mapping["mode"], "project-root")
-        self.assertEqual(mapping["selected_groups"], list(GROUPS))
+        self.assertEqual(mapping["profile"], "manual")
+        self.assertEqual(mapping["requested_categories"], list(GROUPS))
         self.assertEqual(
             mapping["selected_categories"],
             [
                 "signals",
-                "ports",
                 "instances",
                 "struct_types",
                 "struct_fields",
+                "ports",
                 "interfaces",
                 "interface_instances",
                 "interface_ports",
@@ -185,9 +201,15 @@ class ProjectRootRewriteTests(unittest.TestCase):
             ],
         )
         report, _, success = project.analyze_project(
-            project_root=INTEGRATION, top="project_top"
+            project_root=INTEGRATION, top="project_top", categories=GROUPS
         )
         self.assertTrue(success)
+        classification = report["classification"]
+        selected = set(mapping["selected_categories"])
+        classification_items = [
+            *classification["default_profile"]["items"],
+            *classification["manual_multi_module"]["items"],
+        ]
         expected = sorted(
             [
                 {
@@ -198,7 +220,8 @@ class ProjectRootRewriteTests(unittest.TestCase):
                     "references": item["references"],
                     "occurrences": item["occurrences"],
                 }
-                for item in report["inventory"]["eligible"]
+                for item in classification_items
+                if item["category"] in selected and item.get("reason") is None
             ],
             key=lambda item: (
                 item["declaration"]["file"],
@@ -213,20 +236,20 @@ class ProjectRootRewriteTests(unittest.TestCase):
             for item in mapping["entries"]
         ]
         self.assertEqual(actual, expected)
-        self.assertEqual(mapping["preserved"], report["inventory"]["preserved"])
+        self.assertEqual(len(mapping["preserved"]), 8)
         renamed = [item["renamed_name"] for item in mapping["entries"]]
         self.assertEqual(len(renamed), len(set(renamed)))
         self.assertTrue(all(len(name) == 8 for name in renamed))
         self.assertEqual(mapping["input_manifest_sha256"], self._manifest(INTEGRATION, mapping["files"]))
         self.assertEqual(mapping["gate_manifest_sha256"], self._manifest(root / "gate", mapping["files"]))
-        self.assertEqual(metrics["symbols"], {"renamed": 32, "eligible": 32, "coverage": 1.0})
-        self.assertEqual(metrics["occurrences"], {"renamed": 107, "eligible": 107, "coverage": 1.0})
+        self.assertEqual(metrics["symbols"], {"renamed": 31, "eligible": 31, "coverage": 1.0})
+        self.assertEqual(metrics["occurrences"], {"renamed": 100, "eligible": 100, "coverage": 1.0})
         occurrences = {
             (str(path.relative_to(root / "maps")), record["range"]["start"], record["range"]["end"])
             for path in (root / "maps").rglob("*.json")
             for record in json.loads(path.read_text())["entries"]
         }
-        self.assertEqual(len(occurrences), 107)
+        self.assertEqual(len(occurrences), 100)
         self.assertFalse((root / "maps" / "include" / "common.json").exists())
 
     def test_integration_gate_reinspect_matches_renamed_inventory(self) -> None:
@@ -239,11 +262,12 @@ class ProjectRootRewriteTests(unittest.TestCase):
             "project_top",
             "--report",
             str(root / "gate-report.json"),
+            *sum((["--category", group] for group in GROUPS), []),
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         report = json.loads((root / "gate-report.json").read_text())
-        self.assertEqual(len(report["inventory"]["eligible"]), 32)
-        self.assertEqual(sum(item["occurrences"] for item in report["inventory"]["eligible"]), 107)
+        self.assertEqual(len(report["inventory"]["eligible"]), 31)
+        self.assertEqual(sum(item["occurrences"] for item in report["inventory"]["eligible"]), 100)
         self.assertEqual(report["reachable"]["modules"], mapping["closure"]["modules"])
         self.assertEqual(len(report["reachable"]["interfaces"]), 1)
         self.assertEqual(report["compile"]["parse_errors"], 0)
@@ -261,7 +285,7 @@ class ProjectRootRewriteTests(unittest.TestCase):
             str(root / "restored"),
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), {"files": 6, "mapping_entries": 32, "modified_tokens": 107})
+        self.assertEqual(json.loads(completed.stdout), {"files": 6, "mapping_entries": 31, "modified_tokens": 100})
         self._assert_byte_identical(INTEGRATION, root / "restored", mapping["files"])
 
     def test_unreachable_same_file_module_unchanged_and_unrelated_absent(self) -> None:
@@ -286,6 +310,7 @@ class ProjectRootRewriteTests(unittest.TestCase):
         self.assertEqual(
             {(item["category"], item["name"], item["reason"]) for item in mapping["preserved"]},
             {
+                ("modules", "abi_top", "top_abi"),
                 ("ports", "packet_i", "top_port"),
                 ("ports", "bus", "top_port"),
                 ("ports", "result_o", "top_port"),
@@ -440,7 +465,7 @@ class ProjectRootRewriteTests(unittest.TestCase):
             self.assertTrue((category_root / "metrics.json").is_file())
             self.assertTrue((category_root / "maps").is_dir())
 
-    def test_fifo_filelist_multi_category_is_rejected(self) -> None:
+    def test_fifo_filelist_manual_category_is_bounded(self) -> None:
         root = self._temporary_root()
         completed = self._run(
             "encrypt-project", "--filelist", str(FIFO / "design.f"), "--source-root", str(FIFO),
@@ -448,31 +473,31 @@ class ProjectRootRewriteTests(unittest.TestCase):
             "--metrics", str(root / "metrics.json"), "--top", "fifo_top", "--name-length", "8",
             "--category", "ports",
         )
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", completed.stderr)
-        self.assertEqual(completed.stdout, "")
-        self.assertFalse((root / "gate").exists())
-        self.assertFalse((root / "mapping.json").exists())
-        self.assertFalse((root / "metrics.json").exists())
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        mapping = json.loads((root / "mapping.json").read_text())
+        self.assertEqual(mapping["version"], 4)
+        self.assertEqual(mapping["profile"], "manual")
+        self.assertEqual(mapping["closure"]["policy"], "filelist_bounded")
+        self.assertTrue((root / "gate").is_dir())
 
     def test_fifo_project_root_mapping_exact_oracle(self) -> None:
         root, completed, mapping, metrics = self._encrypt(FIFO, "fifo_top")
-        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 50, "modified_tokens": 195})
+        self.assertEqual(json.loads(completed.stdout), {"files": 4, "mapping_entries": 49, "modified_tokens": 180})
         counts = Counter((item["category"] for item in mapping["entries"]))
         tokens = Counter()
         for item in mapping["entries"]:
             tokens[item["category"]] += item["occurrences"]
         self.assertEqual(
             counts,
-            Counter({"signals": 14, "ports": 17, "instances": 2, "struct_types": 2, "struct_fields": 2, "interfaces": 1, "interface_instances": 1, "interface_ports": 9, "modports": 2}),
+            Counter({"signals": 14, "ports": 17, "instances": 2, "struct_types": 2, "struct_fields": 2, "interfaces": 1, "interface_ports": 9, "modports": 2}),
         )
         self.assertEqual(
             tokens,
-            Counter({"signals": 67, "ports": 59, "instances": 2, "struct_types": 5, "struct_fields": 4, "interfaces": 2, "interface_instances": 15, "interface_ports": 39, "modports": 2}),
+            Counter({"signals": 67, "ports": 59, "instances": 2, "struct_types": 5, "struct_fields": 4, "interfaces": 2, "interface_ports": 39, "modports": 2}),
         )
         self.assertEqual(mapping["compile_context"]["compile_order"], ["fifo_if.sv", "fifo_storage.sv", "fifo_ctrl.sv", "fifo_top.sv"])
-        self.assertEqual(metrics["symbols"], {"renamed": 50, "eligible": 50, "coverage": 1.0})
-        self.assertEqual(metrics["occurrences"], {"renamed": 195, "eligible": 195, "coverage": 1.0})
+        self.assertEqual(metrics["symbols"], {"renamed": 49, "eligible": 49, "coverage": 1.0})
+        self.assertEqual(metrics["occurrences"], {"renamed": 180, "eligible": 180, "coverage": 1.0})
         completed = self._run("decrypt-project", "--gate-dir", str(root / "gate"), "--map", str(root / "mapping.json"), "--output-dir", str(root / "restored"))
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_byte_identical(FIFO, root / "restored", mapping["files"])

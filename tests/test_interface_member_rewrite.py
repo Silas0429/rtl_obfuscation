@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import unittest
 
 
 class InterfaceMemberRewriteCliTest(unittest.TestCase):
-    def test_interface_member_categories_require_project_root(self) -> None:
+    def test_filelist_interface_member_categories_use_bounded_manual_profile(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         filelist = Path("tests/fixtures/t018_interface_member/design.f")
         source_root = Path("tests/fixtures/t018_interface_member")
@@ -53,12 +54,11 @@ class InterfaceMemberRewriteCliTest(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            self.assertEqual(encrypt.returncode, 2)
-            self.assertIn("CATEGORY_REQUIRES_PROJECT_ROOT", encrypt.stderr)
-            self.assertEqual(encrypt.stdout, "")
-            self.assertFalse(gate_dir.exists())
-            self.assertFalse(mapping_file.exists())
-            self.assertFalse(metrics_file.exists())
+            self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
+            mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
+            self.assertEqual(mapping["version"], 4)
+            self.assertEqual(mapping["profile"], "manual")
+            self.assertTrue(gate_dir.is_dir())
 
 
 if __name__ == "__main__":

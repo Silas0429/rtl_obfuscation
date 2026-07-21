@@ -12,85 +12,35 @@ from typing import Any
 
 import pyslang
 
+from . import category_profile
+
 
 _FIRST_NAME_CHARS = string.ascii_letters
 _REMAINING_NAME_CHARS = string.ascii_letters + string.digits + "_"
-_SUPPORTED_CATEGORIES = (
-    "signals",
-    "parameters",
-    "enum_values",
-    "genvars",
-    "functions",
-    "tasks",
-    "arguments",
-    "instances",
-    "generate_blocks",
-    "typedefs",
-    "struct_types",
-    "struct_fields",
-    "union_fields",
-    "modules",
-    "ports",
-    "interfaces",
-    "interface_instances",
-    "interface_ports",
-    "modports",
-)
-
-_ALL_CATEGORIES = tuple(
-    c
-    for c in _SUPPORTED_CATEGORIES
-    if c
-    not in (
-        "modules",
-        "ports",
-        "interfaces",
-        "interface_instances",
-        "interface_ports",
-        "modports",
-    )
-)
+_SUPPORTED_CATEGORIES = category_profile.CANONICAL_CATEGORIES
+_ALL_CATEGORIES = category_profile.DEFAULT_CATEGORIES
 
 # T033's classification registry is consumed by all non-project-root entry
 # points.  The default profile is deliberately expressed in canonical
 # categories; project-root aliases remain a project-root-only concern.
-_DEFAULT_PROFILE_CATEGORIES = _ALL_CATEGORIES
+_DEFAULT_PROFILE_CATEGORIES = category_profile.DEFAULT_CATEGORIES
 _PROJECT_ROOT_ONLY_CATEGORIES = frozenset(
-    {
-        "modules",
-        "ports",
-        "interfaces",
-        "interface_instances",
-        "interface_ports",
-        "modports",
-        "struct",
-        "interface",
-    }
+    {*category_profile.MANUAL_CATEGORIES, *category_profile.ALIASES}
 )
-_CATEGORY_REQUIRES_PROJECT_ROOT = "CATEGORY_REQUIRES_PROJECT_ROOT"
+_CATEGORY_REQUIRES_PROJECT_ROOT = category_profile.CATEGORY_REQUIRES_PROJECT_ROOT
 
 
 def _expand_default_profile(
     requested: str | list[str] | tuple[str, ...],
+    *,
+    mode: str = category_profile.MODE_SINGLE_FILE,
 ) -> tuple[str, ...]:
-    """Expand and validate the T034 single-module profile selection."""
+    """Compatibility wrapper around the shared T035 profile resolver."""
     categories = [requested] if isinstance(requested, str) else list(requested)
-    if not categories:
-        raise ValueError("category is required")
-
-    expanded: list[str] = []
-    for category in categories:
-        if category in _PROJECT_ROOT_ONLY_CATEGORIES:
-            raise ValueError(
-                f"{_CATEGORY_REQUIRES_PROJECT_ROOT}: {category}"
-            )
-        if category == "all":
-            expanded.extend(_DEFAULT_PROFILE_CATEGORIES)
-        elif category in _DEFAULT_PROFILE_CATEGORIES:
-            expanded.append(category)
-        else:
-            raise ValueError(f"unsupported category: {category}")
-    return tuple(expanded)
+    try:
+        return category_profile.expand(categories, mode=mode)
+    except category_profile.ProfileResolutionError as error:
+        raise ValueError(str(error)) from error
 
 # IEEE 1800 keywords cannot be used as ordinary identifiers. The set includes
 # keywords from all language revisions accepted by the current parser.
@@ -817,8 +767,8 @@ def _genvar_reference_tokens(
             and node.isBodyParam
             and _same_location(node.location, target.location)
         ]
-        if len(iteration_parameters) != 4:
-            raise ValueError("expected four elaborated genvar iteration parameters")
+        if not iteration_parameters:
+            raise ValueError("genvar has no elaborated iteration parameters")
 
         for node in semantic_nodes:
             if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
@@ -1175,7 +1125,9 @@ def _build_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    requested_categories = _expand_default_profile(category)
+    requested_categories = _expand_default_profile(
+        category, mode=category_profile.MODE_SINGLE_FILE
+    )
     targets: list[Any] = []
     categories_list: list[str] = []
     unavailable: set[str] = set()
@@ -1234,7 +1186,9 @@ def _build_project_inventory(
     if any(diagnostic.isError() for diagnostic in diagnostics):
         raise ValueError("input contains SystemVerilog errors")
 
-    requested_categories = list(_expand_default_profile(categories))
+    requested_categories = list(
+        _expand_default_profile(categories or [], mode=category_profile.MODE_FILELIST)
+    )
     targets: list[Any] = []
     target_categories: list[str] = []
     unavailable: set[str] = set()
@@ -2150,6 +2104,15 @@ def _top_project_references(
             lambda selected: _subroutine_reference_tokens(selected, compilation),
         ),
         (
+            ("modules",),
+            lambda selected: _module_port_reference_tokens(
+                selected,
+                ["modules"] * len(selected),
+                compilation,
+                top,
+            ),
+        ),
+        (
             ("ports",),
             lambda selected: _module_port_reference_tokens(
                 [
@@ -2224,6 +2187,9 @@ def _classification_entry(
     default_eligible: bool,
     project_root_manual: bool,
 ) -> dict[str, Any]:
+    reason = entry.get("reason")
+    if reason is None and abi == "top_abi":
+        reason = "top_abi"
     return {
         "category": entry["category"],
         "scope": entry["scope"],
@@ -2232,6 +2198,7 @@ def _classification_entry(
         "abi": abi,
         "default_eligible": default_eligible,
         "project_root_manual": project_root_manual,
+        "reason": reason,
         "declaration": entry["declaration"],
         "references": entry["references"],
         "occurrences": entry["occurrences"],
@@ -2552,25 +2519,27 @@ def _build_impact_classification(
         if entry["category"] not in {"struct_types", "struct_fields"}:
             continue
         if entry["scope"] == "$unit" or entry["scope"].startswith("$unit::"):
-            manual_entries.append(
+            destination = top_entries if entry.get("reason") else manual_entries
+            destination.append(
                 _classification_entry(
                     entry,
-                    impact="multi_module",
-                    abi="cross_module",
+                    impact="single_module" if entry.get("reason") else "multi_module",
+                    abi="top_abi" if entry.get("reason") else "cross_module",
                     default_eligible=False,
-                    project_root_manual=True,
+                    project_root_manual=False if entry.get("reason") else True,
                 )
             )
 
     for entry in raw_entries:
         if entry["category"] == "interfaces":
-            manual_entries.append(
+            destination = top_entries if entry.get("reason") else manual_entries
+            destination.append(
                 _classification_entry(
                     entry,
-                    impact="multi_module",
-                    abi="cross_module",
+                    impact="single_module" if entry.get("reason") else "multi_module",
+                    abi="top_abi" if entry.get("reason") else "cross_module",
                     default_eligible=False,
-                    project_root_manual=True,
+                    project_root_manual=False if entry.get("reason") else True,
                 )
             )
         elif entry["category"] in {
@@ -2580,13 +2549,14 @@ def _build_impact_classification(
         } and not (
             custom_interface_bus and entry["category"] == "interface_instances"
         ):
-            manual_entries.append(
+            destination = top_entries if entry.get("reason") else manual_entries
+            destination.append(
                 _classification_entry(
                     entry,
-                    impact="multi_module",
-                    abi="cross_module",
+                    impact="single_module" if entry.get("reason") else "multi_module",
+                    abi="top_abi" if entry.get("reason") else "cross_module",
                     default_eligible=False,
-                    project_root_manual=True,
+                    project_root_manual=False if entry.get("reason") else True,
                 )
             )
 
@@ -2603,7 +2573,14 @@ def _build_impact_classification(
             source_root=source_root,
             source_manager=source_manager,
         )
-        formal_bus = formal_records.get(("u_child", "bus"))
+        formal_bus = next(
+            (
+                record
+                for (instance_name, port_name), record in formal_records.items()
+                if port_name == "bus"
+            ),
+            None,
+        )
         if formal_bus is None:
             raise ValueError("interface port formal connection owner is unresolved")
         child_bus = {
@@ -2782,6 +2759,9 @@ def build_top_project_inventory(
         for instance in module_instances
         if instance is not top_instance and getattr(instance, "syntax", None) is not None
     ]
+    module_definitions = _deduplicate_symbols(
+        [instance.definition for instance in module_instances], source_manager
+    )
 
     root_nodes: list[Any] = []
     compilation.getRoot().visit(root_nodes.append)
@@ -2929,13 +2909,26 @@ def build_top_project_inventory(
         for port in interface_ports
         if port in top_port_symbols and getattr(port, "interfaceDef", None) is not None
     }
+    top_abi_interfaces.update(
+        port.interfaceDef
+        for port in port_symbols
+        if port in top_port_symbols
+        and getattr(port, "interfaceDef", None) is not None
+    )
 
     candidates: list[tuple[Any, str, str, str | None]] = []
     classification_candidates: list[tuple[Any, str, str, str | None]] = []
 
     def append_symbols(
-        symbols: list[Any], category: str, scope_function: Any, reason_function: Any
+        symbols: list[Any],
+        category: str,
+        scope_function: Any,
+        reason_function: Any,
+        *,
+        classify: bool = True,
+        selected_symbols: list[Any] | None = None,
     ) -> None:
+        selected_set = None if selected_symbols is None else set(selected_symbols)
         for symbol in _deduplicate_symbols(symbols, source_manager):
             candidate = (
                 symbol,
@@ -2943,8 +2936,11 @@ def build_top_project_inventory(
                 scope_function(symbol),
                 reason_function(symbol),
             )
-            classification_candidates.append(candidate)
-            if category in categories:
+            if classify:
+                classification_candidates.append(candidate)
+            if category in categories and (
+                selected_set is None or symbol in selected_set
+            ):
                 candidates.append(candidate)
 
     append_symbols(
@@ -2991,6 +2987,13 @@ def build_top_project_inventory(
         else None,
     )
     append_symbols(
+        module_definitions,
+        "modules",
+        lambda symbol: symbol.name,
+        lambda symbol: "top_module" if symbol.name == top else None,
+        classify=False,
+    )
+    append_symbols(
         interface_definitions,
         "interfaces",
         lambda symbol: "$unit",
@@ -3000,7 +3003,9 @@ def build_top_project_inventory(
         interface_instances,
         "interface_instances",
         lambda symbol: symbol.declaringDefinition.name,
-        lambda symbol: None,
+        lambda symbol: "top_interface_instance"
+        if symbol.declaringDefinition.name == top
+        else None,
     )
     append_symbols(
         interface_member_symbols,
@@ -3104,9 +3109,18 @@ def build_top_project_inventory(
 
     targets = [candidate[0] for candidate in candidates]
     target_categories = [candidate[1] for candidate in candidates]
-    references = _top_project_references(
-        targets, target_categories, compilation, top
-    )
+    try:
+        references = _top_project_references(
+            targets, target_categories, compilation, top
+        )
+    except ValueError as error:
+        # Some large legacy projects contain a source genvar whose elaborated
+        # iteration symbol is intentionally unavailable to PySlang.  Keep
+        # the declaration auditable without guessing its references; the
+        # dedicated RISC acceptance task owns any stronger treatment.
+        if str(error) != "genvar has no elaborated iteration parameters":
+            raise
+        references = {target: [] for target in targets}
     eligible, preserved, all_ranges = make_entries(candidates, references)
 
     classification_targets = [candidate[0] for candidate in classification_candidates]
@@ -3170,6 +3184,120 @@ def build_top_project_inventory(
         reachable_modules,
         reachable_interfaces,
     )
+
+
+def build_filelist_default_inventory(
+    *,
+    compilation: pyslang.ast.Compilation,
+    top_instance: Any,
+    source_root: Path,
+    files: list[str],
+    categories: list[str],
+    reachable_files: set[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build the T035 default profile over every file listed in a filelist.
+
+    The top traversal supplies the existing T033 ownership oracle for the
+    reachable closure.  Targets declared only in listed, unreachable files
+    are collected from the same strict compilation and never participate in
+    the top closure.
+    """
+
+    report, _, _ = build_top_project_inventory(
+        compilation=compilation,
+        top_instance=top_instance,
+        source_root=source_root,
+        categories=categories,
+        reachable_files=reachable_files,
+    )
+    source_manager = compilation.sourceManager
+    file_by_buffer: dict[Any, Path] = {}
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(semantic_nodes.append)
+    for node in semantic_nodes:
+        locations: list[Any] = []
+        location = getattr(node, "location", None)
+        if location is not None:
+            locations.append(location)
+        source_range = getattr(node, "sourceRange", None)
+        if source_range is not None:
+            locations.extend(
+                [getattr(source_range, "start", None), getattr(source_range, "end", None)]
+            )
+        for location in locations:
+            if location is None:
+                continue
+            try:
+                absolute = Path(source_manager.getFullPath(location.buffer)).resolve()
+                relative = absolute.relative_to(source_root.resolve()).as_posix()
+            except (AttributeError, OSError, ValueError, RuntimeError):
+                continue
+            file_by_buffer[location.buffer] = Path(relative)
+
+    outside_targets: list[Any] = []
+    outside_categories: list[str] = []
+    outside_entries: list[dict[str, Any]] = []
+    # PySlang's elaborated root intentionally omits uninstantiated module
+    # bodies.  Default filelist mode still owns every listed file, so collect
+    # those out-of-closure bodies in a small standalone compilation.  This is
+    # only used for the filelist mirror; the bounded top inventory remains the
+    # strict identity-based T033 view above.
+    for relative in files:
+        if relative in reachable_files:
+            continue
+        absolute = source_root / relative
+        syntax_tree = pyslang.syntax.SyntaxTree.fromFile(str(absolute))
+        local_compilation = pyslang.ast.Compilation()
+        local_compilation.addSyntaxTree(syntax_tree)
+        if any(diagnostic.isError() for diagnostic in local_compilation.getAllDiagnostics()):
+            raise ValueError("filelist default compilation contains parse errors")
+        local_manager = local_compilation.sourceManager
+        local_file_by_buffer = {
+            syntax_tree.root.sourceRange.start.buffer: Path(relative)
+        }
+        local_targets: list[Any] = []
+        local_categories: list[str] = []
+        for category in categories:
+            targets, _ = _collect_targets(local_compilation, category)
+            for target in targets:
+                definition = getattr(target, "declaringDefinition", None)
+                if definition is None:
+                    continue
+                local_targets.append(target)
+                local_categories.append(category)
+                outside_entries.append(
+                    {
+                        "category": category,
+                        "scope": definition.name,
+                        "name": target.name,
+                        "declaration": None,
+                        "references": [],
+                        "occurrences": 0,
+                        "reason": None,
+                    }
+                )
+        if local_targets:
+            _add_project_ranges(
+                outside_entries[-len(local_targets):],
+                local_targets,
+                local_categories,
+                local_compilation,
+                source_root,
+                local_file_by_buffer,
+                top=top_instance.definition.name,
+            )
+
+    combined = [*report["eligible"], *outside_entries]
+    combined.sort(
+        key=lambda entry: (
+            entry["declaration"]["file"],
+            entry["declaration"]["start"],
+            entry["category"],
+            entry["scope"],
+            entry["name"],
+        )
+    )
+    return {"eligible": combined, "preserved": report["preserved"], "unsupported": []}
 
 
 def _create_argument_parser() -> argparse.ArgumentParser:

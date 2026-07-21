@@ -58,7 +58,7 @@ class FormalEquivalenceRegressionTest(unittest.TestCase):
                 cwd=repository, capture_output=True, text=True, check=False,
             )
             self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
-            self.assertEqual(json.loads(encrypt.stdout)["modified_tokens"], 178)
+            self.assertEqual(json.loads(encrypt.stdout)["modified_tokens"], 170)
 
             positive = self._run(repository, [
                 "--gold-filelist", str(source_root / "design.f"),
