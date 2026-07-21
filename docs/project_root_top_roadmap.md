@@ -15,20 +15,21 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 | T032 | `ACCEPTED` | parameter rewrite、mapping v3、strict gate、decrypt 和 formal 闭环 | 是 |
 | T033 | `ACCEPTED` | impact/category oracle、single/multi-module classification、category ownership 和 shared registry | 否 |
 | T034 | `ACCEPTED` | 单文件/filelist 默认 single-module profile 与 multi/ABI fail-closed | 是 |
-| T035 | `IN_PROGRESS` | filelist/project-root 默认与手动 profile 统一、跨 module parameter 和 ABI 改写 | 是 |
-| T036 | `DRAFT` | RISC-V-Vector `v_int_alu` 参数集成与 formal-view 验证 | 是 |
-| T037 | `DRAFT` | 条件性默认 profile 晋级与 FIFO/RISC oracle 重冻结 | 是 |
+| T035 | `ACCEPTED` | filelist/project-root 默认与手动 profile 统一、跨 module parameter 和 ABI 改写 | 是 |
+| T036 | `READY` | 三种入口按目标加密率选择 mapping，并报告实际唯一物理行率 | 是 |
+| T037 | `DRAFT` | RISC-V-Vector `v_int_alu` 参数集成与 formal-view 验证 | 是 |
+| T038 | `DRAFT` | 条件性默认 profile 晋级与 FIFO/RISC oracle 重冻结 | 是 |
 
 每张任务单内部可以有多个按顺序执行的门禁，但只在整张任务完成后发生一次
 `READY_FOR_REVIEW -> ACCEPTED` 交接。仍然遵守
 [`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
-本路线图不是活动任务合同。T027—T034 已验收，T006 继续保持 `DRAFT`；T035 当前为
-`IN_PROGRESS`。其实现范围包括 shared canonical registry、两入口的 13 类 default profile、
-19 类 manual profile、filelist bounded closure、top ABI preservation 和 mapping v4；实现与非 RISC
-回归已完成，当前等待 T035 执行记录进入 `READY_FOR_REVIEW`。RISC-V-Vector Formal 仍只属于
-专门的 RISC 验收任务。
+本路线图不是活动任务合同。T027—T035 已验收，T006 继续保持 `DRAFT`；T036 当前为
+`READY`，合同见 [`docs/tasks/T036_encryption_rate_selection.md`](tasks/T036_encryption_rate_selection.md)。
+T035 的 shared canonical registry、两入口的 13 类 default profile、19 类 manual profile、
+filelist bounded closure、top ABI preservation 和 mapping v4 已完成。RISC-V-Vector Formal
+仍只属于专门的 RISC 验收任务。
 
 当前 profile 矩阵：
 
@@ -40,8 +41,7 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 `struct` 和 `interface` 是共享 registry alias，解析后使用 canonical category。T033/T034 的
 impact/category 与单文件/filelist default profile 已完成；T035 的两入口 default/manual profile、
 filelist bounded manual closure、project-root multi-module/ABI 和 mapping v4 已实现并完成非 RISC
-回归；T036–T037
-的 RISC 参数集成和条件性 profile 晋级尚未实现。
+回归；T036 的加密率选择合同已冻结，T037–T038 的 RISC 参数集成和条件性 profile 晋级尚未实现。
 
 T035 当前实现矩阵（mapping v4 主要用于 manual profile；旧 default mapping 继续只读兼容）：
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 import json
 from pathlib import Path
@@ -56,6 +57,198 @@ def _entry_ranges(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry["declaration"], *entry["references"]]
 
 
+_ENCRYPTION_RATE_ALGORITHM = "greedy_unique_line_v1"
+
+
+def _parse_encryption_rate(value: str) -> Decimal:
+    try:
+        rate = Decimal(value)
+    except (InvalidOperation, ValueError):
+        raise ValueError("ENCRYPTION_RATE_INVALID") from None
+    if not rate.is_finite() or rate <= 0 or rate > 1:
+        raise ValueError("ENCRYPTION_RATE_INVALID")
+    return rate
+
+
+def _physical_line_count(source: bytes) -> int:
+    if not source:
+        return 0
+    return source.count(b"\n") + (0 if source.endswith(b"\n") else 1)
+
+
+def _rate_entry_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    declaration = entry["declaration"]
+    if not isinstance(declaration, dict):
+        raise ValueError("ENCRYPTION_RATE_INVALID_CANDIDATE")
+    return (
+        declaration["file"],
+        declaration["start"],
+        entry["category"],
+        entry["scope"],
+        entry["original_name"],
+    )
+
+
+def _rate_source_for_record(
+    record: dict[str, Any],
+    source_files: dict[str, bytes],
+    fallback_source: bytes | None,
+) -> bytes:
+    source = source_files.get(record["file"])
+    if source is not None:
+        return source
+    if fallback_source is not None:
+        return fallback_source
+    raise ValueError("ENCRYPTION_RATE_INVALID_CANDIDATE")
+
+
+def _rate_selection(
+    entries: list[dict[str, Any]],
+    *,
+    source_files: dict[str, bytes],
+    total_sources: list[bytes],
+    rate_value: str,
+    fallback_source: bytes | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    rate = _parse_encryption_rate(rate_value)
+    total_lines = sum(_physical_line_count(source) for source in total_sources)
+    ordered_entries = sorted(entries, key=_rate_entry_key)
+    candidates: list[tuple[dict[str, Any], frozenset[tuple[str, int]]]] = []
+    for entry in ordered_entries:
+        affected_lines = frozenset(
+            (
+                record["file"],
+                _rate_source_for_record(record, source_files, fallback_source)[
+                    : record["start"]
+                ].count(b"\n")
+                + 1,
+            )
+            for record in _entry_ranges(entry)
+        )
+        candidates.append((entry, affected_lines))
+
+    candidate_lines_set = frozenset(
+        line for _, affected_lines in candidates for line in affected_lines
+    )
+    candidate_lines = len(candidate_lines_set)
+    target_lines = int(
+        (rate * Decimal(total_lines)).to_integral_value(rounding=ROUND_CEILING)
+    )
+    selected_indexes: set[int] = set()
+    target_unreachable = total_lines == 0 or not candidate_lines_set or target_lines > candidate_lines
+    if target_unreachable:
+        selected_indexes = set(range(len(candidates)))
+        selection_mode = "all_candidates"
+    else:
+        covered: set[tuple[str, int]] = set()
+        while len(covered) < target_lines:
+            remaining = target_lines - len(covered)
+            choices = [
+                (
+                    index,
+                    len(affected_lines - covered),
+                    _rate_entry_key(entry),
+                )
+                for index, (entry, affected_lines) in enumerate(candidates)
+                if index not in selected_indexes
+            ]
+            if not choices:
+                raise ValueError("ENCRYPTION_RATE_SELECTION_FAILED")
+            reaching = [choice for choice in choices if choice[1] >= remaining]
+            if reaching:
+                index, _, _ = min(reaching, key=lambda choice: (choice[1], choice[2]))
+            else:
+                index, _, _ = min(choices, key=lambda choice: (-choice[1], choice[2]))
+            selected_indexes.add(index)
+            covered.update(candidates[index][1])
+
+        for index in sorted(selected_indexes, key=lambda item: _rate_entry_key(candidates[item][0]), reverse=True):
+            trial_indexes = selected_indexes - {index}
+            trial_lines = {
+                line
+                for trial_index in trial_indexes
+                for line in candidates[trial_index][1]
+            }
+            if len(trial_lines) >= target_lines:
+                selected_indexes = trial_indexes
+        selection_mode = "greedy"
+
+    selected_lines_set = {
+        line
+        for index in selected_indexes
+        for line in candidates[index][1]
+    }
+    selected_lines = len(selected_lines_set)
+    actual_rate = selected_lines / total_lines if total_lines else 0.0
+    maximum_rate = candidate_lines / total_lines if total_lines else 0.0
+    target_number = float(rate)
+    rate_info = {
+        "algorithm": _ENCRYPTION_RATE_ALGORITHM,
+        "target": target_number,
+        "total_lines": total_lines,
+        "target_lines": target_lines,
+        "candidate_lines": candidate_lines,
+        "selected_lines": selected_lines,
+        "actual_rate": actual_rate,
+        "overshoot_lines": max(0, selected_lines - target_lines),
+        "maximum_rate": maximum_rate,
+        "target_unreachable": target_unreachable,
+        "selection_mode": selection_mode,
+        "candidate_entries": len(candidates),
+        "selected_entries": len(selected_indexes),
+        "candidates": [
+            {
+                "category": entry["category"],
+                "scope": entry["scope"],
+                "original_name": entry["original_name"],
+                "declaration": entry["declaration"],
+                "affected_lines": [
+                    {"file": file, "line": line}
+                    for file, line in sorted(affected_lines)
+                ],
+                "affected_line_count": len(affected_lines),
+                "selected": index in selected_indexes,
+            }
+            for index, (entry, affected_lines) in enumerate(candidates)
+        ],
+    }
+    return (
+        [entry for index, (entry, _) in enumerate(candidates) if index in selected_indexes],
+        rate_info,
+    )
+
+
+def _rate_stdout_summary(rate_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "target": rate_info["target"],
+        "total_lines": rate_info["total_lines"],
+        "encrypted_lines": rate_info["selected_lines"],
+        "actual_rate": rate_info["actual_rate"],
+        "overshoot_lines": rate_info["overshoot_lines"],
+        "maximum_rate": rate_info["maximum_rate"],
+        "target_unreachable": rate_info["target_unreachable"],
+    }
+
+
+def _rate_select_project_entries(
+    entries: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    files: list[str],
+    rate_value: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    source_files = {
+        relative_file: (source_root / relative_file).read_bytes()
+        for relative_file in files
+    }
+    return _rate_selection(
+        entries,
+        source_files=source_files,
+        total_sources=list(source_files.values()),
+        rate_value=rate_value,
+    )
+
+
 def _apply_edits(
     source: bytes,
     edits: list[tuple[dict[str, Any], str, str]],
@@ -95,6 +288,7 @@ def _metrics(
     source: bytes,
     gate: bytes,
     entries: list[dict[str, Any]],
+    encryption_rate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ranges = [item for entry in entries for item in _entry_ranges(entry)]
     changed_lines = {
@@ -115,11 +309,13 @@ def _metrics(
         occurrence_count / occurrence_count if occurrence_count else 0.0
     )
 
-    return {
+    metrics = {
         "affected_lines": {
             "changed": len(changed_lines),
             "total": len(effective_lines),
-            "rate": len(changed_lines) / len(effective_lines),
+            "rate": len(changed_lines) / len(effective_lines)
+            if effective_lines
+            else 0.0,
         },
         "symbols": {
             "renamed": symbol_count,
@@ -136,17 +332,27 @@ def _metrics(
         ),
         "effective_coverage": (symbol_coverage * occurrence_coverage) ** 0.5,
     }
+    if encryption_rate is not None:
+        metrics["encryption_rate"] = encryption_rate
+    return metrics
 
 
-def _summary(mapping_entries: int, modified_tokens: int) -> dict[str, int]:
-    return {
+def _summary(
+    mapping_entries: int,
+    modified_tokens: int,
+    encryption_rate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
         "files": 1,
         "mapping_entries": mapping_entries,
         "modified_tokens": modified_tokens,
     }
+    if encryption_rate is not None:
+        summary["encryption_rate"] = _rate_stdout_summary(encryption_rate)
+    return summary
 
 
-def _encrypt(args: argparse.Namespace) -> dict[str, int]:
+def _encrypt(args: argparse.Namespace) -> dict[str, Any]:
     mapping = inventory._build_inventory(
         args.input_file,
         args.name_length,
@@ -155,6 +361,18 @@ def _encrypt(args: argparse.Namespace) -> dict[str, int]:
     )
     entries = mapping["entries"]
     source = args.input_file.read_bytes()
+    rate_info: dict[str, Any] | None = None
+    rate_value = getattr(args, "encryption_rate", None)
+    if rate_value is not None:
+        entries, rate_info = _rate_selection(
+            entries,
+            source_files={},
+            total_sources=[source],
+            fallback_source=source,
+            rate_value=rate_value,
+        )
+        mapping = dict(mapping)
+        mapping["entries"] = entries
     edits: list[tuple[dict[str, Any], str, str]] = []
     for entry in entries:
         edits.extend(
@@ -164,10 +382,28 @@ def _encrypt(args: argparse.Namespace) -> dict[str, int]:
     gate = _apply_edits(source, edits)
     modified_tokens = len(edits)
 
-    _write_bytes(args.output_file, gate)
-    _write_json(args.map_file, mapping)
-    _write_json(args.metrics_file, _metrics(source, gate, entries))
-    return _summary(len(entries), modified_tokens)
+    metrics = _metrics(source, gate, entries, rate_info)
+    if rate_info is None:
+        _write_bytes(args.output_file, gate)
+        _write_json(args.map_file, mapping)
+        _write_json(args.metrics_file, metrics)
+    else:
+        with tempfile.TemporaryDirectory(prefix="rtl-obfuscation-t036-") as temporary:
+            staging = Path(temporary)
+            staging_gate = staging / "gate.sv"
+            staging_mapping = staging / "mapping.json"
+            staging_metrics = staging / "metrics.json"
+            _write_bytes(staging_gate, gate)
+            project._write_json_atomic(staging_mapping, mapping)
+            project._write_json_atomic(staging_metrics, metrics)
+            _publish_project_root_artifacts(
+                [
+                    (staging_gate, args.output_file),
+                    (staging_mapping, args.map_file),
+                    (staging_metrics, args.metrics_file),
+                ]
+            )
+    return _summary(len(entries), modified_tokens, rate_info)
 
 
 def _debug_encrypt(args: argparse.Namespace) -> dict[str, Any]:
@@ -210,8 +446,8 @@ def _validate_mapping(mapping: Any) -> list[dict[str, Any]]:
     ):
         raise ValueError("unsupported mapping version or name length")
     entries = mapping["entries"]
-    if not isinstance(entries, list) or not entries:
-        raise ValueError("mapping must contain at least one entry")
+    if not isinstance(entries, list):
+        raise ValueError("mapping entries must be a list")
 
     required_entry_fields = {
         "category",
@@ -352,6 +588,7 @@ def _project_metrics(
     output_dir: Path,
     relative_files: list[str],
     entries: list[dict[str, Any]],
+    encryption_rate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     all_ranges = [item for entry in entries for item in _entry_ranges(entry)]
     changed_lines: set[tuple[str, int]] = set()
@@ -410,7 +647,7 @@ def _project_metrics(
         occurrence_count / occurrence_count if occurrence_count else 0.0
     )
 
-    return {
+    metrics = {
         "affected_lines": {
             "changed": total_changed,
             "total": total_effective_lines,
@@ -429,6 +666,9 @@ def _project_metrics(
         "plaintext_leakage_rate": leaked_occurrences / occurrence_count if occurrence_count else 0.0,
         "effective_coverage": (symbol_coverage * occurrence_coverage) ** 0.5,
     }
+    if encryption_rate is not None:
+        metrics["encryption_rate"] = encryption_rate
+    return metrics
 
 
 def _write_project_file_maps(
@@ -736,7 +976,7 @@ def _audit_v4_gate(
 def _encrypt_filelist_manual_v4(
     args: argparse.Namespace,
     selection: category_profile.ProfileSelection,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     report, _, success, semantic = project.analyze_filelist_context(
         filelist=args.filelist,
         source_root=args.source_root,
@@ -764,6 +1004,17 @@ def _encrypt_filelist_manual_v4(
         closure_files=set(semantic.closure),
         name_length=args.name_length,
     )
+    rate_info: dict[str, Any] | None = None
+    rate_value = getattr(args, "encryption_rate", None)
+    if rate_value is not None:
+        selected_entries, rate_info = _rate_select_project_entries(
+            mapping["entries"],
+            source_root=args.source_root.resolve(),
+            files=files,
+            rate_value=rate_value,
+        )
+        mapping = dict(mapping)
+        mapping["entries"] = selected_entries
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry in mapping["entries"]:
         for record in _entry_ranges(entry):
@@ -795,7 +1046,13 @@ def _encrypt_filelist_manual_v4(
             raise ValueError("MAPPING_V4_GATE_ANALYSIS_FAILED")
         _audit_v4_gate(mapping, gate_report, staging_gate)
         mapping["gate_manifest_sha256"] = _project_manifest(staging_gate, files)
-        metrics = _project_metrics(args.source_root, staging_gate, files, mapping["entries"])
+        metrics = _project_metrics(
+            args.source_root,
+            staging_gate,
+            files,
+            mapping["entries"],
+            rate_info,
+        )
         staging_mapping = staging_root / "mapping.json"
         staging_metrics = staging_root / "metrics.json"
         project._write_json_atomic(staging_mapping, mapping)
@@ -812,17 +1069,20 @@ def _encrypt_filelist_manual_v4(
             artifacts.append((staging_maps, args.file_map_dir))
         _publish_project_root_artifacts(artifacts)
 
-    return {
+    summary: dict[str, Any] = {
         "files": len(files),
         "mapping_entries": len(mapping["entries"]),
         "modified_tokens": sum(entry["occurrences"] for entry in mapping["entries"]),
     }
+    if rate_info is not None:
+        summary["encryption_rate"] = _rate_stdout_summary(rate_info)
+    return summary
 
 
 def _encrypt_filelist_default_legacy(
     args: argparse.Namespace,
     selection: category_profile.ProfileSelection,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Keep the accepted v2 surface while using T035 full-file semantics."""
 
     report, _, success, semantic = project.analyze_filelist_context(
@@ -879,6 +1139,17 @@ def _encrypt_filelist_default_legacy(
         "top": args.top,
         "entries": entries,
     }
+    rate_info: dict[str, Any] | None = None
+    rate_value = getattr(args, "encryption_rate", None)
+    if rate_value is not None:
+        entries, rate_info = _rate_select_project_entries(
+            entries,
+            source_root=args.source_root.resolve(),
+            files=files,
+            rate_value=rate_value,
+        )
+        mapping = dict(mapping)
+        mapping["entries"] = entries
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry in entries:
         for record in _entry_ranges(entry):
@@ -895,7 +1166,13 @@ def _encrypt_filelist_default_legacy(
                 _apply_edits(source, edits_by_file.get(relative_file, [])),
             )
         _write_bytes(staging_gate / args.filelist.name, args.filelist.read_bytes())
-        metrics = _project_metrics(args.source_root, staging_gate, files, entries)
+        metrics = _project_metrics(
+            args.source_root,
+            staging_gate,
+            files,
+            entries,
+            rate_info,
+        )
         staging_mapping = staging_root / "mapping.json"
         staging_metrics = staging_root / "metrics.json"
         project._write_json_atomic(staging_mapping, mapping)
@@ -911,14 +1188,17 @@ def _encrypt_filelist_default_legacy(
             _write_project_file_maps(mapping, staging_maps)
             artifacts.append((staging_maps, args.file_map_dir))
         _publish_project_root_artifacts(artifacts)
-    return {
+    summary: dict[str, Any] = {
         "files": len(files),
         "mapping_entries": len(entries),
         "modified_tokens": sum(len(_entry_ranges(entry)) for entry in entries),
     }
+    if rate_info is not None:
+        summary["encryption_rate"] = _rate_stdout_summary(rate_info)
+    return summary
 
 
-def _encrypt_filelist_project(args: argparse.Namespace) -> dict[str, int]:
+def _encrypt_filelist_project(args: argparse.Namespace) -> dict[str, Any]:
     selection = category_profile.resolve(
         args.category or (), mode=category_profile.MODE_FILELIST
     )
@@ -1117,7 +1397,10 @@ def _expected_gate_ranges(
 
 
 def _audit_gate_report(
-    mapping: dict[str, Any], gate_report: dict[str, Any]
+    mapping: dict[str, Any],
+    gate_report: dict[str, Any],
+    *,
+    allow_unselected: bool = False,
 ) -> list[dict[str, Any]]:
     if gate_report["status"] != "pass":
         raise ValueError("gate project analysis failed")
@@ -1138,7 +1421,9 @@ def _audit_gate_report(
         raise ValueError("gate reachable interfaces do not match mapping")
 
     gate_entries = gate_report["inventory"]["eligible"]
-    if len(gate_entries) != len(mapping["entries"]):
+    if not allow_unselected and len(gate_entries) != len(mapping["entries"]):
+        raise ValueError("gate eligible symbol count does not match mapping")
+    if allow_unselected and len(gate_entries) < len(mapping["entries"]):
         raise ValueError("gate eligible symbol count does not match mapping")
     edits_by_file = _entry_edits_by_file(mapping["entries"])
     matched: list[dict[str, Any]] = []
@@ -1205,8 +1490,9 @@ def _project_root_metrics(
     gate_root: Path,
     files: list[str],
     entries: list[dict[str, Any]],
+    encryption_rate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    metrics = _project_metrics(source_root, gate_root, files, entries)
+    metrics = _project_metrics(source_root, gate_root, files, entries, encryption_rate)
     if not entries:
         metrics["symbols"]["coverage"] = 1.0
         metrics["occurrences"]["coverage"] = 1.0
@@ -1217,7 +1503,7 @@ def _project_root_metrics(
 def _encrypt_project_root_manual_v4(
     args: argparse.Namespace,
     selection: category_profile.ProfileSelection,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     report, _, success = project.analyze_project(
         project_root=args.project_root,
         top=args.top,
@@ -1240,6 +1526,17 @@ def _encrypt_project_root_manual_v4(
         closure_files=set(files),
         name_length=args.name_length,
     )
+    rate_info: dict[str, Any] | None = None
+    rate_value = getattr(args, "encryption_rate", None)
+    if rate_value is not None:
+        selected_entries, rate_info = _rate_select_project_entries(
+            mapping["entries"],
+            source_root=args.project_root.resolve(),
+            files=files,
+            rate_value=rate_value,
+        )
+        mapping = dict(mapping)
+        mapping["entries"] = selected_entries
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry in mapping["entries"]:
         for record in _entry_ranges(entry):
@@ -1271,7 +1568,13 @@ def _encrypt_project_root_manual_v4(
             raise ValueError("MAPPING_V4_GATE_ANALYSIS_FAILED")
         _audit_v4_gate(mapping, gate_report, staging_gate)
         mapping["gate_manifest_sha256"] = _project_manifest(staging_gate, files)
-        metrics = _project_metrics(args.project_root, staging_gate, files, mapping["entries"])
+        metrics = _project_metrics(
+            args.project_root,
+            staging_gate,
+            files,
+            mapping["entries"],
+            rate_info,
+        )
         staging_mapping = staging_root / "mapping.json"
         staging_metrics = staging_root / "metrics.json"
         project._write_json_atomic(staging_mapping, mapping)
@@ -1288,11 +1591,14 @@ def _encrypt_project_root_manual_v4(
             artifacts.append((staging_maps, args.file_map_dir))
         _publish_project_root_artifacts(artifacts)
 
-    return {
+    summary: dict[str, Any] = {
         "files": len(files),
         "mapping_entries": len(mapping["entries"]),
         "modified_tokens": sum(entry["occurrences"] for entry in mapping["entries"]),
     }
+    if rate_info is not None:
+        summary["encryption_rate"] = _rate_stdout_summary(rate_info)
+    return summary
 
 
 def _build_project_root_mapping(
@@ -1395,7 +1701,7 @@ def _publish_project_root_artifacts(
             shutil.rmtree(item["container"], ignore_errors=True)
 
 
-def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
+def _encrypt_project_root(args: argparse.Namespace) -> dict[str, Any]:
     selection = category_profile.resolve(
         args.category or (), mode=category_profile.MODE_PROJECT_ROOT
     )
@@ -1420,6 +1726,17 @@ def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
         selected_categories=selected_categories,
     )
     entries = mapping["entries"]
+    rate_info: dict[str, Any] | None = None
+    rate_value = getattr(args, "encryption_rate", None)
+    if rate_value is not None:
+        entries, rate_info = _rate_select_project_entries(
+            entries,
+            source_root=args.project_root.resolve(),
+            files=mapping["files"],
+            rate_value=rate_value,
+        )
+        mapping = dict(mapping)
+        mapping["entries"] = entries
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry in entries:
         for record in _entry_ranges(entry):
@@ -1453,12 +1770,12 @@ def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
                 + str(gate_report.get("diagnostics", []))
             )
         gate_report = _legacy_profile_report(gate_report, selection)
-        _audit_gate_report(mapping, gate_report)
+        _audit_gate_report(mapping, gate_report, allow_unselected=rate_info is not None)
         mapping["gate_manifest_sha256"] = _project_manifest(
             staging_gate, mapping["files"]
         )
         metrics = _project_root_metrics(
-            args.project_root, staging_gate, mapping["files"], entries
+            args.project_root, staging_gate, mapping["files"], entries, rate_info
         )
         staging_mapping = staging_root / "mapping.json"
         staging_metrics = staging_root / "metrics.json"
@@ -1481,11 +1798,14 @@ def _encrypt_project_root(args: argparse.Namespace) -> dict[str, int]:
         _publish_project_root_artifacts(artifacts)
 
     modified_tokens = sum(entry["occurrences"] for entry in entries)
-    return {
+    summary: dict[str, Any] = {
         "files": len(mapping["files"]),
         "mapping_entries": len(entries),
         "modified_tokens": modified_tokens,
     }
+    if rate_info is not None:
+        summary["encryption_rate"] = _rate_stdout_summary(rate_info)
+    return summary
 
 
 def _encrypt_project(args: argparse.Namespace) -> dict[str, int]:
@@ -1555,8 +1875,8 @@ def _validate_project_mapping(mapping: Any) -> tuple[list[str], list[dict[str, A
             raise ValueError("invalid file path in project mapping")
 
     entries = mapping["entries"]
-    if not isinstance(entries, list) or not entries:
-        raise ValueError("project mapping must contain at least one entry")
+    if not isinstance(entries, list):
+        raise ValueError("project mapping entries must be a list")
 
     required_entry_fields = {
         "category",
@@ -2044,7 +2364,13 @@ def _decrypt_project_root(
 ) -> dict[str, int]:
     mapping, gate_report = _validate_project_gate(mapping, args.gate_dir)
     files = mapping["files"]
-    gate_entries = _audit_gate_report(mapping, gate_report)
+    gate_entries = _audit_gate_report(
+        mapping,
+        gate_report,
+        allow_unselected=(
+            len(gate_report["inventory"]["eligible"]) > len(mapping["entries"])
+        ),
+    )
 
     edits_by_file: dict[str, list[tuple[dict[str, Any], str, str]]] = {}
     for entry, gate_entry in zip(mapping["entries"], gate_entries, strict=True):
@@ -2323,7 +2649,16 @@ def _validate_project_gate(
         mapping["selected_groups"], mode=category_profile.MODE_PROJECT_ROOT
     )
     gate_report = _legacy_profile_report(gate_report, selection)
-    _audit_gate_report(mapping, gate_report)
+    # A rate-limited mapping intentionally leaves unselected eligible symbols
+    # at their gold spelling.  The selected entries and all preserved ranges
+    # still require the full range/AST audit.
+    _audit_gate_report(
+        mapping,
+        gate_report,
+        allow_unselected=(
+            len(gate_report["inventory"]["eligible"]) > len(mapping["entries"])
+        ),
+    )
     return mapping, gate_report
 
 
@@ -2398,7 +2733,6 @@ def _validate_encrypt_project_mode(args: argparse.Namespace) -> None:
         "--output-dir": args.output_dir,
         "--map": args.map_file,
         "--metrics": args.metrics_file,
-        "--category": args.category,
     }
     if args.debug_dir is not None:
         conflicts = [
@@ -2510,6 +2844,14 @@ def _validate_decrypt_project_paths(args: argparse.Namespace) -> None:
 
 
 def _validate_mode_invocation(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    encryption_rate = getattr(args, "encryption_rate", None)
+    if encryption_rate is not None:
+        if getattr(args, "debug_dir", None) is not None:
+            parser.error("ENCRYPTION_RATE_DEBUG_UNSUPPORTED")
+        try:
+            _parse_encryption_rate(encryption_rate)
+        except ValueError as error:
+            parser.error(str(error))
     if args.operation == "encrypt-project":
         has_filelist = args.filelist is not None
         has_project_root = args.project_root is not None
@@ -2641,6 +2983,12 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         help="Run all 13 single-file categories independently under this directory.",
     )
     encrypt.add_argument(
+        "--encryption-rate",
+        required=False,
+        dest="encryption_rate",
+        help="Target unique physical-line encryption rate in (0, 1].",
+    )
+    encrypt.add_argument(
         "--category",
         required=False,
         action="append",
@@ -2692,6 +3040,12 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         dest="metrics_file",
         help="Metrics file; required unless --debug is used.",
+    )
+    encrypt_project.add_argument(
+        "--encryption-rate",
+        required=False,
+        dest="encryption_rate",
+        help="Target unique physical-line encryption rate in (0, 1].",
     )
     encrypt_project.add_argument(
         "--debug",
