@@ -96,7 +96,7 @@ equiv_status -assert
 ### 3.1 RISC-V-Vector formal-only 派生链
 
 `vector_top` 先分别从原工程和真实 gate 生成 260-transform formal view。gate view 随后通过
-mapping v3 做 5527 个 lexer-verified identifier alignment。当前 `formal-align` 的 1091/5741/5527
+mapping v4 做 5527 个 lexer-verified identifier alignment。当前 `formal-align` 的 1091/5741/5527
 oracle 是 RISC-V-Vector 交付专用门禁，不是任意 project-root mapping 的通用 alignment 命令：
 
 ```sh
@@ -156,7 +156,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
   --output-dir /tmp/rtl_fifo/restored
 ```
 
-mapping v3（`project-root + top`）不需要 `--source-root`；解密前会校验 gate manifest、mapping
+mapping v4（`project-root + top`）不需要 `--source-root`；解密前会校验 gate manifest、mapping
 range、gate AST inventory，解密后还会校验恢复后的输入 manifest：
 
 ```sh

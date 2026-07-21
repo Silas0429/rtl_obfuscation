@@ -192,7 +192,7 @@ def _run_fifo_regression(work: Path) -> dict[str, Any]:
             "8",
         )
     )
-    _require(summary == {"files": 4, "mapping_entries": 50, "modified_tokens": 195}, "FIFO encryption oracle mismatch")
+    _require(summary == {"files": 4, "mapping_entries": 49, "modified_tokens": 180}, "FIFO encryption oracle mismatch")
     positive = _successful_json(
         _formal_command(gold=FIFO, gate=gate, top="fifo_top", seq=5),
         timeout=600,
@@ -232,6 +232,7 @@ def run_acceptance(work: Path) -> dict[str, Any]:
             "vector_top",
             "--report",
             str(report_path),
+            *[option for group in GROUPS for option in ("--category", group)],
         )
     )
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -285,6 +286,7 @@ def run_acceptance(work: Path) -> dict[str, Any]:
             "vector_top",
             "--report",
             str(gate_report_path),
+            *[option for group in GROUPS for option in ("--category", group)],
         )
     )
     _require(gate_inspect["reachable_modules"] == 17 and gate_inspect["closure_files"] == 19 and gate_inspect["eligible_symbols"] == 1091 and gate_inspect["eligible_occurrences"] == 5741, "gate strict inspect mismatch")

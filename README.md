@@ -436,13 +436,25 @@ module、top ports 和 top ABI 仍保持不变。
 ### 3.11 RISC-V-Vector `project-root + top` 完整流程
 
 本节是专门 RISC-V-Vector 验收任务的历史/专项流程，不属于 T035 常规 Formal 或非 RISC
-全量回归；T035 只保留 RISC closure inspect 证据。
+全量回归；当前由 T037 专项任务执行 RISC Formal，普通任务只保留 RISC closure inspect 证据。
 
 `rtl_samples/RISC-V-Vector/` 是一个真实的多文件 SystemVerilog 向量处理器 datapath 样例。
 以 `vector_top` 为 top 时，工程目录中有 56 个候选 `.sv/.svh` 文件，实际 top 闭包为 19 个文件、
 17 个 module；`vector_simulator/`、`sva/` 以及不可达 RTL 不会进入 gate filelist。T029 固定的五组
 project-root category 结果是 1091 个 eligible symbol、5741 个 identifier occurrence；该固定
 组合未选择 `parameters`，因此 parameter、top module、top ports 和 top ABI 保持不变。
+
+如果只是演示当前 RISC-V-Vector 的加密和解密，可以直接运行：
+
+```sh
+conda run -n rtl_obfuscation python encrypt.py
+```
+
+脚本固定使用 `vector_top` 和五组内部 category，默认将结果写入
+`/tmp/rtl_obfuscation_risc_demo`，依次生成 `gate/`、mapping、metrics、per-file maps 和
+`restored/`，最后输出 JSON 摘要并确认 19 个闭包文件 byte-identical。它不执行耗时的 Formal；
+Formal 请使用 T037 专项验收命令。可用 `--work-dir <dir>` 指定一个不存在或空的输出目录，
+也可用 `--encryption-rate <rate>` 演示 T036 的选择功能。
 
 以下命令均从仓库根目录执行，并通过 `rtl_obfuscation` Conda 环境运行。先分析 gold，确认 top
 闭包、编译顺序和 inventory：
@@ -451,13 +463,14 @@ project-root category 结果是 1091 个 eligible symbol、5741 个 identifier o
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
   --project-root rtl_samples/RISC-V-Vector \
   --top vector_top \
-  --report /tmp/risc/gold-report.json
+  --report /tmp/risc/gold-report.json \
+  --category signals --category ports --category instances --category struct --category interface
 ```
 
 预期摘要包含 `candidate_files=56`、`closure_files=19`、`reachable_modules=17`、
 `eligible_symbols=1091`、`eligible_occurrences=5741`，且 `status=pass`。
 
-对同一个 top 闭包加密。这里显式列出 T029 的五组 category；省略它们也会启用默认五组：
+对同一个 top 闭包加密。这里显式列出 T029 的五组 category，确保演示和 Formal oracle 使用同一 profile：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
@@ -482,11 +495,12 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-project \
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite inspect-project \
   --project-root /tmp/risc/gate \
   --top vector_top \
-  --report /tmp/risc/gate-report.json
+  --report /tmp/risc/gate-report.json \
+  --category signals --category ports --category instances --category struct --category interface
 ```
 
 gate 的 reachable module/file 拓扑应与 gold 一致，parse/semantic error 都应为 0，
-`/tmp/risc/mapping.json` 为 version 3，`/tmp/risc/metrics.json` 中的 coverage 应为 `1.0`，
+`/tmp/risc/mapping.json` 为 version 4，`/tmp/risc/metrics.json` 中的 coverage 应为 `1.0`，
 `plaintext_leakage_rate` 应为 `0.0`。
 
 Yosys 0.53 不能直接读取该样例中的 compilation-unit packed struct 和 concurrent assertion，
@@ -508,7 +522,7 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite formal-view \
 ```
 
 两次 view 应产生相同的结构变换清单，共 260 项：25 个 aggregate type、233 个 member access
-和 2 条 concurrent assertion。由于真实 gate 使用了随机名称，还需要用 mapping v3 做只恢复
+和 2 条 concurrent assertion。由于真实 gate 使用了随机名称，还需要用 mapping v4 做只恢复
 identifier spelling 的 formal alignment：
 
 ```sh
@@ -536,7 +550,7 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 ```
 
 必须退出码为 0，并输出 `"formal_equivalence": "pass"`。验证通过后再解密产品 gate；mapping
-v3 不需要原工程路径：
+v4 不需要原工程路径：
 
 ```sh
 conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-project \
@@ -554,9 +568,9 @@ conda run -n rtl_obfuscation python -c 'import json; from pathlib import Path; m
 ### 3.12 Formal view 与真实 gate alignment
 
 `formal-view` 是验证专用派生树生成器，不修改产品 gold/gate；它只处理代码中明确允许的
-aggregate lowering 和 concurrent assertion blanking。`formal-align` 是 mapping v3 驱动的
+aggregate lowering 和 concurrent assertion blanking。`formal-align` 是 mapping v4 驱动的
 identifier-only 对齐工具，当前 1091/5741/5527 oracle 仅适用于 RISC-V-Vector 交付。完整命令
-顺序见 3.10；它不读取 gold、不调用解密，也不改变 operator、literal、string、comment 或
+顺序见 3.11；它不读取 gold、不调用解密，也不改变 operator、literal、string、comment 或
 directive。
 
 可用一次性验收驱动重跑 RISC-V-Vector 完整链路：

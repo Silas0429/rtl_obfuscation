@@ -130,8 +130,8 @@ unsupported 对象及稳定 reason。旧 mapping 只读兼容，不回写旧 sch
 | T033 | impact classifier、category registry、ownership 和 oracle | 否 | N/A |
 | T034 | 单文件/filelist 默认 profile、file scope、multi/ABI fail-closed | 是 | 必须 PASS/FAIL 正负例 |
 | T035 | filelist/project-root default/manual profile 统一、bounded manual closure、跨 module parameter/ABI | 是 | 必须 PASS/FAIL 正负例 |
-| T036 | RISC-V-Vector `v_int_alu` 参数集成与 formal-view | 是 | 必须 PASS/FAIL 正负例 |
-| T037 | 条件性默认 profile 晋级与 oracle 重冻结 | 是 | 复用 T036 |
+| T037 | RISC-V-Vector Formal 验收与 `encrypt.py` 演示脚本 | 是 | 必须 PASS/FAIL 正负例 |
+| T038 | 条件性默认 profile 晋级与 oracle 重冻结 | 是 | 复用 T037 |
 
 T033 完成前不得修改 T030/T032 默认数量或历史合同。T034/T035 通过后再更新用户文档和
 FIFO/RISC-V-Vector 数字；历史任务单保留当时的事实。

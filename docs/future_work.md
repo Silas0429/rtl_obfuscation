@@ -8,7 +8,7 @@ parameter/localparam inventory 和 rewrite；T035 已统一两种多文件入口
 和 19 类 manual profile。filelist manual profile 已在显式 filelist 内建立 bounded closure，
 旧 v1/v2/v3 mapping 继续只读解密兼容，manual workflow 使用 mapping v4；T035 实现与非 RISC
 回归已完成并验收。T036 已实现按唯一物理行目标选择 mapping、报告实际率并兼容三种入口；
-其正负 Formal 与完整回归仍以 T036 任务单记录为准。
+T037 已完成 RISC-V-Vector Formal 专项验收和 `encrypt.py` 演示脚本。
 
 ## 1. 优先解决的问题
 
@@ -79,9 +79,9 @@ v4、gate audit、metrics 和逐文件 mapping，并由 `decrypt-project` 字节
 - T034 已完成：统一单文件/filelist 默认 profile；
 - T035：两入口 manual multi-module/ABI profile、bounded closure、跨 module parameter、
   module/port/interface 改写和 mapping v4 审计已完成；RISC-V-Vector Formal 不属于其常规验收；
-- T036：为三种加密入口增加目标加密率、唯一物理行选择、实际率报告和 fail-closed 不可达诊断；
-- T037：在 RISC-V-Vector `vector_top` 上集成并冻结 `v_int_alu` 等真实 parameter oracle，验证
-  参数改写与现有 formal-view/formal-align 链路；
+- T036：为三种加密入口增加目标加密率、唯一物理行选择、实际率报告和不可达时全候选加密；
+- T037：完成 RISC-V-Vector `vector_top` 的 formal-view/formal-align/Yosys 正负例验收，并提供
+  根目录 `encrypt.py` 加密/解密演示命令；
 - T038（条件任务）：在 T037 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
   并重新冻结 FIFO/RISC-V-Vector 的数量和 formal oracle；
 - library、嵌套 filelist 和更复杂的 include/define 条件组合；

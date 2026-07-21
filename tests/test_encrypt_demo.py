@@ -1,0 +1,72 @@
+"""Black-box tests for the RISC-V-Vector encrypt.py demonstration."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
+import unittest
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+RISC = REPOSITORY / "rtl_samples" / "RISC-V-Vector"
+
+
+class EncryptDemoTests(unittest.TestCase):
+    def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "encrypt.py", *arguments],
+            cwd=REPOSITORY,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_default_profile_encrypts_and_decrypts_byte_identically(self) -> None:
+        with TemporaryDirectory(prefix="rtl-obfuscation-encrypt-demo-") as temporary:
+            work_dir = Path(temporary) / "demo"
+            process = self._run("--work-dir", str(work_dir))
+            self.assertEqual(process.returncode, 0, process.stderr)
+            summary = json.loads(process.stdout)
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["top"], "vector_top")
+            self.assertEqual(summary["mapping_version"], 4)
+            self.assertEqual(summary["files"], 19)
+            self.assertTrue(summary["byte_identical"])
+            self.assertEqual(
+                summary["encrypt"],
+                {"files": 19, "mapping_entries": 1091, "modified_tokens": 5741},
+            )
+            self.assertEqual(
+                summary["decrypt"],
+                {"files": 19, "mapping_entries": 1091, "modified_tokens": 5741},
+            )
+            mapping = json.loads((work_dir / "mapping.json").read_text(encoding="utf-8"))
+            self.assertEqual(mapping["files"], sorted(mapping["files"]))
+            self.assertIn("rtl/vector/vector_top.sv", mapping["files"])
+            self.assertIn("rtl/vector/vmacros.sv", mapping["files"])
+            self.assertEqual(len(mapping["files"]), 19)
+            self.assertTrue(
+                all(
+                    (RISC / relative_file).read_bytes()
+                    == (work_dir / "restored" / relative_file).read_bytes()
+                    for relative_file in mapping["files"]
+                )
+            )
+
+    def test_non_empty_work_dir_is_rejected_without_overwrite(self) -> None:
+        with TemporaryDirectory(prefix="rtl-obfuscation-encrypt-demo-") as temporary:
+            work_dir = Path(temporary) / "demo"
+            work_dir.mkdir()
+            marker = work_dir / "keep.txt"
+            marker.write_text("keep", encoding="utf-8")
+            process = self._run("--work-dir", str(work_dir))
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("must be absent or an empty directory", process.stderr)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+
+
+if __name__ == "__main__":
+    unittest.main()

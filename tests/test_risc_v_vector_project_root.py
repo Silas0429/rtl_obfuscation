@@ -61,6 +61,7 @@ MODULES = [
     "vrf",
     "vrrm",
 ]
+RISC_CATEGORIES = ("signals", "ports", "instances", "struct", "interface")
 
 
 def canonical(value: object) -> str:
@@ -158,11 +159,12 @@ class RiscVVectorProjectRootTests(unittest.TestCase):
             "vector_top",
             "--report",
             str(cls.report_path),
+            *[option for group in RISC_CATEGORIES for option in ("--category", group)],
         )
         cls.report = json.loads(cls.report_path.read_text(encoding="utf-8"))
 
         cls.group_summaries: dict[str, dict[str, object]] = {}
-        for group in ("signals", "ports", "instances", "struct", "interface"):
+        for group in RISC_CATEGORIES:
             base = cls.work / f"group-{group}"
             cls.group_summaries[group] = cls.run_command(
                 "encrypt-project",
@@ -219,6 +221,7 @@ class RiscVVectorProjectRootTests(unittest.TestCase):
             "vector_top",
             "--report",
             str(cls.gate_report_path),
+            *[option for group in RISC_CATEGORIES for option in ("--category", group)],
         )
         cls.gate_report = json.loads(
             cls.gate_report_path.read_text(encoding="utf-8")
@@ -359,7 +362,20 @@ class RiscVVectorProjectRootTests(unittest.TestCase):
 
     def test_combined_mapping_and_metrics(self) -> None:
         self.assertEqual(self.combined_summary, {"files": 19, "mapping_entries": 1091, "modified_tokens": 5741})
-        self.assertEqual(self.mapping["selected_groups"], ["signals", "ports", "instances", "struct", "interface"])
+        self.assertEqual(
+            self.mapping["selected_categories"],
+            [
+                "signals",
+                "instances",
+                "struct_types",
+                "struct_fields",
+                "ports",
+                "interfaces",
+                "interface_instances",
+                "interface_ports",
+                "modports",
+            ],
+        )
         self.assertFalse(any(x["category"] == "parameters" for x in self.mapping["entries"]))
         self.assertEqual(self.metrics["symbols"]["coverage"], 1.0)
         self.assertEqual(self.metrics["occurrences"]["coverage"], 1.0)
@@ -431,7 +447,7 @@ class RiscVVectorProjectRootTests(unittest.TestCase):
         self.assertEqual(script.count("async2sync"), 2)
         fifo = self.work / "fifo"
         summary = self.run_command("encrypt-project", "--project-root", str(FIFO), "--top", "fifo_top", "--output-dir", str(fifo / "gate"), "--map", str(fifo / "mapping.json"), "--metrics", str(fifo / "metrics.json"), "--category", "signals", "--category", "ports", "--category", "instances", "--category", "struct", "--category", "interface", "--name-length", "8")
-        self.assertEqual(summary, {"files": 4, "mapping_entries": 50, "modified_tokens": 195})
+        self.assertEqual(summary, {"files": 4, "mapping_entries": 49, "modified_tokens": 180})
         process = subprocess.run([sys.executable, "scripts/formal_equivalence.py", "--gold-filelist", str(FIFO / "design.f"), "--gold-root", str(FIFO), "--gate-filelist", str(fifo / "gate/design.f"), "--gate-root", str(fifo / "gate"), "--top", "fifo_top", "--seq", "5"], cwd=ROOT, capture_output=True, text=True, check=False)
         self.assertEqual(process.returncode, 0, process.stderr)
 

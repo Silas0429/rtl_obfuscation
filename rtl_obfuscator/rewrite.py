@@ -2631,6 +2631,24 @@ def _decrypt_project_v4(
 def _validate_project_gate(
     mapping: dict[str, Any], gate_dir: Path
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if isinstance(mapping, dict) and mapping.get("version") == 4:
+        mapping = _validate_mapping_v4(mapping)
+        files = mapping["files"]
+        if _project_manifest(gate_dir, files) != mapping["gate_manifest_sha256"]:
+            raise ValueError("mapping v4 gate manifest does not match gate")
+        _validate_mapping_ranges_against_gate(mapping, gate_dir)
+        gate_report, _, success = project.analyze_project(
+            project_root=gate_dir,
+            top=mapping["top"],
+            include_dirs=mapping["compile_context"]["include_dirs"],
+            defines=mapping["compile_context"]["defines"],
+            categories=mapping["requested_categories"],
+        )
+        if not success:
+            raise ValueError("gate strict project analysis failed")
+        _audit_v4_gate(mapping, gate_report, gate_dir)
+        return mapping, gate_report
+
     mapping = _validate_project_root_mapping(mapping)
     files = mapping["files"]
     if _project_manifest(gate_dir, files) != mapping["gate_manifest_sha256"]:
