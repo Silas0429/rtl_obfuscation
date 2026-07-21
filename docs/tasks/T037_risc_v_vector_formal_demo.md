@@ -211,7 +211,7 @@ review_request: implementation and evidence complete; ready for Main Agent indep
 
 ```text
 acceptance_time: 2026-07-21
-acceptance_head: 18c7569 (pre-T037 commit; final commit recorded by Git handoff)
+acceptance_head: f5c6a9b
 independent_commands: t029_acceptance.py dedicated Formal chain; unittest tests.test_risc_v_vector_project_root -v;
   unittest tests.test_encrypt_demo -v; py_compile; git diff --check; one-command encrypt.py run
 independent_results: Formal driver status=pass; RISC unittest 15 tests OK; demo unittest 2 tests OK;
