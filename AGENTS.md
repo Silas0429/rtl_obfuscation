@@ -58,6 +58,8 @@ conda run -n rtl_obfuscation yosys -V
 - During R0–R5, the sub-agent must follow `docs/refactor_subagent_protocol.md` and run only the
   acceptance row selected by the active task; blanket discovery and historical acceptance drivers
   are not default requirements.
+- During R0–R5, diff acceptance must use `git diff --check HEAD`, and the active task must include an
+  exact `READY_FOR_REVIEW` status guard that passes before Main Agent review.
 - Before editing code, the sub-agent must change the task status from `READY` to `IN_PROGRESS` and update its execution record.
 - If an assumption, API difference, or boundary issue appears, the sub-agent must document it in the task before continuing and must not expand scope on its own.
 - Before requesting review, the sub-agent must record changed files, exact commands, actual outputs, and uncovered boundaries, then set the task to `READY_FOR_REVIEW`.

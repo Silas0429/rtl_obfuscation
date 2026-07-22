@@ -314,6 +314,7 @@ independent_results: target module independently ran 8 tests and passed; py_comp
 contract_review: single-file and one-file filelist normalized reports match; explicit filelist order is preserved; filelist + top retains closure-external sources; project-root contains only the deterministic top closure; omitted top returns SOURCESET_TOP_REQUIRED; complete inventory analysis entry points are not called
 diff_review: T039 implementation changes are limited to source_set.py, the additive discovery-only project.py helper, the compact fixture, test_source_set.py, and this task record; pre-existing Main Agent planning-document changes were preserved separately
 formal_verification: N/A - no rewritten RTL is produced
-index_state: the Git index still contains the pre-correction versions of this task record and test_source_set.py, while the accepted corrections are in the working tree; the index must be refreshed before commit
-acceptance_conclusion: ACCEPTED by Main Agent after independent review; commit and push remain pending
+index_state: refreshed by the user before delivery; the corrected task record and omitted-top test were verified in the staged snapshot
+delivery_commit: 5a8b073
+acceptance_conclusion: ACCEPTED by Main Agent after independent review and committed; no rewritten RTL was produced
 ```

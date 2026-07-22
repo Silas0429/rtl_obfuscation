@@ -93,7 +93,7 @@
 
 | 任务类型 | 必需验收 | 不需要 |
 | --- | --- | --- |
-| 文档/合同 | `git diff --check`，链接和状态检查 | Python、HDL、Formal |
+| 文档/合同 | `git diff --check HEAD`，链接和状态检查 | Python、HDL、Formal |
 | SourceSet/discovery | 一个目标 unittest 模块、py_compile、diff check | 全量回归、HDL、Formal |
 | SymbolGraph/range | 一个目标 unittest 模块、稳定 report/range audit、py_compile | gate、decrypt、Formal |
 | rewrite/mapping | 一个目标 unittest 模块、strict gate、decrypt、一个 compact Formal 正例和一个固定功能负例 | RISC、历史全量 oracle |
@@ -104,6 +104,9 @@
 约束：
 
 - 活动任务验收命令通常不超过五条；
+- diff 检查统一使用 `git diff --check HEAD`，同时覆盖暂存区和工作区，禁止用可能为空的
+  `git diff --check` 代替；
+- 每张实现任务增加精确 `READY_FOR_REVIEW` 状态守卫；守卫通过前子 Agent 不得申请 review；
 - 不产生 rewritten RTL 的任务一律 Formal `N/A`；
 - 产生 rewritten RTL 时只要求一个代表性 compact positive 和一个明确 functional negative；
 - 大型 RISC Formal 只在 R5 专项任务运行一次；

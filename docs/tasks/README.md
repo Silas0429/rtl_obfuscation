@@ -74,6 +74,8 @@
 - PySlang API 与文档不一致时，记录实际 API 和最小复现，随后停止等待主 Agent。
 - 所有 Python、EDA 和测试命令都使用 `conda run -n rtl_obfuscation`。
 - 重构任务不得使用 blanket `unittest discover`；只运行活动任务冻结的目标模块和验收矩阵。
+- 重构任务的格式检查使用 `git diff --check HEAD`，以同时检查 staged 和 unstaged 变更；活动任务
+  还必须提供精确的 `READY_FOR_REVIEW` 状态守卫，阻止子 Agent 自行设置 `ACCEPTED`。
 - 不得删除 `equiv_status -assert`、忽略 Yosys 非零退出码或用 gold/gate 同一文件冒充改写等价证据。
 - 子 Agent 不得自行 commit 或 push；Git 提交由主 Agent 在验收通过后统一完成。
 - 删除旧测试或脚本必须由专门 cleanup 任务逐项列出，并记录 replacement coverage；不得在普通

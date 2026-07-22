@@ -2,8 +2,8 @@
 
 - 计划状态：`CONTRACTED_AS_T039`
 - 所属阶段：R1
-- 实现状态：尚未开始
-- 活动任务：[`T039`](tasks/T039_sourceset_input_contract.md) 已设为 `READY`
+- 实现状态：`ACCEPTED`，交付提交 `5a8b073`
+- 后续任务：[`T040`](tasks/T040_source_catalog_owner_registry.md) 已设为 `READY`
 - 前置条件：已满足；T038 工作区已保存为提交 `e4f3f94`
 - Formal verification：`N/A`，本步骤不产生 rewritten RTL
 

@@ -3,10 +3,11 @@
 - 文档状态：`APPROVED_DESIGN`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：尚未开始；本文不是活动任务合同
+- 实现状态：R1 已验收；R2-A 准备开始；本文不是活动任务合同
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 下一步实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
-- 当前实现任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)
+- 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
+- 当前实现任务：[`docs/tasks/T040_source_catalog_owner_registry.md`](tasks/T040_source_catalog_owner_registry.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -204,6 +205,10 @@ mapping 至少记录：
 ### 阶段 R2：统一 SymbolGraph 与 owner/provenance
 
 - 单一目标：在 SourceSet 上生成唯一、无重叠、owner 完整的 SymbolGraph；
+- R2-A 先由 [`T040`](tasks/T040_source_catalog_owner_registry.md) 建立 catalog/top-overlay 双语义视图
+  共用的 module owner registry，不收集可重命名 symbol；
+- 后续 R2 任务只能在 T040 owner registry 上逐步增加 source symbol、occurrence/provenance 和 ABI
+  overlay，不得重新建立第二套 module identity；
 - 覆盖全部 module 的非 ABI 对象和 optional-top ABI overlay；
 - 纳入 parameter/genvar、generate/dimension、named override、module/port/interface compact fixtures；
 - 删除 classification 二次收集和 fixture-specific ownership 修补；
