@@ -1,6 +1,6 @@
 # T040：统一 semantic catalog 与 module owner registry
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R2-A
@@ -298,16 +298,16 @@ semantic context 和 module source-owner registry，不产生 rewritten RTL。
 ## 14. 子 Agent 执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-changed_files:
-commands:
-results:
-schema_or_behavior:
-boundaries:
+status: READY_FOR_REVIEW
+starting_head: 7dc22d4446081126ab8c933fbd7eebd1f27269f3
+changed_files: `rtl_obfuscator/source_catalog.py`; `tests/fixtures/refactor_source_catalog/**`; `tests/fixtures/refactor_source_catalog_invalid/**`; `tests/test_source_catalog.py`; this task record
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_source_catalog -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/source_catalog.py tests/test_source_catalog.py`; `git diff --check HEAD`; `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T040_source_catalog_owner_registry.md`
+results: corrected overlay ordering so selected-top identity is validated immediately after parse checks and before generic semantic errors; added missing selected-top coverage. Unittest exit 0 with 11 tests passed; py_compile exit 0; `git diff --check HEAD` exit 0; READY_FOR_REVIEW status guard exit 0.
+schema_or_behavior: implemented schema-v1 SourceCatalog, strict all-source catalog compilation, optional selected-top overlay, range-based shared ModuleOwner registry, repeated-instance deduplication, top closure flags, deterministic report serialization, stable duplicate/parse/semantic/top/range failures, and no-top behavior.
+boundaries: catalog and overlay use the T039 SourceSet compile order, include dirs, defines, and separate PySlang views; selected-top identity is checked before generic overlay semantic errors; overlay closure recurses through every semantic module-instance container, including generate block arrays; no inventory/rewrite/mapping import or call, no RTL rewrite, no Formal, and no files outside the T040 allowlist were changed.
 cleanup_candidates:
 formal_verification: N/A - no rewritten RTL is produced
-review_request:
+review_request: READY_FOR_REVIEW; selected-top mismatch coverage and all four section 13 commands passed. No commit, push, or next task was created.
 ```
 
 ## 15. READY_FOR_REVIEW 条件
@@ -333,3 +333,17 @@ review_request:
 5. 全部通过后才增加主 Agent 验收记录并设置 `ACCEPTED`。
 
 主 Agent 验收前，子 Agent 产生的任何 `ACCEPTED` 文本均构成流程失败。
+
+## 17. 主 Agent 验收记录
+
+```text
+status: ACCEPTED
+reviewed_at: 2026-07-22
+reviewed_head: 7dc22d4446081126ab8c933fbd7eebd1f27269f3
+scope_review: PASS - working-tree changes are limited to the T040 allowlist
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_source_catalog -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/source_catalog.py tests/test_source_catalog.py`; `git diff --check HEAD`; READY_FOR_REVIEW status guard before acceptance
+results: PASS - 11 tests passed; py_compile exit 0; diff check exit 0; pre-acceptance status guard exit 0
+direct_checks: PASS - generated top closure is exactly `child,top`; selected top is exactly `top`; missing selected top returns `CATALOG_TOP_MISMATCH`; source catalog has no inventory/rewrite/mapping dependency
+formal_verification: N/A - no rewritten RTL is produced
+decision: ACCEPTED
+```
