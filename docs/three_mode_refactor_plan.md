@@ -4,8 +4,9 @@
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
 - 实现状态：尚未开始；本文不是活动任务合同
-- 当前任务：T038 仍为 `BLOCKED / NOT_ACCEPTED`
+- 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 下一步实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
+- 当前实现任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -193,6 +194,7 @@ mapping 至少记录：
 ### 阶段 R1：SourceSet 与三入口输入合同
 
 - 详细计划见 [`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)；
+- 正式任务合同见 [`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)；
 - 单一目标：实现 single-file/filelist/project-root 三个 adapter，输出同一种 SourceSet；
 - 保留显式 filelist 顺序，冻结 include/define/header/top/closure 语义；
 - project-root 只负责 discovery，不产生独立 inventory；

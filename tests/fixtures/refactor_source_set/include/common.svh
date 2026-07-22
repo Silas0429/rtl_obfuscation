@@ -1,0 +1,4 @@
+`ifndef REF_SOURCES_COMMON_SVH
+`define REF_SOURCES_COMMON_SVH
+`define COMMON_WIDTH 8
+`endif

@@ -98,6 +98,15 @@ class ProjectSemanticContext:
     scope_policy: str = "project_discovered"
 
 
+@dataclass(frozen=True)
+class SourceSetDiscovery:
+    """Discovery-only result used by the SourceSet input adapters."""
+
+    included_files: tuple[str, ...]
+    top_closure_files: tuple[str, ...]
+    compile_order: tuple[str, ...]
+
+
 class ProjectAnalysisError(Exception):
     """A stable project-analysis failure that belongs in the JSON report."""
 
@@ -700,6 +709,129 @@ class _ProjectContext:
             closure.update(additions)
             if len(closure) == before:
                 return compiled
+
+
+def _discover_sourceset(
+    *,
+    root: Path,
+    candidate_files: Iterable[str],
+    source_files: Iterable[str],
+    explicit_header_files: Iterable[str] = (),
+    include_dirs: Iterable[str] = (),
+    defines: dict[str, str] | None = None,
+    top: str | None = None,
+    preserve_top_file_order: bool = False,
+    include_all_sources: bool = True,
+) -> SourceSetDiscovery:
+    """Resolve SourceSet dependencies without inventory or report generation.
+
+    ``candidate_files`` is the bounded discovery universe.  The helper keeps
+    the existing include, macro, type, and hierarchy algorithms in one place;
+    callers decide which source files are part of the public SourceSet.
+    """
+
+    source_order = tuple(source_files)
+    candidate_order = tuple(candidate_files)
+    context = _ProjectContext(
+        root,
+        top or "",
+        list(include_dirs),
+        dict(defines or {}),
+        [],
+        candidate_files=candidate_order,
+    )
+
+    if include_all_sources:
+        include_closure = set(source_order)
+        changed = True
+        while changed:
+            changed = context.add_preprocessor_dependencies(include_closure)
+
+    if top is None:
+        for edge in context.include_edges:
+            if not edge.provider.endswith(".svh"):
+                raise ProjectAnalysisError(
+                    "UNSUPPORTED_INCLUDE",
+                    f"include dependency is not a .svh header: {edge.provider}",
+                    file=edge.consumer,
+                )
+        included_files = {
+            edge.provider for edge in context.include_edges
+            if edge.provider.endswith(".svh")
+        }
+        included_files.update(explicit_header_files)
+        return SourceSetDiscovery(
+            included_files=tuple(sorted(included_files)),
+            top_closure_files=(),
+            compile_order=source_order,
+        )
+
+    top_definitions = context.definitions_by_name.get(top, [])
+    if not top_definitions:
+        raise ProjectAnalysisError(
+            "TOP_NOT_FOUND", f"top definition not found: {top}"
+        )
+    if len(top_definitions) != 1:
+        raise ProjectAnalysisError(
+            "AMBIGUOUS_TOP",
+            f"top definition is ambiguous: {top}",
+            details=[definition.report_record() for definition in top_definitions],
+        )
+    if top_definitions[0].kind != "module":
+        raise ProjectAnalysisError("TOP_NOT_FOUND", f"top is not a module: {top}")
+
+    closure = {top_definitions[0].file}
+    compilation, _, manager, parse_errors, semantic_errors = context.expand_hierarchy(
+        closure
+    )
+    del compilation
+    if parse_errors:
+        relative, start = context._diagnostic_position(parse_errors[0], manager)
+        raise ProjectAnalysisError(
+            "PARSE_ERROR",
+            "strict closure compilation contains parse errors",
+            file=relative,
+            start=start,
+        )
+    if semantic_errors:
+        relative, start = context._diagnostic_position(semantic_errors[0], manager)
+        raise ProjectAnalysisError(
+            "SEMANTIC_ERROR",
+            "strict closure compilation contains semantic errors",
+            file=relative,
+            start=start,
+            details=[{"code": str(item.code)} for item in semantic_errors],
+        )
+
+    for edge in context.include_edges:
+        if not edge.provider.endswith(".svh"):
+            raise ProjectAnalysisError(
+                "UNSUPPORTED_INCLUDE",
+                f"include dependency is not a .svh header: {edge.provider}",
+                file=edge.consumer,
+            )
+    included_files = {
+        edge.provider for edge in context.include_edges
+        if edge.provider.endswith(".svh")
+    }
+    included_files.update(explicit_header_files)
+
+    closure_sources = set(path for path in closure if path.endswith(".sv"))
+    if preserve_top_file_order:
+        top_closure_files = tuple(
+            path for path in source_order if path in closure_sources
+        )
+    else:
+        top_closure_files = tuple(
+            path
+            for path in context.compile_order(closure)
+            if path in closure_sources
+        )
+    return SourceSetDiscovery(
+        included_files=tuple(sorted(included_files)),
+        top_closure_files=top_closure_files,
+        compile_order=tuple(context.compile_order(closure)),
+    )
 
 
 def _validate_configuration(

@@ -109,8 +109,8 @@ T031/T032 先只支持：
 T031/T032 已证明显式 `parameters` 的 inventory/rewrite 闭环，但没有改变当前五组默认 profile。
 T033–T037 已完成 impact/category oracle、filelist 迁移、project-root 手动 multi-module
 profile、加密率选择和 RISC-V-Vector Formal/演示集成；T038 先修复 RISC-V-Vector 的
-elaborated generate-loop parameter 误分类，并统一加密率分母。更多 default profile 晋级顺延到
-条件性 T039。
+elaborated generate-loop parameter 误分类，并统一加密率分母。更多 default profile 晋级已被
+统一重构计划取代，R5 后如仍有必要再建立未编号的独立合同。
 
 ## 4. 代码改造点
 
@@ -143,7 +143,7 @@ elaborated generate-loop parameter 误分类，并统一加密率分母。更多
 | T035 | project-root multi-module parameter/ABI rewrite | 正例 PASS；功能负例 FAIL |
 | T037 | RISC closure、`v_int_alu` oracle、formal-view 对称性和演示脚本 | 正例 PASS；功能负例 FAIL |
 | T038 | RISC parameter/genvar、rate denominator、RISC Formal | 正例 PASS；功能负例 FAIL |
-| T039 | 默认 profile 数字和文档同步 | 复用 T038 |
+| R5 后评估（未编号） | 默认 profile 数字和文档同步 | 按新架构重新验收 |
 
 所有 Python、parser、HDL、test 和 Yosys 命令必须使用：
 
@@ -164,5 +164,5 @@ conda run -n rtl_obfuscation ...
 方案已按 T031 → T032 落地：关键的 localparam expression、generate-if、struct/interface
 dimension 和 named override 语义引用均已建立并通过验收。T033–T037 已分别完成
 impact/category oracle、filelist 迁移、project-root 手动 multi-module profile、加密率选择
-以及 RISC-V-Vector Formal/演示集成；T038 的边界修复计划已冻结，条件性 T039（默认 profile
-晋级）尚未实现。
+以及 RISC-V-Vector Formal/演示集成；T038 最终保持阻塞，旧“条件性 T039”占位已撤销。当前
+T039 专用于统一 SourceSet，默认 profile 晋级需在 R5 后重新评估并另行编号。

@@ -142,7 +142,7 @@ T037 的 `scripts/t029_acceptance.py` 固定五组 oracle。
 - `README.md`、`docs/systemverilog_renaming_table.md`、`docs/formal_verification.md`、
   `docs/future_work.md`、`docs/project_root_top_roadmap.md`：同步当前边界和新口径；
 - `docs/category_profile_normalization_plan.md`、`docs/project_root_parameter_plan_draft.md`：
-  将条件性 profile 晋级顺延为 T039，并记录 T038 的边界修复；
+  将条件性 profile 晋级顺延到后续任务，并记录 T038 的边界修复；该旧占位不再使用 T039 编号；
 - `docs/tasks/T038_risc_v_vector_parameter_genvar_rate.md`：任务记录和验收证据。
 
 除第 7.1 节用户确认的演示扩展外，不允许修改 `scripts/formal_equivalence.py`、T037 固定
@@ -239,6 +239,19 @@ planning_document: docs/three_mode_refactor_plan.md
 next_implementation_plan: docs/refactor_next_sourceset_task.md
 subagent_protocol: docs/refactor_subagent_protocol.md
 t038_conclusion: remains BLOCKED / NOT_ACCEPTED; the 6835-vs-6882 conflict and missing T038 Formal are retained as historical evidence, not resolved or accepted by this planning update
-next_task_rule: no T039 implementation contract is created while T038 remains unresolved; follow-up task numbers and exact acceptance commands will be frozen sequentially under docs/tasks/README.md
+next_task_rule: superseded on 2026-07-22 by explicit user authorization after the blocked worktree was preserved; T039 may proceed under the replacement architecture without accepting or resuming T038
 formal_verification: N/A; this update records architecture and task planning only and produces no rewritten RTL
+```
+
+## 13. 主 Agent 保存与关闭处置（2026-07-22）
+
+```text
+snapshot_commit: e4f3f94
+snapshot_subject: [CHORE] Preserve blocked T038 snapshot before refactor
+snapshot_scope: all previously staged T038 implementation, compact fixtures, tests, evidence, and refactor planning documents
+status: BLOCKED / NOT_ACCEPTED
+acceptance_claim: none; the snapshot preserves evidence and recoverability only
+user_direction: preserve the previous result, stop extending T038 compatibility/oracles, and create the next replacement-architecture task
+successor_task: docs/tasks/T039_sourceset_input_contract.md
+resume_policy: do not resume T038 implementation; reuse its semantic evidence only when a later SymbolGraph task explicitly authorizes it
 ```

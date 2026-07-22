@@ -1,14 +1,15 @@
 # 下一步实现计划：SourceSet 与三入口输入合同
 
-- 计划状态：`READY_TO_CONTRACT`
+- 计划状态：`CONTRACTED_AS_T039`
 - 所属阶段：R1
 - 实现状态：尚未开始
-- 活动任务：无；T038 仍为 `BLOCKED / NOT_ACCEPTED`
-- 前置条件：主 Agent 先完成 T038 工作区分流，保证实现任务不会覆盖现有未提交修改
+- 活动任务：[`T039`](tasks/T039_sourceset_input_contract.md) 已设为 `READY`
+- 前置条件：已满足；T038 工作区已保存为提交 `e4f3f94`
 - Formal verification：`N/A`，本步骤不产生 rewritten RTL
 
-本文是下一张任务单的冻结草案，不是 `docs/tasks/TNNN_*.md` 活动合同。只有 T038 停点和当前
-工作区由主 Agent 明确处置后，才能按本文生成新的 `READY` 任务。
+本文保留为 R1 设计草案；正式实现边界、API、fixture 和验收以
+[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md) 为准。T038
+停点已由主 Agent 保存为提交 `e4f3f94`，用户随后授权建立 T039。
 
 ## 1. 单一目标
 
@@ -39,7 +40,7 @@ compile_order: tuple[str, ...]
 
 1. 所有记录使用 source-root-relative POSIX 路径；
 2. `ordered_source_files` 对 single-file/filelist 保留用户顺序，禁止排序；
-3. `compile_order` 可以根据已确认依赖生成，但必须确定且可重复；
+3. single-file/filelist 的 `compile_order` 保持显式 source 顺序；project-root 根据依赖生成确定顺序；
 4. `.svh` 只进入 `included_files`，不作为独立 source unit；
 5. filelist 无 top 时，`top_closure_files=()`；
 6. filelist 有 top 时，`ordered_source_files` 仍包含全部列出文件，closure 只作为 overlay；

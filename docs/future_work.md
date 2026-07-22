@@ -94,8 +94,10 @@ v4、gate audit、metrics 和逐文件 mapping，并由 `decrypt-project` 字节
   根目录 `encrypt.py` 加密/解密演示命令；
 - T038（已阻塞，未验收）：修复 RISC-V-Vector parameter/genvar 误分类和 gate 失败，并统一加密率的总行数
   口径；当前仍受六组 occurrences 冻结值偏差和 Formal 验收链路缺失阻塞；
-- T039（条件任务）：在 T038 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
-  并重新冻结 FIFO/RISC-V-Vector 的数量和 formal oracle；
+- T039（当前任务）：建立 single-file/filelist/project-root 共用的 SourceSet 输入合同，不修改
+  profile、mapping 或 rewritten RTL；
+- R5 后评估（未编号）：按新架构重新判断是否把更多 parameter/shared type 晋级到默认 profile，
+  不复用 T038 的冻结数量或旧 formal oracle；
 - library、嵌套 filelist 和更复杂的 include/define 条件组合；
 - 未解析 IP/blackbox 的受控模型；
 - preserve/allow/deny 规则；
