@@ -28,7 +28,7 @@ SINGLE_CATEGORIES = {
 
 PROJECT_CATEGORIES = {
     "signals": (14, 67),
-    "parameters": (6, 43),
+    "parameters": (6, 41),
     "enum_values": (3, 6),
     "genvars": (2, 10),
     "functions": (2, 7),

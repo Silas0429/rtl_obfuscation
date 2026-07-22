@@ -12,7 +12,7 @@ import unittest
 
 CATEGORIES = {
     "signals": (14, 67),
-    "parameters": (6, 43),
+    "parameters": (6, 41),
     "enum_values": (3, 6),
     "genvars": (2, 10),
     "functions": (2, 7),
@@ -66,8 +66,11 @@ class ExampleFifoProjectTest(unittest.TestCase):
         repository = Path(__file__).resolve().parents[1]
         root = repository / "rtl_samples" / "example_fifo"
         top_source = (root / "fifo_top.sv").read_text(encoding="utf-8")
+        ctrl_source = (root / "fifo_ctrl.sv").read_text(encoding="utf-8")
         storage_source = (root / "fifo_storage.sv").read_text(encoding="utf-8")
         self.assertIn("fifo_if fifo_bus", top_source)
+        self.assertIn("fifo_if.consumer", ctrl_source)
+        self.assertIn(".ctrl(fifo_bus)", top_source)
         self.assertIn("fifo_bus.push", top_source)
         self.assertIn("extract_payload(view.entry)", storage_source)
         with TemporaryDirectory() as tmp:
@@ -89,7 +92,7 @@ class ExampleFifoProjectTest(unittest.TestCase):
             self.assertEqual(json.loads(full.stdout), {
                 "files": 4,
                 "mapping_entries": 44,
-                "modified_tokens": 170,
+                "modified_tokens": 168,
             })
             mapping = json.loads(mapping_file.read_text(encoding="utf-8"))
             self.assertEqual(mapping["version"], 2)
@@ -152,7 +155,7 @@ class ExampleFifoProjectTest(unittest.TestCase):
             metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
             self.assertEqual(metrics["symbols"]["coverage"], 1.0)
             self.assertEqual(metrics["occurrences"], {
-                "renamed": 170, "eligible": 170, "coverage": 1.0,
+                "renamed": 168, "eligible": 168, "coverage": 1.0,
             })
             self.assertEqual(metrics["plaintext_leakage_rate"], 0.0)
             self.assertEqual(metrics["effective_coverage"], 1.0)
@@ -189,14 +192,14 @@ assert not any(d.isError() for d in c.getAllDiagnostics())
                     cwd=repository, capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(verible.returncode, 0, verible.stderr)
-            iverilog = subprocess.run(
-                [
-                    "iverilog", "-g2012", "-s", "fifo_top", "-o", str(base / "fifo.out"),
-                    *(str(gate / line.strip()) for line in (root / "design.f").read_text().splitlines() if line.strip()),
-                ],
-                cwd=repository, capture_output=True, text=True, check=False,
+            # Icarus does not support an interface-typed module port.  This
+            # fixture intentionally exercises the PySlang/Verible-supported
+            # ``fifo_if.consumer ctrl`` boundary instead.
+            self.assertIn(".ctrl(fifo_bus)", (gate / "fifo_top.sv").read_text(encoding="utf-8"))
+            self.assertRegex(
+                (gate / "fifo_ctrl.sv").read_text(encoding="utf-8"),
+                r"\b[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*\s+ctrl\b",
             )
-            self.assertEqual(iverilog.returncode, 0, iverilog.stderr)
 
             for category, (entries_expected, tokens_expected) in CATEGORIES.items():
                 category_base = base / "debug" / category

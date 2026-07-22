@@ -1,5 +1,10 @@
 # 未来扩展与已知问题
 
+> 2026-07-22 已确认新的优先方向：停止继续扩展历史 default/manual profile 与 mapping
+> v2/v3/v4 兼容路径，按 [`docs/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)
+> 顺序建立 SourceSet、SymbolGraph 和统一 rewrite/audit/decrypt 流水线。T038 仍保留为
+> `BLOCKED / NOT_ACCEPTED` 历史停点，重构任务尚未开始。
+
 本文件只记录当前交付范围之外的事项。已经实现的功能和使用方法见根目录
 [`README.md`](../README.md)，不要在本文件复制使用说明。
 
@@ -10,6 +15,10 @@ parameter/localparam inventory 和 rewrite；T035 已统一两种多文件入口
 回归已完成并验收。T036 已实现按唯一物理行目标选择 mapping、报告实际率并兼容三种入口；
 T037 已完成 RISC-V-Vector Formal 专项验收和 `encrypt.py` 演示脚本；T038 当前修复
 RISC-V-Vector 手动 parameter/genvar 边界，并统一加密率 metrics 的 effective-line 分母。
+截至 2026-07-22，T038 仍为 `BLOCKED / NOT_ACCEPTED`：六组 RISC profile 的 gate/decrypt 实测为
+`1211 entries / 6882 occurrences`，与合同冻结的 `6835` occurrences 不一致；紧凑 fixture、
+专用验收脚本和 RISC Formal 正负例尚未交付。因此这部分不能计入已验收能力，也不能提前晋级
+default profile。
 
 ## 1. 优先解决的问题
 
@@ -80,10 +89,11 @@ v4、gate audit、metrics 和逐文件 mapping，并由 `decrypt-project` 字节
 - T034 已完成：统一单文件/filelist 默认 profile；
 - T035：两入口 manual multi-module/ABI profile、bounded closure、跨 module parameter、
   module/port/interface 改写和 mapping v4 审计已完成；RISC-V-Vector Formal 不属于其常规验收；
-- T036：为三种加密入口增加目标加密率、唯一物理行选择、实际率报告和不可达时全候选加密；
+- T036：为三种加密入口增加目标加密率、唯一 effective line 选择、实际率报告和不可达时全候选加密；
 - T037：完成 RISC-V-Vector `vector_top` 的 formal-view/formal-align/Yosys 正负例验收，并提供
   根目录 `encrypt.py` 加密/解密演示命令；
-- T038：修复 RISC-V-Vector parameter/genvar 误分类和 gate 失败，并统一加密率的总行数口径；
+- T038（已阻塞，未验收）：修复 RISC-V-Vector parameter/genvar 误分类和 gate 失败，并统一加密率的总行数
+  口径；当前仍受六组 occurrences 冻结值偏差和 Formal 验收链路缺失阻塞；
 - T039（条件任务）：在 T038 完成后重新评估是否把更多 parameter/shared type 晋级到默认 profile，
   并重新冻结 FIFO/RISC-V-Vector 的数量和 formal oracle；
 - library、嵌套 filelist 和更复杂的 include/define 条件组合；

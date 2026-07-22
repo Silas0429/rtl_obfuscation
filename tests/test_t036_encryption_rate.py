@@ -45,8 +45,12 @@ class EncryptionRateTests(unittest.TestCase):
         return json.loads(path.read_text(encoding="utf-8"))
 
     @staticmethod
-    def _physical_lines(source: bytes) -> int:
-        return 0 if not source else source.count(b"\n") + (not source.endswith(b"\n"))
+    def _effective_lines(source: bytes) -> int:
+        return sum(
+            1
+            for line in source.decode("utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("//")
+        )
 
     @staticmethod
     def _category_arguments(categories: tuple[str, ...]) -> list[str]:
@@ -123,13 +127,15 @@ class EncryptionRateTests(unittest.TestCase):
     def _assert_rate_metrics(self, metrics: dict, mapping: dict, source_root: Path) -> None:
         rate = metrics["encryption_rate"]
         if mapping["version"] == 1:
-            total_lines = self._physical_lines(source_root.read_bytes())
+            total_lines = self._effective_lines(source_root.read_bytes())
         else:
             total_lines = sum(
-                self._physical_lines((source_root / relative_file).read_bytes())
+                self._effective_lines((source_root / relative_file).read_bytes())
                 for relative_file in mapping["files"]
             )
         self.assertEqual(rate["total_lines"], total_lines)
+        self.assertEqual(metrics["affected_lines"]["total"], rate["total_lines"])
+        self.assertAlmostEqual(metrics["affected_lines"]["rate"], rate["actual_rate"])
         candidate_lines = {
             (item["file"], item["line"])
             for candidate in rate["candidates"]
@@ -331,7 +337,7 @@ class EncryptionRateTests(unittest.TestCase):
             self.assertEqual(manual_project_mapping["version"], 4)
             self.assertEqual(
                 filelist_metrics["encryption_rate"]["total_lines"],
-                sum(self._physical_lines((T034 / name).read_bytes()) for name in filelist_mapping["files"]),
+                sum(self._effective_lines((T034 / name).read_bytes()) for name in filelist_mapping["files"]),
             )
             self.assertEqual(
                 manual_filelist_mapping["skipped"][0]["file"],

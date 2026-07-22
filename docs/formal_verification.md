@@ -58,7 +58,12 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
   --top formal_variable_rename
 ```
 
-多文件 FIFO：
+多文件 FIFO（适用于保持 Yosys 可读端口形状的历史 fixture）：
+
+> 当前 `rtl_samples/example_fifo` 演示 fixture 已改为让 `fifo_if.consumer ctrl` 作为
+> `fifo_ctrl` 的下层 module port。Icarus/Yosys 当前不支持这一 interface-typed port 形状，
+> 因此该 fixture 的演示验收使用 PySlang、Verible 和 decrypt；不要将下面的命令用于当前
+> `example_fifo`，也不要把失败解释为加密失败。
 
 ```sh
 conda run -n rtl_obfuscation python scripts/formal_equivalence.py \

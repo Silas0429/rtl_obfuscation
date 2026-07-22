@@ -82,3 +82,13 @@
   场景，未修改 `rtl_obfuscator/` 实现。
 - 2026-07-15：主 Agent 独立完成 mapping、per-file mapping、frontend、formal、decrypt
   和完整回归验收，任务设置为 `ACCEPTED`。本任务未由子 Agent 提交或推送。
+
+## 后续样例形态修订
+
+2026-07-21 起，当前 `rtl_samples/example_fifo` 为了展示真实的 controller interface
+连接，改为在 `fifo_ctrl` 使用 `fifo_if.consumer ctrl`，并由 `fifo_top` 通过
+`.ctrl(fifo_bus)` 连接。上述“下级 module port 不作为验收形态”的历史边界不再描述当前
+gold；本次修订不改变 top-level ABI，但 Icarus/Yosys 不能解析该 interface-typed port，
+因此当前演示仅以 PySlang、Verible、gate audit 和 decrypt 为轻量证据。当前 mapping 数量和
+验收说明以 T038 执行记录及根目录 README 为准，历史 T026 Formal 结果保留为旧 fixture
+形态的记录。

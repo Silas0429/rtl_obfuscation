@@ -33,14 +33,6 @@ module fifo_top #(
         .DEPTH(DEPTH),
         .ADDR_WIDTH(ADDR_WIDTH)
     ) u_fifo (
-        .clk(clk),
-        .rst_n(rst_n),
-        .push(fifo_bus.push),
-        .pop(fifo_bus.pop),
-        .data(fifo_bus.data),
-        .q(fifo_bus.q),
-        .full(fifo_bus.full),
-        .empty(fifo_bus.empty),
-        .valid(fifo_bus.valid)
+        .ctrl(fifo_bus)
     );
 endmodule

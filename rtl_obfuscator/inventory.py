@@ -1,4 +1,4 @@
-"""Emit a random-name inventory for SystemVerilog rename targets."""
+"""Emit fresh-name inventories for SystemVerilog rename targets."""
 
 from __future__ import annotations
 
@@ -146,6 +146,29 @@ def _collect_parameters(
     parameters: list[Any] = []
     genvars: list[Any] = []
     existing_identifiers: set[str] = set()
+    iteration_parameter_locations: set[tuple[Any, int, str]] = set()
+
+    # A separately declared genvar (for example ``genvar k; for (k = ...)``)
+    # is represented by PySlang as a source GenvarSymbol plus one or more
+    # elaborated body ParameterSymbols.  The latter carry the location of the
+    # loop-header identifier, not the genvar declaration.  Record those
+    # syntax-owned loop locations so parameter collection cannot mistake an
+    # elaboration artifact for a source module parameter.
+    for syntax_tree in compilation.getSyntaxTrees():
+        loop_generates: list[Any] = []
+        syntax_tree.root.visit(
+            lambda node: loop_generates.append(node)
+            if getattr(node, "kind", None) == pyslang.syntax.SyntaxKind.LoopGenerate
+            else None
+        )
+        for loop in loop_generates:
+            identifier = getattr(loop, "identifier", None)
+            location = getattr(identifier, "location", None)
+            raw_text = getattr(identifier, "rawText", None)
+            if location is not None and isinstance(raw_text, str):
+                iteration_parameter_locations.add(
+                    (location.buffer, location.offset, raw_text)
+                )
 
     def visitor(node: Any) -> None:
         name = getattr(node, "name", None)
@@ -172,6 +195,12 @@ def _collect_parameters(
             and parameter.location.offset == genvar.location.offset
             for genvar in genvars
         )
+        and (
+            parameter.location.buffer,
+            parameter.location.offset,
+            parameter.name,
+        )
+        not in iteration_parameter_locations
     ]
 
     unique_parameters: dict[tuple[str, int, str], Any] = {}
@@ -710,6 +739,9 @@ def _collect_targets(
 
 
 def _new_name(name_length: int, unavailable: set[str]) -> str:
+    """Return a fresh random legal identifier."""
+    if name_length < 1:
+        raise ValueError("name length must be positive")
     for _ in range(1000):
         candidate = secrets.choice(_FIRST_NAME_CHARS) + "".join(
             secrets.choice(_REMAINING_NAME_CHARS)
@@ -719,7 +751,9 @@ def _new_name(name_length: int, unavailable: set[str]) -> str:
             continue
         unavailable.add(candidate)
         return candidate
-    raise RuntimeError("could not generate a unique non-keyword name in 1000 attempts")
+    raise RuntimeError(
+        "could not generate a unique non-keyword name in 1000 attempts"
+    )
 
 
 def _range_record(
@@ -748,16 +782,42 @@ def _genvar_reference_tokens(
     semantic_nodes: list[Any] = []
     compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
 
-    loop_syntaxes: list[Any] = []
-    for syntax_tree in compilation.getSyntaxTrees():
-        syntax_tree.root.visit(
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    for target in targets:
+        definition = getattr(target, "declaringDefinition", None)
+        definition_syntax = getattr(definition, "syntax", None)
+        if definition_syntax is None:
+            raise ValueError("genvar has no declaring definition syntax")
+
+        loop_syntaxes: list[Any] = []
+        definition_syntax.visit(
             lambda node: loop_syntaxes.append(node)
             if getattr(node, "kind", None) == pyslang.syntax.SyntaxKind.LoopGenerate
             else None
         )
+        matching_loops = [
+            loop
+            for loop in loop_syntaxes
+            if getattr(getattr(loop, "identifier", None), "rawText", None)
+            == target.name
+        ]
+        if not matching_loops:
+            raise ValueError("genvar has no source loop")
 
-    references: dict[Any, list[Any]] = {target: [] for target in targets}
-    for target in targets:
+        # Separately declared genvars have one elaborated body parameter for
+        # each loop, while inline ``for (genvar k = ...)`` declarations can
+        # share the declaration location.  Restrict the semantic evidence to
+        # the declaring module and accept all source loops owned by this
+        # genvar; repeated use of one genvar is valid SystemVerilog.
+        def in_definition(location: Any) -> bool:
+            source_range = getattr(definition_syntax, "sourceRange", None)
+            if source_range is None:
+                return False
+            return (
+                location.buffer == source_range.start.buffer
+                and source_range.start.offset <= location.offset <= source_range.end.offset
+            )
+
         iteration_parameters = [
             node
             for node in semantic_nodes
@@ -765,7 +825,7 @@ def _genvar_reference_tokens(
             and node.name == target.name
             and node.isLocalParam
             and node.isBodyParam
-            and _same_location(node.location, target.location)
+            and in_definition(node.location)
         ]
         if not iteration_parameters:
             raise ValueError("genvar has no elaborated iteration parameters")
@@ -776,23 +836,193 @@ def _genvar_reference_tokens(
             if any(node.symbol is parameter for parameter in iteration_parameters):
                 references[target].append(node.syntax.identifier)
 
-        matching_loops = [
-            loop
-            for loop in loop_syntaxes
-            if _same_location(loop.identifier.location, target.location)
-            and loop.identifier.rawText == target.name
-        ]
-        if len(matching_loops) != 1:
-            raise ValueError("expected one source loop for genvar")
-        loop = matching_loops[0]
-        header_tokens = [
-            loop.stopExpr.left.identifier,
-            loop.iterationExpr.operand.identifier,
-        ]
-        if any(token.rawText != target.name for token in header_tokens):
-            raise ValueError("genvar header token does not match declaration")
-        references[target].extend(header_tokens)
+        # The syntax tree retains every source occurrence in the generate
+        # loop, including the initializer, stop expression, iteration
+        # expression, and body references.  The declaration itself is already
+        # emitted separately and must not be added twice.
+        for loop in matching_loops:
+            header_identifier = getattr(loop, "identifier", None)
+            if (
+                getattr(header_identifier, "rawText", None) == target.name
+                and not _same_location(header_identifier.location, target.location)
+            ):
+                references[target].append(header_identifier)
+            loop_nodes: list[Any] = []
+            loop.visit(loop_nodes.append)
+            for node in loop_nodes:
+                if type(node).__name__ != "IdentifierNameSyntax":
+                    continue
+                identifier = getattr(node, "identifier", None)
+                if identifier is None or identifier.rawText != target.name:
+                    continue
+                if _same_location(identifier.location, target.location):
+                    continue
+                references[target].append(identifier)
 
+    return references
+
+
+def _parameter_generate_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect parameter references retained only in generate syntax.
+
+    PySlang elaborates generate conditions and loop headers without exposing
+    their source identifiers as ordinary NamedValueExpression nodes.  Walk
+    each parameter's declaring module syntax instead, and bind identifiers
+    through that module's lexical scope.  This is deliberately owner-bound;
+    it never performs a project-wide spelling search.
+    """
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    targets_by_definition: dict[Any, list[Any]] = {}
+    for target in targets:
+        definition = getattr(target, "declaringDefinition", None)
+        syntax = getattr(definition, "syntax", None)
+        if syntax is None:
+            raise ValueError("parameter has no declaring definition syntax")
+        targets_by_definition.setdefault(definition, []).append(target)
+
+    for definition, definition_targets in targets_by_definition.items():
+        syntax = definition.syntax
+        generate_nodes: list[Any] = []
+        syntax.visit(
+            lambda node: generate_nodes.append(node)
+            if type(node).__name__ in ("IfGenerateSyntax", "LoopGenerateSyntax")
+            else None
+        )
+        if not generate_nodes:
+            continue
+
+        for generate in generate_nodes:
+            loop_identifier_name = None
+            expression_roots: list[Any] = []
+            if type(generate).__name__ == "LoopGenerateSyntax":
+                identifier = getattr(generate, "identifier", None)
+                loop_identifier_name = getattr(identifier, "rawText", None)
+                expression_roots.extend(
+                    expression
+                    for expression in (
+                        getattr(generate, "initialExpr", None),
+                        getattr(generate, "stopExpr", None),
+                        getattr(generate, "iterationExpr", None),
+                    )
+                    if expression is not None
+                )
+            else:
+                condition = getattr(generate, "condition", None)
+                if condition is not None:
+                    expression_roots.append(condition)
+            syntax_nodes: list[Any] = []
+            for expression in expression_roots:
+                if hasattr(expression, "visit"):
+                    expression.visit(syntax_nodes.append)
+            for node in syntax_nodes:
+                if type(node).__name__ not in (
+                    "IdentifierNameSyntax",
+                    "IdentifierSelectNameSyntax",
+                ):
+                    continue
+                identifier = getattr(node, "identifier", None)
+                if identifier is None:
+                    continue
+                if (
+                    loop_identifier_name is not None
+                    and identifier.rawText == loop_identifier_name
+                ):
+                    # This is the loop variable token, not a module
+                    # parameter reference.  Its semantic owner is a genvar
+                    # or an elaborated iteration parameter.  The same-name
+                    # genvar also owns its occurrences in the loop body.
+                    continue
+                for target in definition_targets:
+                    if identifier.rawText != target.name:
+                        continue
+                    parent_scope = getattr(target, "parentScope", None)
+                    if parent_scope is None:
+                        raise ValueError("parameter has no lexical owner scope")
+                    if parent_scope.lookupName(identifier.rawText) is target:
+                        references[target].append(identifier)
+                        break
+
+    return references
+
+
+def _parameter_syntax_dimension_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Recover dimension references missing from resolved semantic types."""
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+    targets_by_definition: dict[Any, list[Any]] = {}
+    for target in targets:
+        definition = getattr(target, "declaringDefinition", None)
+        syntax = getattr(definition, "syntax", None)
+        if syntax is None:
+            raise ValueError("parameter has no declaring definition syntax")
+        targets_by_definition.setdefault(definition, []).append(target)
+
+    dimension_kinds = {
+        "VariableDimensionSyntax",
+        "RangeDimensionSpecifierSyntax",
+        "AssociativeDimensionSpecifierSyntax",
+        "QueueDimensionSpecifierSyntax",
+        "UnsizedDimensionSpecifierSyntax",
+        "RangeSelectSyntax",
+        "ElementSelectSyntax",
+    }
+    for definition, definition_targets in targets_by_definition.items():
+        syntax_nodes: list[Any] = []
+        definition.syntax.visit(syntax_nodes.append)
+        loop_shadow_ranges = []
+        for syntax_node in syntax_nodes:
+            if type(syntax_node).__name__ != "LoopGenerateSyntax":
+                continue
+            loop_identifier = getattr(syntax_node, "identifier", None)
+            loop_range = getattr(syntax_node, "sourceRange", None)
+            loop_name = getattr(loop_identifier, "rawText", None)
+            if loop_name is None or loop_range is None:
+                continue
+            loop_shadow_ranges.append(
+                (
+                    loop_name,
+                    loop_range.start.buffer,
+                    loop_range.start.offset,
+                    loop_range.end.offset,
+                )
+            )
+        for dimension in syntax_nodes:
+            if type(dimension).__name__ not in dimension_kinds:
+                continue
+            dimension_nodes: list[Any] = []
+            dimension.visit(dimension_nodes.append)
+            for node in dimension_nodes:
+                if type(node).__name__ not in (
+                    "IdentifierNameSyntax",
+                    "IdentifierSelectNameSyntax",
+                ):
+                    continue
+                identifier = getattr(node, "identifier", None)
+                if identifier is None:
+                    continue
+                if any(
+                    identifier.rawText == loop_name
+                    and identifier.location.buffer == buffer
+                    and start <= identifier.location.offset < end
+                    for loop_name, buffer, start, end in loop_shadow_ranges
+                ):
+                    # A same-named genvar owns every occurrence in its
+                    # generate loop, including dimensions in the generated
+                    # body.  The module parameter with the same spelling is
+                    # not the owner of these source tokens.
+                    continue
+                for target in definition_targets:
+                    if identifier.rawText != target.name:
+                        continue
+                    parent_scope = getattr(target, "parentScope", None)
+                    if parent_scope is None:
+                        raise ValueError("parameter has no lexical owner scope")
+                    if parent_scope.lookupName(identifier.rawText) is target:
+                        references[target].append(identifier)
+                        break
     return references
 
 
@@ -874,7 +1104,11 @@ def _type_alias_reference_tokens(
                 continue
             if identifier.location.offset == target.location.offset:
                 continue
-            if type(getattr(syntax_node, "parent", None)).__name__ != "NamedTypeSyntax":
+            parent_type = type(getattr(syntax_node, "parent", None)).__name__
+            if parent_type == "CastExpressionSyntax":
+                references[target].append(identifier)
+                continue
+            if parent_type != "NamedTypeSyntax":
                 continue
             references[target].append(identifier)
 
@@ -1321,7 +1555,7 @@ def _module_port_reference_tokens(
     # Build mapping from internalSymbol to port target
     port_internal_symbols: dict[Any, Any] = {}
     for target in port_targets:
-        internal = target.internalSymbol
+        internal = getattr(target, "internalSymbol", None)
         if internal is not None:
             port_internal_symbols[internal] = target
         port_name = target.name
@@ -1378,6 +1612,13 @@ def _module_port_reference_tokens(
 
 
 
+def _interface_port_uses_modport(target: Any) -> bool:
+    """Return whether an interface port has an explicit modport selector."""
+    syntax = getattr(target, "syntax", None)
+    header = getattr(getattr(syntax, "parent", None), "header", None)
+    return getattr(header, "modport", None) is not None
+
+
 def _interface_reference_tokens(
     targets: list[Any], compilation: pyslang.ast.Compilation
 ) -> dict[Any, list[Any]]:
@@ -1415,9 +1656,45 @@ def _interface_reference_tokens(
             header = getattr(parent, "header", None)
             if header is None:
                 continue
-            source_range = getattr(header, "sourceRange", None)
-            if source_range is not None:
-                references[target].append(source_range)
+            # An interface port header spans both the interface type and the
+            # optional modport (for example ``fifo_if.consumer``).  Only the
+            # type identifier belongs to the ``interfaces`` category; the
+            # modport remains a separate canonical category.
+            type_token = getattr(header, "nameOrKeyword", None)
+            if type_token is None:
+                data_type = getattr(header, "dataType", None)
+                type_name = getattr(data_type, "name", None)
+                type_token = getattr(type_name, "identifier", None)
+            if getattr(type_token, "rawText", None) == target.name:
+                references[target].append(type_token)
+
+    return references
+
+
+def _modport_reference_tokens(
+    targets: list[Any], compilation: pyslang.ast.Compilation
+) -> dict[Any, list[Any]]:
+    """Collect modport names used by interface-port declarations."""
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(lambda node: semantic_nodes.append(node))
+    references: dict[Any, list[Any]] = {target: [] for target in targets}
+
+    for node in semantic_nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.InterfacePort:
+            continue
+        interface_definition = getattr(node, "interfaceDef", None)
+        header = getattr(getattr(getattr(node, "syntax", None), "parent", None), "header", None)
+        modport_clause = getattr(header, "modport", None)
+        modport_token = getattr(modport_clause, "member", None)
+        if interface_definition is None or modport_token is None:
+            continue
+        for target in targets:
+            declaring_definition = getattr(target, "declaringDefinition", None)
+            if (
+                declaring_definition is interface_definition
+                and getattr(modport_token, "rawText", None) == target.name
+            ):
+                references[target].append(modport_token)
 
     return references
 
@@ -1491,7 +1768,12 @@ def _interface_port_reference_tokens(
             node_type = type(node).__name__
             if node_type == "HierarchicalValueExpression":
                 symbol = getattr(node, "symbol", None)
-                if symbol is not target and not (
+                internal_symbol = getattr(symbol, "internalSymbol", None)
+                if internal_symbol is target:
+                    pass
+                elif symbol is target:
+                    pass
+                elif not (
                     getattr(symbol, "kind", None)
                     == pyslang.ast.SymbolKind.Variable
                     and getattr(symbol, "name", None) == target.name
@@ -1751,6 +2033,10 @@ def _add_project_ranges(
         parameter_targets, compilation
     ).items():
         references[target].extend(tokens)
+    for target, tokens in _parameter_syntax_dimension_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
     for target, tokens in _named_parameter_override_reference_tokens(
         parameter_targets, compilation
     ).items():
@@ -1829,6 +2115,15 @@ def _add_project_ranges(
     ]
     for target, tokens in _interface_port_reference_tokens(
         interface_port_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    modport_targets = [
+        target
+        for target, category in zip(targets, categories, strict=True)
+        if category == "modports"
+    ]
+    for target, tokens in _modport_reference_tokens(
+        modport_targets, compilation
     ).items():
         references[target].extend(tokens)
 
@@ -2012,9 +2307,9 @@ def _top_project_references(
         and getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
     ]
     port_targets_by_internal = {
-        target.internalSymbol: target
+        getattr(target, "internalSymbol", None): target
         for target in port_targets
-        if target.internalSymbol is not None
+        if getattr(target, "internalSymbol", None) is not None
     }
     parameter_targets = [
         target
@@ -2043,13 +2338,14 @@ def _top_project_references(
 
     compilation.getRoot().visit(visitor)
 
+    semantic_nodes: list[Any] = []
+    compilation.getRoot().visit(semantic_nodes.append)
+
     # Slang represents instances in an unrolled generate template as
     # UninstantiatedDefSymbol nodes. Their actual arguments do not produce
     # usable NamedValueExpression nodes, so bind identifier syntax from each
     # actual in the symbol's lexical scope. The identity check is the semantic
     # boundary: spelling alone never selects a target.
-    semantic_nodes: list[Any] = []
-    compilation.getRoot().visit(semantic_nodes.append)
     for node in semantic_nodes:
         if type(node).__name__ != "UninstantiatedDefSymbol":
             continue
@@ -2093,7 +2389,14 @@ def _top_project_references(
         parameter_targets, compilation
     ).items():
         references[target].extend(tokens)
-
+    for target, tokens in _parameter_generate_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
+    for target, tokens in _parameter_syntax_dimension_reference_tokens(
+        parameter_targets, compilation
+    ).items():
+        references[target].extend(tokens)
     by_helper = (
         (
             ("genvars",),
@@ -2118,12 +2421,24 @@ def _top_project_references(
                 [
                     target
                     for target in selected
-                    if getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
+                    if getattr(target, "kind", None)
+                    == pyslang.ast.SymbolKind.Port
+                    or (
+                        getattr(target, "kind", None)
+                        == pyslang.ast.SymbolKind.InterfacePort
+                        and _interface_port_uses_modport(target)
+                    )
                 ],
                 [
                     "ports"
                     for target in selected
-                    if getattr(target, "kind", None) == pyslang.ast.SymbolKind.Port
+                    if getattr(target, "kind", None)
+                    == pyslang.ast.SymbolKind.Port
+                    or (
+                        getattr(target, "kind", None)
+                        == pyslang.ast.SymbolKind.InterfacePort
+                        and _interface_port_uses_modport(target)
+                    )
                 ],
                 compilation,
                 top,
@@ -2156,6 +2471,10 @@ def _top_project_references(
         (
             ("interface_ports",),
             lambda selected: _interface_port_reference_tokens(selected, compilation),
+        ),
+        (
+            ("modports",),
+            lambda selected: _modport_reference_tokens(selected, compilation),
         ),
     )
     for helper_categories, helper in by_helper:
@@ -2226,9 +2545,9 @@ def _module_type_records(
     top_instance: Any,
     source_root: Path,
     source_manager: Any,
-) -> dict[tuple[str, str], dict[str, Any]]:
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """Return semantic module-instance type ranges keyed by (scope, name)."""
-    records: dict[tuple[str, str], dict[str, Any]] = {}
+    records: dict[tuple[str, str], list[dict[str, Any]]] = {}
     nodes: list[Any] = []
     top_instance.visit(nodes.append)
     instance_symbols = {
@@ -2270,14 +2589,21 @@ def _module_type_records(
                 instance = instance_symbols.get(name_token.rawText)
                 if instance is None or instance.definition.name != type_name:
                     continue
-                records[(top_instance.definition.name, type_name)] = (
-                    _classification_record(
-                        source_root=source_root,
-                        source_manager=source_manager,
-                        location=type_token.location,
-                        name=type_name,
-                    )
+                record = _classification_record(
+                    source_root=source_root,
+                    source_manager=source_manager,
+                    location=type_token.location,
+                    name=type_name,
                 )
+                records.setdefault(
+                    (top_instance.definition.name, type_name), []
+                ).append(record)
+    for key, values in records.items():
+        unique = {
+            (record["file"], record["start"], record["end"]): record
+            for record in values
+        }
+        records[key] = [unique[item] for item in sorted(unique)]
     return records
 
 
@@ -2481,9 +2807,9 @@ def _build_impact_classification(
             name=name,
         )
         refs = []
-        type_record = module_type_records.get((top_instance.definition.name, name))
-        if type_record is not None:
-            refs.append(type_record)
+        refs.extend(
+            module_type_records.get((top_instance.definition.name, name), [])
+        )
         entry = {
             "category": "modules",
             "scope": name,
@@ -2583,11 +2909,36 @@ def _build_impact_classification(
         )
         if formal_bus is None:
             raise ValueError("interface port formal connection owner is unresolved")
+        body_bus = None
+        semantic_nodes: list[Any] = []
+        top_instance.visit(semantic_nodes.append)
+        declaration_file = raw_bus["declaration"]["file"]
+        for node in semantic_nodes:
+            if type(node).__name__ != "HierarchicalValueExpression":
+                continue
+            left = getattr(getattr(node, "syntax", None), "left", None)
+            token = getattr(left, "identifier", None)
+            if token is None or token.rawText != raw_bus["name"]:
+                continue
+            token_file = Path(
+                source_manager.getFullPath(token.location.buffer)
+            ).resolve().relative_to(source_root.resolve()).as_posix()
+            if token_file != declaration_file:
+                continue
+            body_bus = _classification_record(
+                source_root=source_root,
+                source_manager=source_manager,
+                location=token.location,
+                name=raw_bus["name"],
+            )
+            break
+        if body_bus is None:
+            raise ValueError("interface port body reference owner is unresolved")
         child_bus = {
             **raw_bus,
             "category": "interface_ports",
             "scope": "t033_child",
-            "references": [formal_bus, raw_bus["references"][0]],
+            "references": [formal_bus, body_bus],
             "occurrences": 3,
         }
         child_bus["references"] = sorted(
@@ -3302,7 +3653,7 @@ def build_filelist_default_inventory(
 
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="List random-name mappings for SystemVerilog identifiers."
+        description="List fresh-name mappings for SystemVerilog identifiers."
     )
     parser.add_argument("--input", required=True, type=Path, dest="input_file")
     parser.add_argument(

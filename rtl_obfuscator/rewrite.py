@@ -70,10 +70,12 @@ def _parse_encryption_rate(value: str) -> Decimal:
     return rate
 
 
-def _physical_line_count(source: bytes) -> int:
-    if not source:
-        return 0
-    return source.count(b"\n") + (0 if source.endswith(b"\n") else 1)
+def _effective_line_count(source: bytes) -> int:
+    return sum(
+        1
+        for line in source.decode("utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("//")
+    )
 
 
 def _rate_entry_key(entry: dict[str, Any]) -> tuple[Any, ...]:
@@ -111,7 +113,7 @@ def _rate_selection(
     fallback_source: bytes | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rate = _parse_encryption_rate(rate_value)
-    total_lines = sum(_physical_line_count(source) for source in total_sources)
+    total_lines = sum(_effective_line_count(source) for source in total_sources)
     ordered_entries = sorted(entries, key=_rate_entry_key)
     candidates: list[tuple[dict[str, Any], frozenset[tuple[str, int]]]] = []
     for entry in ordered_entries:

@@ -4,6 +4,10 @@
 当前使用说明以根目录 `README.md`、`docs/systemverilog_renaming_table.md`、
 `docs/formal_verification.md` 和 `docs/future_work.md` 为准。
 
+统一重构 R0–R5 还必须遵守
+[`docs/refactor_subagent_protocol.md`](../refactor_subagent_protocol.md)。该规范按任务类型选择一组
+最小验收，不再默认叠加历史 acceptance driver、全量回归和 RISC Formal。
+
 ## 1. 一次只允许一个活动任务
 
 每个实现步骤对应 `docs/tasks/TNNN_*.md`。同一时间只能有一张任务单处于 `IN_PROGRESS` 或 `READY_FOR_REVIEW`。
@@ -59,6 +63,7 @@
 - 主 Agent 的验收结果。
 
 没有明确预期输出的任务不得进入 `READY`。
+重构任务的验收命令通常不得超过五条；只有任务目标本身需要时才增加大型回归或专项 Formal。
 
 ## 4. 子 Agent 行为边界
 
@@ -68,8 +73,11 @@
 - 不通过放宽测试、忽略诊断或修改 fixture 来制造通过结果。
 - PySlang API 与文档不一致时，记录实际 API 和最小复现，随后停止等待主 Agent。
 - 所有 Python、EDA 和测试命令都使用 `conda run -n rtl_obfuscation`。
+- 重构任务不得使用 blanket `unittest discover`；只运行活动任务冻结的目标模块和验收矩阵。
 - 不得删除 `equiv_status -assert`、忽略 Yosys 非零退出码或用 gold/gate 同一文件冒充改写等价证据。
 - 子 Agent 不得自行 commit 或 push；Git 提交由主 Agent 在验收通过后统一完成。
+- 删除旧测试或脚本必须由专门 cleanup 任务逐项列出，并记录 replacement coverage；不得在普通
+  实现任务中顺手清理。
 
 ## 5. Git 交付规则
 

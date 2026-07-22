@@ -21,6 +21,8 @@ interface fifo_if (
     );
 
     modport consumer (
+        input  clk,
+        input  rst_n,
         input  push,
         input  pop,
         input  data,

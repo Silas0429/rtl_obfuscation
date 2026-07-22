@@ -223,3 +223,15 @@ staged_diff_review: passed; mapping v4 formal-align dispatch is the only core im
 acceptance_conclusion: ACCEPTED; RISC-V-Vector Formal is verified only under this dedicated T037 flow;
   encrypt.py is the simple encryption/decryption demonstration entry point
 ```
+
+## 9. 后续演示入口修订
+
+2026-07-21 起，根目录 `encrypt.py` 的用户演示入口扩展为 `--sample fifo|riscv`，默认名称长度
+为 20，并按样例分别使用 `/tmp/rtl_samples/fifo` 和 `/tmp/rtl_samples/riscv` 作为默认输出目录。
+演示脚本现在显式传入 shared registry 的全部 19 个 canonical category，并继续只执行
+encrypt/decrypt 与 byte-identical 检查，不启动本任务的 RISC Formal 链路。
+
+当前轻量演示摘要为：FIFO `4 files / 67 entries / 268 tokens`；RISC-V-Vector
+`19 files / 1238 entries / 7081 tokens`。本节是对已接受 T037 演示入口的后续兼容扩展，
+不修改 T037 固定 Formal-view、alignment、正例和负例 oracle；RISC Formal 仍按第 4 节的
+专项命令执行。

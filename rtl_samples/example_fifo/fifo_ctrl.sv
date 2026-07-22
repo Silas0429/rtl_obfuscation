@@ -3,15 +3,7 @@ module fifo_ctrl #(
     parameter int DEPTH = 4,
     parameter int ADDR_WIDTH = 2
 ) (
-    input  logic                  clk,
-    input  logic                  rst_n,
-    input  logic                  push,
-    input  logic                  pop,
-    input  logic [DATA_WIDTH-1:0] data,
-    output logic [DATA_WIDTH-1:0] q,
-    output logic                  full,
-    output logic                  empty,
-    output logic                  valid
+    fifo_if.consumer              ctrl
 );
     typedef enum logic [1:0] {
         EMPTY,
@@ -28,25 +20,25 @@ module fifo_ctrl #(
     logic [DEPTH-1:0]      debug_mask;
     state_t                state;
 
-    assign full = (count == DEPTH);
-    assign empty = (count == 0);
-    assign write_en = push && !full;
-    assign read_en = pop && !empty;
-    assign valid = read_en;
-    assign q = mem_q;
+    assign ctrl.full = (count == DEPTH);
+    assign ctrl.empty = (count == 0);
+    assign write_en = ctrl.push && !ctrl.full;
+    assign read_en = ctrl.pop && !ctrl.empty;
+    assign ctrl.valid = read_en;
+    assign ctrl.q = mem_q;
 
     fifo_storage #(
         .DATA_WIDTH(DATA_WIDTH),
         .DEPTH(DEPTH),
         .ADDR_WIDTH(ADDR_WIDTH)
     ) u_mem (
-        .clk(clk),
-        .rst_n(rst_n),
+        .clk(ctrl.clk),
+        .rst_n(ctrl.rst_n),
         .write_en(write_en),
         .read_en(read_en),
         .write_addr(wr_ptr),
         .read_addr(rd_ptr),
-        .data(data),
+        .data(ctrl.data),
         .q(mem_q)
     );
 
@@ -62,8 +54,8 @@ module fifo_ctrl #(
         endcase
     end
 
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
+    always_ff @(posedge ctrl.clk) begin
+        if (!ctrl.rst_n) begin
             wr_ptr <= '0;
             rd_ptr <= '0;
             count  <= '0;

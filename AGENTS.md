@@ -11,7 +11,7 @@
 Examples:
 
 ```sh
-conda run -n rtl_obfuscation python -m unittest discover -s tests -v
+conda run -n rtl_obfuscation python -m unittest tests.test_variable_rewrite -v
 conda run -n rtl_obfuscation iverilog -g2012 -t null design.sv
 conda run -n rtl_obfuscation verible-verilog-syntax design.sv
 conda run -n rtl_obfuscation yosys -V
@@ -38,6 +38,9 @@ conda run -n rtl_obfuscation yosys -V
 - `docs/formal_verification.md` defines the mandatory Yosys equivalence flow for rewritten RTL.
 - `docs/future_work.md` records unsupported behavior and possible future expansion; it does not authorize implementation.
 - `docs/tasks/README.md` defines the mandatory task status workflow.
+- `docs/three_mode_refactor_plan.md` defines the approved R0–R5 replacement architecture.
+- `docs/refactor_subagent_protocol.md` defines the mandatory sub-agent and simplified acceptance
+  rules for R0–R5.
 - Implementation work must have exactly one active `docs/tasks/TNNN_*.md` task contract.
 - Do not implement a renaming category or behavior that is not authorized by the active task contract.
 
@@ -52,6 +55,9 @@ conda run -n rtl_obfuscation yosys -V
 ## Sub-agent role and documentation duty
 
 - The sub-agent implements and self-tests only the active task.
+- During R0–R5, the sub-agent must follow `docs/refactor_subagent_protocol.md` and run only the
+  acceptance row selected by the active task; blanket discovery and historical acceptance drivers
+  are not default requirements.
 - Before editing code, the sub-agent must change the task status from `READY` to `IN_PROGRESS` and update its execution record.
 - If an assumption, API difference, or boundary issue appears, the sub-agent must document it in the task before continuing and must not expand scope on its own.
 - Before requesting review, the sub-agent must record changed files, exact commands, actual outputs, and uncovered boundaries, then set the task to `READY_FOR_REVIEW`.
@@ -60,6 +66,8 @@ conda run -n rtl_obfuscation yosys -V
 - A task with rewritten RTL and a failed, skipped, or unsupported formal check cannot be set to `READY_FOR_REVIEW`.
 - The sub-agent must not set a task to `ACCEPTED`; that status belongs to the Main Agent.
 - The sub-agent must not modify RTL fixtures or planning documents unless the active task explicitly allows it.
+- Obsolete tests or scripts may be deleted only by an active cleanup task that lists their paths and
+  replacement coverage; an unrelated implementation task must not remove them.
 
 ## Git workflow
 

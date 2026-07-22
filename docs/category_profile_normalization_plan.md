@@ -1,6 +1,10 @@
 # 单-module / 多-module Category 统一实现方案
 
-- 文档状态：`IN_PROGRESS`
+- 历史状态：`SUPERSEDED_BY_DESIGN`
+- 替代方案：[`docs/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)
+- 说明：本文保留 T033–T038 的历史 profile/mapping 设计，不再作为后续重构的产品架构来源。
+
+- 原文档状态：`IN_PROGRESS`（历史快照）
 - 适用入口：单文件、显式 filelist、`project-root + top`
 - 当前基线：T027–T034 `ACCEPTED`
 - 当前任务：T035 `IN_PROGRESS`，filelist/project-root 默认与手动 profile 统一；T033/T034 已完成

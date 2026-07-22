@@ -24,7 +24,7 @@ manual profile 的 category 语义一致：
 | Category | 当前重命名对象 | 必须同步修改 | 支持示例 | 主要边界 | FIFO entries/tokens |
 | --- | --- | --- | --- | --- | ---: |
 | `signals` | module 内部、非 port 的 variable/net | 声明、读写、select 和表达式引用 | `logic count; assign q=count;` | 不含 port、argument、interface member、field | 14/67 |
-| `parameters` | module value parameter、普通 module localparam | 声明、表达式、dimension、generate header、named override 左侧 | `parameter W=8; logic [W-1:0] d;` | top parameter、跨 module binding 和复杂遮蔽进入 preserved/skipped | 6/43 |
+| `parameters` | module value parameter、普通 module localparam | 声明、表达式、dimension、generate header、named override 左侧 | `parameter W=8; logic [W-1:0] d;` | top parameter、跨 module binding 和复杂遮蔽进入 preserved/skipped | 6/41 |
 | `enum_values` | module enum member | 声明、赋值、比较和 case 引用 | `enum {IDLE,BUSY}; s=IDLE;` | 不含 package/class enum | 3/6 |
 | `genvars` | generate-for genvar | 声明、条件、步进和 body 引用 | `for (genvar i=0; i<N; i++)` | 不保证任意嵌套 generate 和外部层次引用 | 2/10 |
 | `functions` | module function 名 | 声明、普通调用和已绑定的函数返回变量引用 | `function f(...); q=f(d);` | 不含 extern、DPI、package/class function | 2/7 |
@@ -45,11 +45,11 @@ manual profile 的 category 语义一致：
 | Category | 当前重命名对象 | 必须同步修改 | 支持示例 | 主要边界 | FIFO entries/tokens |
 | --- | --- | --- | --- | --- | ---: |
 | `modules` | 非 top module 定义 | module 声明和 instance type | `module child; child u();` | top module 始终保留；不处理 bind/config | 2/4 |
-| `ports` | 非 top module 普通 port | 声明、module body、named connection 左侧、已绑定 aggregate base 和 generate actual | `child u(.data(x));` | top 普通 ports 始终保留；不处理外部约束 | 17/59 |
-| `interfaces` | 工程内部 interface 定义 | 声明和已支持的 instance type | `interface bus_if; bus_if bus();` | 不支持顶层 interface port、virtual interface、package/config | 1/2 |
+| `ports` | 非 top module 普通 port（含已绑定的下层 interface port） | 声明、module body、named connection 左侧、已绑定 aggregate base 和 generate actual | `child u(.data(x));` | top 普通 ports 始终保留；不处理外部约束 | 9/43 |
+| `interfaces` | 工程内部 interface 定义 | 声明、instance type 和下层 interface-port type | `interface bus_if; bus_if bus();` | 不支持顶层 interface port、virtual interface、package/config | 1/3 |
 | `interface_instances` | 工程内部 interface instance | 声明和已支持的 member/connection 引用 | `bus_if fifo_bus(); fifo_bus.valid` | top interface instance preserved；不处理外部层次和 virtual interface 赋值 | 0/0 |
-| `interface_ports` | 内部 interface port/member | 声明、member access、named connection、modport member | `logic valid; bus.valid` | 不支持顶层 interface port member、clocking 和复杂 import/export | 9/39 |
-| `modports` | closure 内、非 top ABI 的 modport 声明名 | 已确认绑定的 modport reference | `modport producer(...);` | top ABI、外部层次和无法完整绑定的引用 preserved/unsupported | 2/2 |
+| `interface_ports` | 内部 interface port/member | 声明、member access、named connection、modport member | `logic valid; bus.valid` | 不支持顶层 interface port member、clocking 和复杂 import/export | 9/47 |
+| `modports` | closure 内、非 top ABI 的 modport 声明名 | 声明和下层 interface-port 的 modport reference | `modport producer(...);` | top ABI、外部层次和无法完整绑定的引用 preserved/unsupported | 2/3 |
 
 这些类别可能改变 RTL 与 testbench、约束或其他模块之间的名称 ABI，因此不会被 `all`
 隐式启用。`modport_ports` 不是独立 category；modport 列表中的 interface signal 归入

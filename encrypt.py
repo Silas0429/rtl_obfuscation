@@ -1,21 +1,48 @@
 #!/usr/bin/env python3
-"""Demonstrate RISC-V-Vector project encryption and byte-identical decryption."""
+"""Demonstrate FIFO or RISC-V-Vector project encryption and decryption."""
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import subprocess
 import sys
 from typing import Any
 
+from rtl_obfuscator import category_profile
+
 
 REPOSITORY = Path(__file__).resolve().parent
+FIFO_ROOT = REPOSITORY / "rtl_samples" / "example_fifo"
 RISC_ROOT = REPOSITORY / "rtl_samples" / "RISC-V-Vector"
-DEFAULT_WORK_DIR = Path("/tmp/rtl_obfuscation_risc_demo")
-TOP = "vector_top"
-CATEGORIES = ("signals", "ports", "instances", "struct", "interface")
+
+
+@dataclass(frozen=True)
+class Sample:
+    name: str
+    root: Path
+    top: str
+    default_work_dir: Path
+
+
+SAMPLES = {
+    "fifo": Sample(
+        name="fifo",
+        root=FIFO_ROOT,
+        top="fifo_top",
+        default_work_dir=Path("/tmp/rtl_samples/fifo"),
+    ),
+    "riscv": Sample(
+        name="riscv",
+        root=RISC_ROOT,
+        top="vector_top",
+        default_work_dir=Path("/tmp/rtl_samples/riscv"),
+    ),
+}
+DEFAULT_SAMPLE = "riscv"
+ALL_CATEGORIES = tuple(category_profile.CANONICAL_CATEGORIES)
 
 
 def _run_rewrite(*arguments: str) -> dict[str, Any]:
@@ -61,11 +88,15 @@ def _byte_identical(
 
 
 def run_demo(
-    *, work_dir: Path, name_length: int, encryption_rate: str | None
+    *, sample: str = DEFAULT_SAMPLE, work_dir: Path | None = None,
+    name_length: int = 20, encryption_rate: str | None = None
 ) -> dict[str, Any]:
-    if not RISC_ROOT.is_dir():
-        raise ValueError(f"RISC-V-Vector sample is missing: {RISC_ROOT}")
-    work = _prepare_work_dir(work_dir)
+    selected = SAMPLES.get(sample)
+    if selected is None:
+        raise ValueError(f"unsupported sample: {sample}")
+    if not selected.root.is_dir():
+        raise ValueError(f"{selected.name} sample is missing: {selected.root}")
+    work = _prepare_work_dir(work_dir or selected.default_work_dir)
     gate = work / "gate"
     mapping_path = work / "mapping.json"
     metrics_path = work / "metrics.json"
@@ -75,9 +106,9 @@ def run_demo(
     encrypt_arguments = [
         "encrypt-project",
         "--project-root",
-        str(RISC_ROOT),
+        str(selected.root),
         "--top",
-        TOP,
+        selected.top,
         "--output-dir",
         str(gate),
         "--map",
@@ -87,7 +118,7 @@ def run_demo(
         "--file-map-dir",
         str(maps),
     ]
-    for category in CATEGORIES:
+    for category in ALL_CATEGORIES:
         encrypt_arguments.extend(("--category", category))
     encrypt_arguments.extend(("--name-length", str(name_length)))
     if encryption_rate is not None:
@@ -115,14 +146,17 @@ def run_demo(
         "--output-dir",
         str(restored),
     )
-    byte_identical = _byte_identical(RISC_ROOT, restored, relative_files)
+    byte_identical = _byte_identical(selected.root, restored, relative_files)
     if not byte_identical:
-        raise RuntimeError("decrypted RISC-V-Vector files are not byte-identical")
+        raise RuntimeError(f"decrypted {selected.name} files are not byte-identical")
 
     return {
         "status": "pass",
-        "top": TOP,
+        "sample": selected.name,
+        "top": selected.top,
         "work_dir": str(work),
+        "categories": list(ALL_CATEGORIES),
+        "name_length": name_length,
         "mapping_version": mapping.get("version"),
         "files": len(relative_files),
         "byte_identical": True,
@@ -133,19 +167,25 @@ def run_demo(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Demonstrate RISC-V-Vector encryption and byte-identical decryption."
+        description="Demonstrate FIFO or RISC-V-Vector encryption and byte-identical decryption."
+    )
+    parser.add_argument(
+        "--sample",
+        choices=tuple(SAMPLES),
+        default=DEFAULT_SAMPLE,
+        help="sample to encrypt (default: riscv)",
     )
     parser.add_argument(
         "--work-dir",
         type=Path,
-        default=DEFAULT_WORK_DIR,
-        help="output directory; it must be absent or empty (default: /tmp/rtl_obfuscation_risc_demo)",
+        default=None,
+        help="output directory; it must be absent or empty (default depends on --sample)",
     )
     parser.add_argument(
         "--name-length",
         type=int,
-        default=8,
-        help="encrypted identifier length passed to the project CLI (default: 8)",
+        default=20,
+        help="encrypted identifier length passed to the project CLI (default: 20)",
     )
     parser.add_argument(
         "--encryption-rate",
@@ -155,6 +195,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         summary = run_demo(
+            sample=args.sample,
             work_dir=args.work_dir,
             name_length=args.name_length,
             encryption_rate=args.encryption_rate,
