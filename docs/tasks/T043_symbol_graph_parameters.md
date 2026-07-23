@@ -1,6 +1,6 @@
 # T043：SymbolGraph module parameter/localparam 与 ABI 分类
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R2-D
@@ -366,21 +366,30 @@ acceptance脚本。Formal为`N/A: no rewritten RTL is produced`。主Agent只审
 ## 15. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-fixture_hash_check:
-catalog_preflight:
-baseline_command:
-baseline_result:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 22fee3771118f6b8ca80e5ccd2ec62272c66a8a5
+fixture_hash_check: 18/18 frozen fixture hashes matched section 3.3; no fixture files were modified
+catalog_preflight: design, design + parameter_top, closure + parameter_top, project-root + parameter_top, single-file, single-filelist, positional + positional_top, and all four negative inputs reported catalog parse_errors=0 and semantic_errors=0; top overlays reported 0/0 where present
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars tests.test_symbol_graph_parameters -v`
+baseline_result: exit 1 as expected; T041/T042's 28 tests passed, then `tests.test_symbol_graph_parameters` import failed with `ModuleNotFoundError`; `Ran 29 tests in 0.253s` and `FAILED (errors=1)`
+changed_files: none at start; workspace clean; only T043 allowed files may be changed
+revision_after_main_agent_return: added the section 10.12 `source_catalog._compile_view` monkeypatch to the existing legacy-path regression test; no tests, fixtures, or behaviors were added
 commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars tests.test_symbol_graph_parameters -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py tests/test_symbol_graph_parameters.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T043_symbol_graph_parameters.md`
 results:
-schema_or_behavior:
-deviations_or_blockers:
-boundaries:
-cleanup_candidates:
+  - combined unittest: exit 0; `Ran 46 tests` and `OK`
+  - py_compile: exit 0; no output
+  - diff check: exit 0; no output
+  - status guard: exit 0; output `- 状态：`READY_FOR_REVIEW``
+schema_or_behavior: added only `parameters`; section 10.12 now blocks `_compile_view` and all five legacy parameter helpers; full no-top is 12/27/39 with graph audit 20/20/33/53; closure/project top is 10/25/35 with audit 17/17/31/48; single is 2/2/4 with audit 3/3/2/5; positional is 1/0/1 with audit 1/1/0/1; provenance counts are semantic 10, dimension 12, generate 2, named override 3; T042 whole-graph oracles were updated only as authorized
+deviations_or_blockers: none
+boundaries: no type/package/class/interface/$unit parameters, parameter arrays/strings/reals/structs, defparam support, macro fallback, lexical scan, second compilation, legacy collector/helper, category policy, mapping, rewrite, gate, decrypt, or Formal
+cleanup_candidates: none in T043
 formal_verification: N/A - no rewritten RTL is produced
-review_request:
+review_request: READY_FOR_REVIEW; one complete review request after all 18 T043 behaviors; no main-agent acceptance record
 ```
 
 ## 16. READY_FOR_REVIEW 条件
@@ -422,4 +431,47 @@ negative_matrix: macro declaration, macro reference, type parameter, defparam, r
 superseded_tests: only T042 whole-graph/category/top-all-symbol comparison; genvar-specific behavior remains frozen
 acceptance: exactly four commands; 46 tests; no Formal or hidden probes
 formal_verification: N/A - no rewritten RTL is produced
+```
+
+## 19. 主 Agent首次验收记录（2026-07-23）
+
+```text
+status: IN_PROGRESS / NOT_ACCEPTED
+reviewed_head: 22fee3771118f6b8ca80e5ccd2ec62272c66a8a5
+independent_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars tests.test_symbol_graph_parameters -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py tests/test_symbol_graph_parameters.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T043_symbol_graph_parameters.md`
+independent_results: all four exited 0 before return; unittest ran 46 tests in 0.532s and reported OK
+contract_finding:
+  - section 10 item 12 requires the existing no-recompile test to monkeypatch both the T040 `_compile_view` entry and every listed legacy parameter helper to fail immediately; `test_graph_reuses_catalog_and_does_not_call_legacy_parameter_paths` patches the five legacy helpers but never imports or patches `rtl_obfuscator.source_catalog._compile_view`
+required_revision:
+  - extend that existing test to patch `source_catalog._compile_view` with an immediate `AssertionError`, then rerun the unchanged four commands and restore `READY_FOR_REVIEW`
+scope: test-only correction in `tests/test_symbol_graph_parameters.py` plus task status/execution record; no new test method, fixture, behavior, error code, implementation change or acceptance command
+formal_verification: N/A - no rewritten RTL is produced
+review_request: withdrawn until the single frozen section 10.12 guard is present
+```
+
+## 20. 主 Agent最终验收记录（2026-07-23）
+
+```text
+status: ACCEPTED
+reviewed_head: 22fee3771118f6b8ca80e5ccd2ec62272c66a8a5
+revision_review:
+  - the existing section 10.12 regression now patches `source_catalog._compile_view` and all five frozen legacy parameter helpers to raise immediately
+  - test count remains exactly 18 for T043; no fixture, behavior, implementation scope or acceptance command was added by the revision
+independent_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars tests.test_symbol_graph_parameters -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py tests/test_symbol_graph_parameters.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T043_symbol_graph_parameters.md`
+independent_results:
+  - unittest: exit 0; `Ran 46 tests in 0.520s`; `OK`
+  - py_compile: exit 0; no output
+  - diff check: exit 0; no output
+  - READY_FOR_REVIEW guard: exit 0 before acceptance; exact status line matched
+scope_review: only section 11 allowed files changed; all 18 frozen fixture files remain unchanged; no second compilation, legacy helper call, rewrite, mapping, gate, Formal or hidden acceptance input
+formal_verification: N/A - no rewritten RTL is produced
+decision: ACCEPTED
 ```

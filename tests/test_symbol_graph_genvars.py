@@ -44,14 +44,23 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         self.assertEqual(sum(len(symbol.occurrences) for symbol in genvars), 16)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 7, "declarations": 7, "occurrences": 16, "total_ranges": 23},
+            {"symbols": 9, "declarations": 9, "occurrences": 18, "total_ranges": 27},
         )
 
     def test_top_does_not_change_genvar_payload_or_remove_unreachable_owner(self):
         without_top = self._graph(FIXTURE_ROOT / "design.f")
         with_top = self._graph(FIXTURE_ROOT / "design.f", top="genvar_top")
         self.assertEqual(
-            without_top.to_report()["symbols"], with_top.to_report()["symbols"]
+            [
+                symbol
+                for symbol in without_top.to_report()["symbols"]
+                if symbol["category"] == "genvars"
+            ],
+            [
+                symbol
+                for symbol in with_top.to_report()["symbols"]
+                if symbol["category"] == "genvars"
+            ],
         )
         self.assertEqual(
             len(
@@ -79,11 +88,11 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         )
         self.assertEqual(
             project_graph.to_report()["range_audit"],
-            {"symbols": 5, "declarations": 5, "occurrences": 13, "total_ranges": 18},
+            {"symbols": 7, "declarations": 7, "occurrences": 15, "total_ranges": 22},
         )
         self.assertEqual(
             filelist_graph.to_report()["range_audit"],
-            {"symbols": 5, "declarations": 5, "occurrences": 13, "total_ranges": 18},
+            {"symbols": 7, "declarations": 7, "occurrences": 15, "total_ranges": 22},
         )
 
     def test_single_file_matches_single_filelist_after_origin_normalization(self):
@@ -190,7 +199,7 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         first = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         second = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         self.assertEqual(first, second)
-        self.assertEqual(graph.to_report()["categories"], ["signals", "genvars"])
+        self.assertEqual(graph.to_report()["categories"], ["signals", "parameters", "genvars"])
         self.assertEqual(graph.to_report()["schema_version"], 1)
         self.assertEqual(
             [field.name for field in fields(graph)],

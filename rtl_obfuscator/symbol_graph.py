@@ -1,4 +1,4 @@
-"""Signals-only SymbolGraph built from one T040 SourceCatalog view."""
+"""Source SymbolGraph built from one T040 SourceCatalog view."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class SymbolGraph:
     def to_report(self) -> dict[str, object]:
         categories = [
             category
-            for category in ("signals", "genvars")
+            for category in ("signals", "parameters", "genvars")
             if any(symbol.category == category for symbol in self.symbols)
         ]
         return {
@@ -105,6 +105,15 @@ class _GenvarRecord:
     declaration: SourceRange
     owner: ModuleOwner
     definition: Any
+
+
+@dataclass(frozen=True)
+class _ParameterRecord:
+    name: str
+    declaration: SourceRange
+    owner: ModuleOwner
+    definition: Any
+    is_local: bool
 
 
 def _range_report(source_range: SourceRange) -> dict[str, object]:
@@ -190,10 +199,12 @@ def _module_owner_map(source_catalog: SourceCatalog) -> dict[tuple[str, int, int
     }
 
 
-def _owner_for_signal(
+def _owner_for_module_symbol(
     source_catalog: SourceCatalog,
     symbol: Any,
     owners: dict[tuple[str, int, int], ModuleOwner],
+    *,
+    label: str,
 ) -> ModuleOwner | None:
     definition = getattr(symbol, "declaringDefinition", None)
     if definition is None:
@@ -213,7 +224,7 @@ def _owner_for_signal(
             raise
         raise SymbolGraphError(
             "SYMBOL_GRAPH_OWNER_MISMATCH",
-            "signal module definition cannot map to a catalog owner",
+            f"{label} module definition cannot map to a catalog owner",
             file=error.file,
             start=error.start,
         ) from error
@@ -221,11 +232,21 @@ def _owner_for_signal(
     if owner is None:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_OWNER_MISMATCH",
-            "signal module definition cannot map to a catalog owner",
+            f"{label} module definition cannot map to a catalog owner",
             file=declaration.file,
             start=declaration.start,
         )
     return owner
+
+
+def _owner_for_signal(
+    source_catalog: SourceCatalog,
+    symbol: Any,
+    owners: dict[tuple[str, int, int], ModuleOwner],
+) -> ModuleOwner | None:
+    return _owner_for_module_symbol(
+        source_catalog, symbol, owners, label="signal"
+    )
 
 
 def _signal_range_key(
@@ -562,6 +583,379 @@ def _collect_genvar_symbols(
     return symbols
 
 
+def _expression_identifier_range(
+    source_catalog: SourceCatalog,
+    expression: Any,
+    name: str,
+) -> SourceRange:
+    syntax = getattr(expression, "syntax", None)
+    identifier = getattr(syntax, "identifier", None)
+    if identifier is None or not getattr(identifier, "rawText", ""):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+            "semantic parameter expression has no direct source identifier token",
+        )
+    if identifier.rawText != name:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+            "semantic parameter expression identifier does not match bound parameter",
+        )
+    _reject_macro_location(source_catalog, identifier.location)
+    return _range_from_location(source_catalog, identifier.location, name)
+
+
+def _parameter_source_key(
+    source_catalog: SourceCatalog, symbol: Any
+) -> tuple[str, int, int] | None:
+    if getattr(symbol, "kind", None) != pyslang.ast.SymbolKind.Parameter:
+        return None
+    definition = getattr(symbol, "declaringDefinition", None)
+    if getattr(definition, "definitionKind", None) != pyslang.ast.DefinitionKind.Module:
+        return None
+    name = str(getattr(symbol, "name", ""))
+    if not name:
+        return None
+    declaration = _range_from_location(source_catalog, symbol.location, name)
+    return declaration.file, declaration.start, declaration.end
+
+
+def _append_bound_parameter_references(
+    source_catalog: SourceCatalog,
+    expression: Any,
+    provenance: str,
+    records: dict[tuple[str, int, int], _ParameterRecord],
+    genvar_keys: set[tuple[str, int, int]],
+    occurrences: dict[
+        tuple[str, int, int], dict[tuple[str, int, int, str], SymbolOccurrence]
+    ],
+    special_ranges: set[tuple[tuple[str, int, int], tuple[str, int, int]]],
+) -> None:
+    if expression is None or not hasattr(expression, "visit"):
+        return
+    expression_nodes: list[Any] = []
+    expression.visit(expression_nodes.append)
+    for node in expression_nodes:
+        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+            continue
+        target = getattr(node, "symbol", None)
+        target_key = _parameter_source_key(source_catalog, target)
+        if target_key is None or target_key in genvar_keys:
+            continue
+        record = records.get(target_key)
+        if record is None:
+            continue
+        source_range = _expression_identifier_range(
+            source_catalog, node, record.name
+        )
+        occurrence = SymbolOccurrence(source_range, provenance)
+        occurrence_key = (
+            source_range.file,
+            source_range.start,
+            source_range.end,
+            provenance,
+        )
+        occurrences[target_key][occurrence_key] = occurrence
+        if provenance != "semantic_expression":
+            special_ranges.add(
+                (
+                    target_key,
+                    (
+                        source_range.file,
+                        source_range.start,
+                        source_range.end,
+                    ),
+                )
+            )
+
+
+def _reject_parameter_unsupported_nodes(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    owners: dict[tuple[str, int, int], ModuleOwner],
+) -> None:
+    type_parameter_kind = getattr(pyslang.ast.SymbolKind, "TypeParameter", None)
+    defparam_kind = getattr(pyslang.ast.SymbolKind, "DefParam", None)
+    for node in nodes:
+        definition = getattr(node, "declaringDefinition", None)
+        if definition is None:
+            continue
+        if getattr(node, "kind", None) == type_parameter_kind:
+            owner = _owner_for_module_symbol(
+                source_catalog, node, owners, label="parameter"
+            )
+            if owner is not None:
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                    "module type parameter is outside T043 scope",
+                    file=owner.declaration.file,
+                    start=owner.declaration.start,
+                )
+        elif getattr(node, "kind", None) == defparam_kind:
+            owner = _owner_for_module_symbol(
+                source_catalog, node, owners, label="defparam"
+            )
+            if owner is not None:
+                file, start = _location_start(
+                    source_catalog, getattr(node, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                    "defparam is outside T043 scope",
+                    file=file,
+                    start=start,
+                )
+
+
+def _parameter_classification(
+    source_catalog: SourceCatalog, record: _ParameterRecord
+) -> tuple[str, str, str, str | None]:
+    if record.is_local:
+        return "local", "internal", "eligible", None
+    if source_catalog.source_set.top is None:
+        return "cross_module", "module_abi", "preserved", "module_abi_requires_top"
+    if record.owner.is_selected_top:
+        return "cross_module", "top_boundary", "preserved", "selected_top_boundary"
+    if record.owner.in_top_closure:
+        return "cross_module", "module_abi", "eligible", None
+    return "cross_module", "module_abi", "preserved", "outside_top_closure"
+
+
+def _collect_parameter_symbols(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    owners: dict[tuple[str, int, int], ModuleOwner],
+    genvar_symbols: list[SourceSymbol],
+) -> list[SourceSymbol]:
+    _reject_parameter_unsupported_nodes(source_catalog, nodes, owners)
+    genvar_keys = {
+        (
+            symbol.declaration.file,
+            symbol.declaration.start,
+            symbol.declaration.end,
+        )
+        for symbol in genvar_symbols
+    }
+    parameter_kind = pyslang.ast.SymbolKind.Parameter
+    records: dict[tuple[str, int, int], _ParameterRecord] = {}
+    for node in nodes:
+        if getattr(node, "kind", None) != parameter_kind:
+            continue
+        name = str(getattr(node, "name", ""))
+        if not name or name.startswith("$"):
+            continue
+        if getattr(node, "isType", False):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "type parameter is outside T043 scope",
+            )
+        if (
+            getattr(node, "isLocalParam", False)
+            and getattr(node, "isBodyParam", False)
+            and type(getattr(node, "syntax", None)).__name__
+            == "IdentifierNameSyntax"
+        ):
+            continue
+        owner = _owner_for_module_symbol(
+            source_catalog, node, owners, label="parameter"
+        )
+        if owner is None:
+            continue
+        _reject_macro_location(source_catalog, node.location)
+        if _parameter_source_key(source_catalog, node) in genvar_keys:
+            continue
+        declaration = _range_from_location(
+            source_catalog, node.location, name
+        )
+        key = (declaration.file, declaration.start, declaration.end)
+        definition = getattr(node, "declaringDefinition", None)
+        existing = records.get(key)
+        is_local = bool(getattr(node, "isLocalParam", False))
+        if existing is not None:
+            if (
+                existing.name != name
+                or existing.owner.owner_id != owner.owner_id
+                or existing.is_local != is_local
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "physical parameter declaration maps to multiple owners",
+                    file=declaration.file,
+                    start=declaration.start,
+                )
+            continue
+        records[key] = _ParameterRecord(
+            name=name,
+            declaration=declaration,
+            owner=owner,
+            definition=definition,
+            is_local=is_local,
+        )
+
+    occurrences: dict[
+        tuple[str, int, int], dict[tuple[str, int, int, str], SymbolOccurrence]
+    ] = {key: {} for key in records}
+    special_ranges: set[tuple[tuple[str, int, int], tuple[str, int, int]]] = set()
+
+    for node in nodes:
+        if getattr(node, "kind", None) != pyslang.ast.ExpressionKind.NamedValue:
+            continue
+        _append_bound_parameter_references(
+            source_catalog,
+            node,
+            "semantic_expression",
+            records,
+            genvar_keys,
+            occurrences,
+            special_ranges,
+        )
+
+    for node in nodes:
+        declared_type = getattr(node, "declaredType", None)
+        for dimension in getattr(declared_type, "resolvedDimensions", ()):
+            for expression in (
+                getattr(dimension, "leftExpr", None),
+                getattr(dimension, "rightExpr", None),
+                getattr(dimension, "queueMaxSize", None),
+            ):
+                _append_bound_parameter_references(
+                    source_catalog,
+                    expression,
+                    "declaration_dimension",
+                    records,
+                    genvar_keys,
+                    occurrences,
+                    special_ranges,
+                )
+
+    generate_block_kind = getattr(pyslang.ast.SymbolKind, "GenerateBlock", None)
+    generate_array_kind = getattr(
+        pyslang.ast.SymbolKind, "GenerateBlockArray", None
+    )
+    for node in nodes:
+        node_kind = getattr(node, "kind", None)
+        if node_kind == generate_block_kind:
+            expressions = (getattr(node, "conditionExpression", None),)
+        elif node_kind == generate_array_kind:
+            expressions = (
+                getattr(node, "initialExpression", None),
+                getattr(node, "stopExpression", None),
+                getattr(node, "iterExpression", None),
+            )
+        else:
+            continue
+        for expression in expressions:
+            _append_bound_parameter_references(
+                source_catalog,
+                expression,
+                "generate_syntax",
+                records,
+                genvar_keys,
+                occurrences,
+                special_ranges,
+            )
+
+    records_by_definition_name: dict[
+        tuple[str, int, int, str], list[tuple[str, int, int]]
+    ] = {}
+    for key, record in records.items():
+        if record.is_local:
+            continue
+        definition_key = _module_definition_key(source_catalog, record.definition)
+        if definition_key is None:
+            continue
+        records_by_definition_name.setdefault(
+            (*definition_key, record.name), []
+        ).append(key)
+
+    instance_kind = pyslang.ast.SymbolKind.Instance
+    for node in nodes:
+        if getattr(node, "kind", None) != instance_kind:
+            continue
+        definition = getattr(node, "definition", None)
+        syntax = getattr(node, "syntax", None)
+        hierarchy = getattr(syntax, "parent", None)
+        definition_key = _module_definition_key(source_catalog, definition)
+        if hierarchy is None or definition_key is None:
+            continue
+        syntax_nodes: list[Any] = []
+        hierarchy.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            if type(syntax_node).__name__ != "NamedParamAssignmentSyntax":
+                continue
+            name_token = getattr(syntax_node, "name", None)
+            if name_token is None or not getattr(name_token, "rawText", ""):
+                continue
+            candidate_keys = records_by_definition_name.get(
+                (*definition_key, name_token.rawText), []
+            )
+            if len(candidate_keys) > 1:
+                file, start = _location_start(
+                    source_catalog, name_token.location
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                    "named parameter override owner is ambiguous",
+                    file=file,
+                    start=start,
+                )
+            if not candidate_keys:
+                continue
+            _reject_macro_location(source_catalog, name_token.location)
+            target_key = candidate_keys[0]
+            source_range = _range_from_location(
+                source_catalog, name_token.location, name_token.rawText
+            )
+            occurrence = SymbolOccurrence(source_range, "named_override")
+            occurrence_key = (
+                source_range.file,
+                source_range.start,
+                source_range.end,
+                occurrence.provenance,
+            )
+            occurrences[target_key][occurrence_key] = occurrence
+
+    for target_key, source_range_key in special_ranges:
+        occurrences[target_key].pop(
+            (*source_range_key, "semantic_expression"), None
+        )
+
+    symbols: list[SourceSymbol] = []
+    for key, record in records.items():
+        ordered_occurrences = tuple(
+            sorted(
+                occurrences[key].values(),
+                key=lambda occurrence: (
+                    occurrence.source_range.file,
+                    occurrence.source_range.start,
+                    occurrence.source_range.end,
+                    occurrence.provenance,
+                ),
+            )
+        )
+        impact, abi, support, reason = _parameter_classification(
+            source_catalog, record
+        )
+        symbols.append(
+            SourceSymbol(
+                symbol_id=(
+                    f"symbol:parameters:{record.declaration.file}:"
+                    f"{record.declaration.start}:{record.declaration.end}"
+                ),
+                category="parameters",
+                name=record.name,
+                declaration=record.declaration,
+                owner_module=record.owner.owner_id,
+                semantic_owner=record.owner.owner_id,
+                occurrences=ordered_occurrences,
+                impact=impact,
+                abi=abi,
+                support=support,
+                reason=reason,
+            )
+        )
+    return symbols
+
+
 def _audit_ranges(symbols: tuple[SourceSymbol, ...]) -> None:
     ranges: list[tuple[str, int, int, str]] = []
     for symbol in symbols:
@@ -779,7 +1173,11 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             )
         )
 
-    symbols_list.extend(_collect_genvar_symbols(source_catalog, nodes, owners))
+    genvar_symbols = _collect_genvar_symbols(source_catalog, nodes, owners)
+    symbols_list.extend(
+        _collect_parameter_symbols(source_catalog, nodes, owners, genvar_symbols)
+    )
+    symbols_list.extend(genvar_symbols)
 
     symbols = tuple(
         sorted(
