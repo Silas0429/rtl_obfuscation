@@ -39,10 +39,15 @@ class SymbolGraph:
     symbols: tuple[SourceSymbol, ...]
 
     def to_report(self) -> dict[str, object]:
+        categories = [
+            category
+            for category in ("signals", "genvars")
+            if any(symbol.category == category for symbol in self.symbols)
+        ]
         return {
             "schema_version": self.schema_version,
             "source_catalog": self.source_catalog.to_report(),
-            "categories": ["signals"],
+            "categories": categories,
             "symbols": [
                 {
                     "symbol_id": symbol.symbol_id,
@@ -92,6 +97,14 @@ class SymbolGraphError(ValueError):
         self.file = file
         self.start = start
         super().__init__(f"{code}: {message}")
+
+
+@dataclass(frozen=True)
+class _GenvarRecord:
+    name: str
+    declaration: SourceRange
+    owner: ModuleOwner
+    definition: Any
 
 
 def _range_report(source_range: SourceRange) -> dict[str, object]:
@@ -231,6 +244,13 @@ def _signal_range_key(
     return declaration.file, declaration.start, declaration.end
 
 
+def _is_signal_target(symbol: Any) -> bool:
+    return getattr(symbol, "kind", None) in (
+        pyslang.ast.SymbolKind.Variable,
+        pyslang.ast.SymbolKind.Net,
+    )
+
+
 def _expression_range(
     source_catalog: SourceCatalog, expression: Any, name: str
 ) -> SourceRange:
@@ -270,6 +290,276 @@ def _location_start(
         return file, int(location.offset)
     except (OSError, ValueError, RuntimeError):
         return None, int(location.offset)
+
+
+def _syntax_node_start(
+    source_catalog: SourceCatalog, syntax_node: Any
+) -> tuple[str | None, int | None]:
+    source_range = getattr(syntax_node, "sourceRange", None)
+    return _location_start(source_catalog, getattr(source_range, "start", None))
+
+
+def _syntax_identifier_tokens(syntax_node: Any) -> list[Any]:
+    nodes: list[Any] = []
+    syntax_node.visit(nodes.append)
+    return [
+        node.identifier
+        for node in nodes
+        if isinstance(node, pyslang.syntax.IdentifierNameSyntax)
+        and getattr(node, "identifier", None) is not None
+    ]
+
+
+def _token_range(
+    source_catalog: SourceCatalog, token: Any, name: str
+) -> SourceRange:
+    raw_text = getattr(token, "rawText", "")
+    if not raw_text or raw_text != name:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+            "generate syntax identifier does not match bound genvar",
+        )
+    _reject_macro_location(source_catalog, token.location)
+    return _range_from_location(source_catalog, token.location, name)
+
+
+def _module_definition_key(
+    source_catalog: SourceCatalog, definition: Any
+) -> tuple[str, int, int] | None:
+    if getattr(definition, "definitionKind", None) != pyslang.ast.DefinitionKind.Module:
+        return None
+    declaration = _range_from_location(
+        source_catalog,
+        definition.location,
+        str(definition.name),
+        code="SYMBOL_GRAPH_OWNER_MISMATCH",
+    )
+    return declaration.file, declaration.start, declaration.end
+
+
+def _has_iteration_evidence(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    owner: ModuleOwner,
+    name: str,
+) -> bool:
+    owner_key = (
+        owner.declaration.file,
+        owner.declaration.start,
+        owner.declaration.end,
+    )
+    for node in nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Parameter:
+            continue
+        if str(getattr(node, "name", "")) != name:
+            continue
+        if not getattr(node, "isLocalParam", False) or not getattr(
+            node, "isBodyParam", False
+        ):
+            continue
+        definition = getattr(node, "declaringDefinition", None)
+        if definition is None:
+            continue
+        if _module_definition_key(source_catalog, definition) == owner_key:
+            return True
+    return False
+
+
+def _loop_has_nested_loop(loop: Any) -> bool:
+    block = getattr(loop, "block", None)
+    if block is None:
+        return False
+    nodes: list[Any] = []
+    block.visit(nodes.append)
+    return any(isinstance(node, pyslang.syntax.LoopGenerateSyntax) for node in nodes)
+
+
+def _genvar_occurrence_tokens(loop: Any, *, name: str, inline: bool) -> list[Any]:
+    tokens: list[Any] = []
+    identifier = getattr(loop, "identifier", None)
+    if not inline and identifier is not None:
+        tokens.append(identifier)
+    for expression_name in ("stopExpr", "iterationExpr"):
+        expression = getattr(loop, expression_name, None)
+        if expression is None:
+            continue
+        tokens.extend(
+            token
+            for token in _syntax_identifier_tokens(expression)
+            if getattr(token, "rawText", None) == name
+        )
+    block = getattr(loop, "block", None)
+    if block is not None:
+        tokens.extend(
+            token
+            for token in _syntax_identifier_tokens(block)
+            if getattr(token, "rawText", None) == name
+        )
+    return tokens
+
+
+def _collect_genvar_symbols(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    owners: dict[tuple[str, int, int], ModuleOwner],
+) -> list[SourceSymbol]:
+    genvar_kind = pyslang.ast.SymbolKind.Genvar
+    records: dict[tuple[str, int, int], _GenvarRecord] = {}
+    for node in nodes:
+        if getattr(node, "kind", None) != genvar_kind:
+            continue
+        name = str(getattr(node, "name", ""))
+        if not name or name.startswith("$"):
+            continue
+        owner = _owner_for_signal(source_catalog, node, owners)
+        if owner is None:
+            continue
+        _reject_macro_location(source_catalog, node.location)
+        declaration = _range_from_location(source_catalog, node.location, name)
+        key = (declaration.file, declaration.start, declaration.end)
+        existing = records.get(key)
+        definition = getattr(node, "declaringDefinition", None)
+        if existing is not None:
+            if existing.name != name or existing.owner.owner_id != owner.owner_id:
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "physical genvar declaration maps to multiple owners",
+                    file=declaration.file,
+                    start=declaration.start,
+                )
+            continue
+        records[key] = _GenvarRecord(name, declaration, owner, definition)
+
+    occurrences: dict[
+        tuple[str, int, int], dict[tuple[str, int, int, str], SymbolOccurrence]
+    ] = {key: {} for key in records}
+    records_by_owner_name: dict[tuple[str, str], list[tuple[str, int, int]]] = {}
+    for key, record in records.items():
+        records_by_owner_name.setdefault((record.owner.owner_id, record.name), []).append(
+            key
+        )
+
+    seen_definitions: set[tuple[str, int, int]] = set()
+    for record_key, record in records.items():
+        definition_key = _module_definition_key(source_catalog, record.definition)
+        if definition_key is None:
+            continue
+        if definition_key in seen_definitions:
+            continue
+        seen_definitions.add(definition_key)
+        syntax = getattr(record.definition, "syntax", None)
+        if syntax is None:
+            continue
+        syntax_nodes: list[Any] = []
+        syntax.visit(syntax_nodes.append)
+        loops = [
+            node
+            for node in syntax_nodes
+            if isinstance(node, pyslang.syntax.LoopGenerateSyntax)
+        ]
+        for loop in loops:
+            if _loop_has_nested_loop(loop):
+                file, start = _syntax_node_start(source_catalog, loop)
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                    "nested generate-for is outside T042 scope",
+                    file=file,
+                    start=start,
+                )
+
+        for loop in loops:
+            identifier = getattr(loop, "identifier", None)
+            if identifier is None or not getattr(identifier, "rawText", ""):
+                file, start = _syntax_node_start(source_catalog, loop)
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                    "generate-for has no direct identifier token",
+                    file=file,
+                    start=start,
+                )
+            name = identifier.rawText
+            candidate_keys = records_by_owner_name.get((record.owner.owner_id, name), [])
+            inline = bool(getattr(getattr(loop, "genvar", None), "rawText", ""))
+            if inline:
+                identifier_range = _token_range(source_catalog, identifier, name)
+                candidate_keys = [
+                    candidate_key
+                    for candidate_key in candidate_keys
+                    if candidate_key
+                    == (
+                        identifier_range.file,
+                        identifier_range.start,
+                        identifier_range.end,
+                    )
+                ]
+            else:
+                if not candidate_keys:
+                    continue
+                if len(candidate_keys) != 1 or not _has_iteration_evidence(
+                    source_catalog, nodes, record.owner, name
+                ):
+                    file, start = _syntax_node_start(source_catalog, loop)
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                        "generate-for genvar iteration owner evidence is incomplete",
+                        file=file,
+                        start=start,
+                    )
+            if len(candidate_keys) != 1:
+                file, start = _syntax_node_start(source_catalog, loop)
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                    "generate-for genvar owner is ambiguous",
+                    file=file,
+                    start=start,
+                )
+            target_key = candidate_keys[0]
+            target_record = records[target_key]
+            for token in _genvar_occurrence_tokens(
+                loop, name=name, inline=inline
+            ):
+                source_range = _token_range(source_catalog, token, name)
+                occurrence = SymbolOccurrence(source_range, "generate_syntax")
+                occurrence_key = (
+                    source_range.file,
+                    source_range.start,
+                    source_range.end,
+                    occurrence.provenance,
+                )
+                occurrences[target_key][occurrence_key] = occurrence
+
+    symbols: list[SourceSymbol] = []
+    for key, record in records.items():
+        ordered_occurrences = tuple(
+            sorted(
+                occurrences[key].values(),
+                key=lambda occurrence: (
+                    occurrence.source_range.file,
+                    occurrence.source_range.start,
+                    occurrence.source_range.end,
+                    occurrence.provenance,
+                ),
+            )
+        )
+        symbols.append(
+            SourceSymbol(
+                symbol_id=(
+                    f"symbol:genvars:{record.declaration.file}:"
+                    f"{record.declaration.start}:{record.declaration.end}"
+                ),
+                category="genvars",
+                name=record.name,
+                declaration=record.declaration,
+                owner_module=record.owner.owner_id,
+                semantic_owner=record.owner.owner_id,
+                occurrences=ordered_occurrences,
+                impact="local",
+                abi="internal",
+                support="eligible",
+                reason=None,
+            )
+        )
+    return symbols
 
 
 def _audit_ranges(symbols: tuple[SourceSymbol, ...]) -> None:
@@ -393,15 +683,18 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                     file=file,
                     start=start,
                 )
+            if not _is_signal_target(target):
+                continue
             target_key = _signal_range_key(source_catalog, target)
-            if target_key in declarations:
-                file, start = _syntax_start(source_catalog, node)
-                raise SymbolGraphError(
-                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
-                    "hierarchical signal reference is outside T041 scope",
-                    file=file,
-                    start=start,
-                )
+            if target_key not in declarations:
+                continue
+            file, start = _syntax_start(source_catalog, node)
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                "hierarchical signal reference is outside T041 scope",
+                file=file,
+                start=start,
+            )
             continue
         if node_kind == element_select_kind:
             value = getattr(node, "value", None)
@@ -417,6 +710,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         elif node_kind == pyslang.ast.ExpressionKind.NamedValue:
             target = getattr(node, "symbol", None)
             if target is None and id(node) not in element_value_ids:
+                if getattr(node, "syntax", None) is None:
+                    continue
                 file, start = _syntax_start(source_catalog, node)
                 raise SymbolGraphError(
                     "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
@@ -424,17 +719,19 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                     file=file,
                     start=start,
                 )
-            if target is not None and getattr(node, "syntax", None) is None:
-                if id(node) in element_value_ids:
-                    continue
-                raise SymbolGraphError(
-                    "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
-                    "semantic expression has no direct source identifier token",
-                )
         else:
             target = None
         if target is None:
             continue
+        if not _is_signal_target(target):
+            continue
+        if getattr(node, "syntax", None) is None:
+            if id(node) in element_value_ids:
+                continue
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic expression has no direct source identifier token",
+            )
         target_key = _signal_range_key(source_catalog, target)
         declaration = declarations.get(target_key)
         if declaration is None:
@@ -481,6 +778,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                 reason=None,
             )
         )
+
+    symbols_list.extend(_collect_genvar_symbols(source_catalog, nodes, owners))
 
     symbols = tuple(
         sorted(

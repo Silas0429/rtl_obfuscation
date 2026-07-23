@@ -1,6 +1,6 @@
 # T042：SymbolGraph genvar source identity 与受控 generate provenance
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R2-C
@@ -296,21 +296,33 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T042_symbol_graph_genvars.md
 ## 13. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-fixture_hash_check:
-catalog_preflight:
-baseline_command:
-baseline_result:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 931df968bd771e5ee03bcb098e5593b869d700dd
+fixture_hash_check: 12/12 frozen fixture hashes matched section 3.3; no fixture files were modified
+catalog_preflight: design, closure + top=genvar_top, single, macro, macro_reference, nested all reported catalog parse_errors=0 and semantic_errors=0; closure top_overlay also reported 0/0
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars -v`
+baseline_result: exit 1 as expected; T041's 15 tests passed, then `tests.test_symbol_graph_genvars` import failed with `ModuleNotFoundError`; `Ran 16 tests in 0.107s` and `FAILED (errors=1)`
+changed_files: none at start; workspace clean; only T042 allowed files may be changed
+revision_after_main_agent_return:
+  - candidate-scoped signal dispatch now ignores unsupported parameter/port semantic nodes before no-token and signal-range checks, while preserving T041 failures for collected signal candidates
+  - non-inline generate-for association now fails closed with `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE` when a same-owner genvar candidate lacks unique iteration evidence
+  - the existing 13-test matrix now directly checks symbol-name bytes for every genvar range and closure/single whole-graph audits
 commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T042_symbol_graph_genvars.md`
 results:
-schema_or_behavior:
-deviations_or_blockers:
-boundaries:
+  - combined unittest: exit 0; `Ran 28 tests` and `OK`
+  - py_compile: exit 0; no output
+  - diff check: exit 0; no output
+  - status guard: exit 0; output `- 状态：\`READY_FOR_REVIEW\``
+schema_or_behavior: T042 adds only `genvars`; full design yields 3 genvar symbols/16 generate_syntax occurrences/19 genvar ranges and whole graph audit 7/7/16/23; closure yields 2/13/15 and whole graph 5/5/13/18; single yields 1/3/4 and whole graph 2/2/3/5; T041+T042 combined target regression passed 28 tests
+deviations_or_blockers: none
+boundaries: no parameters, ABI, rewrite, lexical scan, second compilation, legacy collector, inactive generate, nested generate-for, or macro genvar support beyond fixed fail-closed negatives
 cleanup_candidates: none in T042
 formal_verification: N/A - no rewritten RTL is produced
-review_request:
+review_request: READY_FOR_REVIEW; single complete review request after all 13 T042 behaviors; no main-agent acceptance record
 ```
 
 ## 14. READY_FOR_REVIEW 条件
@@ -350,4 +362,52 @@ positive_oracles: full 3/16/19 and graph 7/7/16/23; closure 2/13/15 and graph 5/
 negative_matrix: macro declaration, macro reference, valid nested same-name loops
 acceptance: exactly four commands; T041 regression plus 13 T042 tests; no Formal or hidden probes
 formal_verification: N/A - no rewritten RTL is produced
+```
+
+## 17. 主 Agent首次验收记录（2026-07-23）
+
+```text
+status: IN_PROGRESS / NOT_ACCEPTED
+reviewed_head: 931df968bd771e5ee03bcb098e5593b869d700dd
+independent_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T042_symbol_graph_genvars.md`
+independent_results: all four exited 0; unittest ran 28 tests in 0.199s and reported OK
+contract_findings:
+  - section 5.3 is not implemented: generic expression traversal still raises on every non-candidate NamedValueExpression with `syntax is None`, and calls `_signal_range_key()` before proving the target is a collected signal; fail-closed checks must be applied only after candidate dispatch
+  - section 5.2 is not implemented for missing iteration evidence: a non-inline loop with zero/ambiguous candidate or no body-parameter evidence currently executes `continue`, silently returning an incomplete genvar symbol instead of `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE`
+  - section 8 item 8 is incomplete: the range test checks only bounds, not `source_bytes[start:end] == symbol.name.encode()`, and only the full audit is asserted directly; closure `5/5/13/18` and single `2/2/3/5` must also have direct assertions
+required_revision:
+  - dispatch semantic targets by supported candidate kind before no-token, macro and `_signal_range_key()` checks; preserve all T041 signal failures while ignoring not-yet-supported parameter/port targets
+  - replace the silent non-inline association `continue` with the frozen whole-graph unsupported-reference failure when a same-name loop cannot be uniquely proved
+  - strengthen the existing 13 tests with byte-equality and closure/single audit assertions; do not add fixtures, test behaviors, error codes or acceptance commands
+review_scope: all findings cite sections 5.2, 5.3 and 8 of the frozen contract; no hidden probe, historical oracle or new requirement was added
+formal_verification: N/A - no rewritten RTL is produced
+review_request: withdrawn until all three findings are corrected and the unchanged four commands pass
+```
+
+## 18. 主 Agent最终验收记录（2026-07-23）
+
+```text
+status: ACCEPTED
+reviewed_head: 931df968bd771e5ee03bcb098e5593b869d700dd
+revision_review:
+  - candidate dispatch now precedes no-token, macro and signal-range checks for semantic targets; T041 signal failures remain covered
+  - non-inline loops with a matching candidate but ambiguous or missing iteration evidence now fail as `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE`
+  - existing tests directly assert genvar source-name bytes and full/closure/single audits
+independent_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_signals tests.test_symbol_graph_genvars -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_symbol_graph_genvars.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：\`READY_FOR_REVIEW\`' docs/tasks/T042_symbol_graph_genvars.md`
+independent_results:
+  - unittest: exit 0; `Ran 28 tests in 0.215s`; `OK`
+  - py_compile: exit 0; no output
+  - diff check: exit 0; no output
+  - READY_FOR_REVIEW guard: exit 0 before acceptance; exact status line matched
+scope_review: only section 9 allowed files changed; all 12 frozen fixture hashes remain unchanged; no legacy collector, second compilation, parameter/ABI/rewrite or hidden acceptance input
+formal_verification: N/A - no rewritten RTL is produced
+decision: ACCEPTED
 ```
