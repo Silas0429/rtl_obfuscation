@@ -1,6 +1,6 @@
 # T050：rate-selected MappingVNext gate execution 与 restore
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-G
@@ -192,23 +192,29 @@ rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T050_rate_selected_execution.m
 
 ## 11. 子 Agent执行记录
 
-status: NOT_STARTED
-starting_head:
-start_time:
-baseline_command:
-baseline_result:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 29045d09c240fbd61e00ed524adbae856c95b552
+start_time: 2026-07-23T16:23:27+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 4]`; no other status entries
+allowed_files: rtl_obfuscator/rate_execution_vnext.py; rtl_obfuscator/rewrite_vnext.py; tests/test_rate_execution_vnext.py; docs/tasks/T050_rate_selected_execution.md
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_rate_execution_vnext -v`
+baseline_result: `ModuleNotFoundError: No module named 'tests.test_rate_execution_vnext'`; Ran 1 test in 0.000s, FAILED, exit_code=1
+changed_files: rtl_obfuscator/rate_execution_vnext.py; rtl_obfuscator/rewrite_vnext.py; tests/test_rate_execution_vnext.py; docs/tasks/T050_rate_selected_execution.md
 commands:
-results:
-selected_mapping_summary:
-strict_compile:
-restore_summary:
-formal_positive:
-formal_negative:
-formal_verification: PASS | FAIL | BLOCKED
-deviations_or_blockers:
-boundaries:
-review_request:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_rate_execution_vnext -v` — actual output: Ran 6 tests in 0.302s; OK; exit_code=0. The test internally ran the fixed Formal positive and negative commands.
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_execution_vnext.py rtl_obfuscator/rewrite_vnext.py tests/test_rate_execution_vnext.py` — actual output: no stdout/stderr; exit_code=0.
+  - `git diff --check HEAD` — actual output: no stdout/stderr; exit_code=0.
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T050_rate_selected_execution.md` — actual output: `- 状态：READY_FOR_REVIEW`; exit_code=0.
+results: T050 target unittest, py_compile, diff check, and final status guard passed.
+selected_mapping_summary: actual MappingVNext from design.f with top=parameter_top and RateSelectionVNext rate=0.35 was materialized without rebuilding SourceSet, SourceCatalog, SymbolGraph, RewritePolicy, or MappingVNext. Selected rename records retained renamed_name; every unselected rename became preserve with reason=rate_unselected and renamed_name=null; original preserve/unsupported records and all record/range identity remained unchanged.
+strict_compile: actual selected gate used the T046 write_gate_vnext one-pass engine with catalog parse/semantic errors 0/0 and top-overlay parse/semantic errors 0/0. AppliedEdit entries covered only selected rename records and all declaration/occurrence ranges; gate manifest followed physical-file order.
+restore_summary: actual selected gate was restored through T046 restore_gate_vnext; restored_manifest equaled input_manifest and every physical file was byte-identical to the gold source bytes.
+formal_positive: internal command used gold-filelist=tests/fixtures/refactor_symbol_graph_parameters/design.f, gold-root=tests/fixtures/refactor_symbol_graph_parameters, actual selected gate filelist/root, top=parameter_top, seq=5; output JSON contained formal_equivalence=pass, seq=5, top=parameter_top; exit_code=0.
+formal_negative: internal command used a copy of the actual selected gate with exactly one ASCII `~` inserted after the unique `assign data_o = ` in rtl/child.sv; strict compile remained 0/0; Formal exit_code=1 and combined output contained `unproven` and `equiv_status -assert`.
+formal_verification: PASS
+deviations_or_blockers: none
+boundaries: no CLI, project-root, metrics adapter, legacy rewrite/decrypt integration, fixture, README, planning-document, or Formal-script changes; restore remains a separate API returning RestoreResult, and the report carries only portable execution/selection data.
+review_request: READY_FOR_REVIEW; Main Agent may independently rerun the four commands in section 10.
 
 ## 12. READY_FOR_REVIEW 条件
 
@@ -238,3 +244,23 @@ inputs: committed T043 parameter fixture + T049 RateSelectionVNext + T046 gate/r
 oracle: selected records preserve full occurrences; unselected rename records become rate_unselected preserve; strict 0/0; restore byte-identical; compact Formal +/- required
 formal_verification: required actual selected gate positive and one-byte functional negative
 forbidden: T049 algorithm changes, CLI, project-root, metrics adapter, RISC Formal, legacy compatibility, fixture edits, T051 creation
+
+## 15. 主 Agent验收记录（2026-07-23）
+
+status: ACCEPTED
+reviewed_head: 29045d09c240fbd61e00ed524adbae856c95b552
+prerequisites: PASS; T047、T048、T049 已 ACCEPTED，T050 是唯一 READY_FOR_REVIEW 任务
+scope: PASS; 实际修改仅限本合同第 9 节列出的四个文件，未修改 fixture、MappingVNext core 或 Formal 脚本
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_rate_execution_vnext -v` — 6 tests，OK，exit_code=0；实际执行 selected gate Formal 正例和一字节功能负例
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_execution_vnext.py rtl_obfuscator/rewrite_vnext.py tests/test_rate_execution_vnext.py` — exit_code=0
+  - `git diff --check HEAD` — exit_code=0
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T050_rate_selected_execution.md` — 在状态更新前匹配成功，exit_code=0
+selected_mapping: PASS; selected rename 保留 renamed_name，未选 rename 转为 `preserve`/`rate_unselected`/null，record、occurrence、owner、category、ABI 和 source range identity 保持，未重建 semantic graph 或 MappingVNext
+strict_compile: PASS; actual selected gate catalog/top-overlay parse/semantic diagnostics 为 0/0，manifest 与 range audit 通过，未选 record 无 edit
+restore: PASS; 4 个 physical files 恢复后与 gold source byte-identical，restored_manifest 与 input_manifest 一致
+formal_positive: PASS; actual selected gate JSON 为 `formal_equivalence=pass`、`top=parameter_top`、`seq=5`
+formal_negative: PASS; 仅插入一个 ASCII `~` 后 strict compile 仍为 0/0，Formal exit_code=1，输出包含 `unproven` 和 `equiv_status -assert`
+formal_verification: PASS
+decision: ACCEPTED
+next_step: T050 可提交交付；主 Agent 不在本任务中实现 T051，下一任务须在本提交验收后另行冻结

@@ -599,6 +599,7 @@ def _source_set_from_mapping(
     mapping: MappingVNext,
     *,
     check_source_files: bool = True,
+    validate_canonical_policy: bool = True,
 ) -> tuple[SourceSet, SourceCatalog, SymbolGraph]:
     if not isinstance(mapping, MappingVNext):
         _fail("REWRITE_MAPPING_INVALID", "input is not MappingVNext")
@@ -622,16 +623,17 @@ def _source_set_from_mapping(
         _fail("REWRITE_MAPPING_INVALID", "mapping policy selections are invalid")
     if not isinstance(policy.decisions, tuple) or not isinstance(graph.symbols, tuple):
         _fail("REWRITE_MAPPING_INVALID", "mapping policy or graph sequence is invalid")
-    try:
-        expected_policy = build_rewrite_policy(
-            graph,
-            categories=policy.selected_categories,
-            abi_categories=policy.abi_categories,
-        )
-    except Exception as error:
-        _fail("REWRITE_MAPPING_INVALID", f"mapping policy cannot be revalidated: {error}")
-    if policy.decisions != expected_policy.decisions:
-        _fail("REWRITE_MAPPING_INVALID", "mapping policy decisions are not canonical")
+    if validate_canonical_policy:
+        try:
+            expected_policy = build_rewrite_policy(
+                graph,
+                categories=policy.selected_categories,
+                abi_categories=policy.abi_categories,
+            )
+        except Exception as error:
+            _fail("REWRITE_MAPPING_INVALID", f"mapping policy cannot be revalidated: {error}")
+        if policy.decisions != expected_policy.decisions:
+            _fail("REWRITE_MAPPING_INVALID", "mapping policy decisions are not canonical")
     if not isinstance(mapping.records, tuple):
         _fail("REWRITE_MAPPING_INVALID", "mapping records are not canonical")
     if len(mapping.records) != len(policy.decisions) or len(mapping.records) != len(graph.symbols):
@@ -751,8 +753,15 @@ def _validate_renamed_names(mapping: MappingVNext, data: dict[str, bytes], graph
         renamed.add(record.renamed_name)
 
 
-def _validate_mapping_for_write(mapping: MappingVNext) -> tuple[SourceSet, SymbolGraph, dict[str, bytes]]:
-    source_set, _catalog, graph = _source_set_from_mapping(mapping)
+def _validate_mapping_for_write(
+    mapping: MappingVNext,
+    *,
+    validate_canonical_policy: bool = True,
+) -> tuple[SourceSet, SymbolGraph, dict[str, bytes]]:
+    source_set, _catalog, graph = _source_set_from_mapping(
+        mapping,
+        validate_canonical_policy=validate_canonical_policy,
+    )
     physical = _physical_files(source_set)
     data = _check_regular_source_files(source_set, physical, read=True)
     _validate_input_manifest(mapping, source_set, data)
@@ -761,10 +770,15 @@ def _validate_mapping_for_write(mapping: MappingVNext) -> tuple[SourceSet, Symbo
     return source_set, graph, data
 
 
-def _expected_edits(mapping: MappingVNext) -> tuple[AppliedEdit, ...]:
+def _expected_edits(
+    mapping: MappingVNext,
+    *,
+    validate_canonical_policy: bool = True,
+) -> tuple[AppliedEdit, ...]:
     _source_set, _catalog, graph = _source_set_from_mapping(
         mapping,
         check_source_files=False,
+        validate_canonical_policy=validate_canonical_policy,
     )
     deltas: dict[str, list[tuple[int, int, int]]] = {}
     specifications: list[tuple[str, str, str, str, SourceRange]] = []
@@ -841,13 +855,20 @@ def write_gate_vnext(
     mapping_vnext: MappingVNext,
     *,
     output_dir: Path,
+    _validate_canonical_policy: bool = True,
 ) -> RewriteExecution:
     """Apply all mapping edits once, compile the gate, and publish atomically."""
 
-    source_set, graph, data = _validate_mapping_for_write(mapping_vnext)
+    source_set, graph, data = _validate_mapping_for_write(
+        mapping_vnext,
+        validate_canonical_policy=_validate_canonical_policy,
+    )
     source_root = _source_root(source_set)
     destination = _validate_output_path(output_dir, source_root=source_root, code="REWRITE_OUTPUT_INVALID")
-    edits = _expected_edits(mapping_vnext)
+    edits = _expected_edits(
+        mapping_vnext,
+        validate_canonical_policy=_validate_canonical_policy,
+    )
     by_file: dict[str, list[AppliedEdit]] = {}
     for edit in edits:
         by_file.setdefault(edit.source_range.file, []).append(edit)
@@ -919,7 +940,11 @@ def write_gate_vnext(
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def _validate_execution(execution: RewriteExecution) -> tuple[SourceSet, SymbolGraph, tuple[AppliedEdit, ...]]:
+def _validate_execution(
+    execution: RewriteExecution,
+    *,
+    validate_canonical_policy: bool = True,
+) -> tuple[SourceSet, SymbolGraph, tuple[AppliedEdit, ...]]:
     if not isinstance(execution, RewriteExecution) or not _is_schema_one(execution.schema_version):
         _fail("RESTORE_EXECUTION_INVALID", "rewrite execution schema is invalid")
     if execution.filelist != "design.f" or not isinstance(execution.gate_manifest, tuple):
@@ -927,8 +952,12 @@ def _validate_execution(execution: RewriteExecution) -> tuple[SourceSet, SymbolG
     source_set, _catalog, graph = _source_set_from_mapping(
         execution.mapping_vnext,
         check_source_files=False,
+        validate_canonical_policy=validate_canonical_policy,
     )
-    edits = _expected_edits(execution.mapping_vnext)
+    edits = _expected_edits(
+        execution.mapping_vnext,
+        validate_canonical_policy=validate_canonical_policy,
+    )
     if not isinstance(execution.edits, tuple) or execution.edits != edits:
         _fail("RESTORE_EXECUTION_INVALID", "rewrite execution edits are not canonical")
     files = _physical_files(source_set)
@@ -950,6 +979,7 @@ def restore_gate_vnext(
     *,
     gate_dir: Path,
     output_dir: Path,
+    _validate_canonical_policy: bool = True,
 ) -> RestoreResult:
     """Restore original bytes using only execution metadata and gate bytes."""
 
@@ -960,7 +990,10 @@ def restore_gate_vnext(
     destination = _validate_output_path(output_dir, gate_dir=gate_path, code="RESTORE_OUTPUT_INVALID")
     if not gate_path.is_dir():
         _fail("RESTORE_GATE_INVALID", "gate directory does not exist")
-    source_set, _graph, edits = _validate_execution(rewrite_execution)
+    source_set, _graph, edits = _validate_execution(
+        rewrite_execution,
+        validate_canonical_policy=_validate_canonical_policy,
+    )
     files = _physical_files(source_set)
     try:
         filelist_bytes = (gate_path / rewrite_execution.filelist).read_bytes()
