@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import hashlib
+import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,7 +18,7 @@ from .mapping_vnext import (
     MappingRecord,
     MappingVNext,
 )
-from .rewrite_policy import build_rewrite_policy
+from .rewrite_policy import RewritePolicy, build_rewrite_policy
 from .source_catalog import SourceCatalog, SourceRange, build_source_catalog
 from .source_set import SourceSet
 from .symbol_graph import SourceSymbol, SymbolGraph, SymbolOccurrence
@@ -104,6 +106,44 @@ class RestoreResult:
         }
 
 
+@dataclass(frozen=True)
+class MappingExecutionVNext:
+    schema_version: int
+    rewrite_execution: RewriteExecution = field(repr=False, compare=False)
+    restore_result: RestoreResult = field(repr=False, compare=False)
+
+    def to_report(self) -> dict[str, object]:
+        mapping, files, per_file_mapping = _validate_mapping_execution(self)
+        gate_manifest = self.rewrite_execution.gate_manifest
+        restored_manifest = self.restore_result.restored_manifest
+        input_manifest = mapping.input_manifest
+        renamed_records = sum(record.action == "rename" for record in mapping.records)
+        modified_tokens = len(self.rewrite_execution.edits)
+        return {
+            "format": "rtl-obfuscation.mapping-execution-vnext",
+            "schema_version": self.schema_version,
+            "state": "restored",
+            "mapping": mapping.to_report(),
+            "filelist": "design.f",
+            "input_manifest": [_digest_report(item) for item in input_manifest],
+            "gate_manifest": [_digest_report(item) for item in gate_manifest],
+            "restored_manifest": [_digest_report(item) for item in restored_manifest],
+            "per_file_mapping": per_file_mapping,
+            "summary": {
+                "files": len(files),
+                "mapping_records": len(mapping.records),
+                "renamed_records": renamed_records,
+                "modified_tokens": modified_tokens,
+                "per_file_records": sum(
+                    len(file_entry["records"]) for file_entry in per_file_mapping
+                ),
+                "input_gate_manifest_equal": input_manifest == gate_manifest,
+                "restored_input_manifest_equal": restored_manifest == input_manifest,
+                "restored_byte_identical": restored_manifest == input_manifest,
+            },
+        }
+
+
 class RewriteVNextError(ValueError):
     """Stable fail-closed error for rewrite vNext execution."""
 
@@ -141,6 +181,365 @@ def _edit_report(edit: AppliedEdit) -> dict[str, object]:
         "source_range": _range_report(edit.source_range),
         "gate_range": _range_report(edit.gate_range),
     }
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _digest_report(item: InputFileDigest) -> dict[str, object]:
+    return {"file": item.file, "sha256": item.sha256}
+
+
+def _portable_file(file: object) -> bool:
+    if not isinstance(file, str) or not file or "\\" in file or file.startswith("/"):
+        return False
+    parts = file.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def _mapping_execution_context(
+    mapping: object,
+) -> tuple[MappingVNext, SourceSet, tuple[str, ...]]:
+    if not isinstance(mapping, MappingVNext):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping is not MappingVNext")
+    if mapping.format != "rtl-obfuscation.mapping-vnext" or not _is_schema_one(mapping.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping format or schema is invalid")
+    policy = mapping.rewrite_policy
+    if not isinstance(policy, RewritePolicy):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping policy is invalid")
+    graph = policy.symbol_graph
+    if not isinstance(graph, SymbolGraph) or not _is_schema_one(graph.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping graph is invalid")
+    catalog = graph.source_catalog
+    if not isinstance(catalog, SourceCatalog) or not _is_schema_one(catalog.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping catalog is invalid")
+    source_set = catalog.source_set
+    if not isinstance(source_set, SourceSet) or not _is_schema_one(source_set.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping SourceSet is invalid")
+    if not isinstance(source_set.ordered_source_files, tuple) or not isinstance(source_set.included_files, tuple):
+        _fail("MAPPING_MANIFEST_INVALID", "SourceSet physical file sequence is not canonical")
+    files: list[str] = []
+    for file in (*source_set.ordered_source_files, *source_set.included_files):
+        if not _portable_file(file):
+            _fail("MAPPING_MANIFEST_INVALID", "physical file path is not portable")
+        if file not in files:
+            files.append(file)
+    if not files:
+        _fail("MAPPING_MANIFEST_INVALID", "SourceSet has no physical files")
+    return mapping, source_set, tuple(files)
+
+
+def _validate_manifest(
+    manifest: object,
+    files: tuple[str, ...],
+    *,
+    label: str,
+) -> tuple[InputFileDigest, ...]:
+    if not isinstance(manifest, tuple) or len(manifest) != len(files):
+        _fail("MAPPING_MANIFEST_INVALID", f"{label} shape is invalid")
+    for item, file in zip(manifest, files):
+        if (
+            not isinstance(item, InputFileDigest)
+            or item.file != file
+            or not isinstance(item.sha256, str)
+            or _SHA256.fullmatch(item.sha256) is None
+        ):
+            _fail("MAPPING_MANIFEST_INVALID", f"{label} order, file, or hash is invalid")
+    return manifest
+
+
+def _validate_source_range(value: object, files: tuple[str, ...], *, label: str) -> SourceRange:
+    if not isinstance(value, SourceRange) or value.file not in files or not _portable_file(value.file):
+        _fail("MAPPING_PER_FILE_INVALID", f"{label} is not a physical portable range")
+    if type(value.start) is not int or type(value.end) is not int or not 0 <= value.start < value.end:
+        _fail("MAPPING_PER_FILE_INVALID", f"{label} bounds are invalid")
+    return value
+
+
+def _validate_mapping_records(
+    mapping: MappingVNext,
+    files: tuple[str, ...],
+) -> tuple[dict[tuple[str, str, SourceRange], SourceRange], ...]:
+    policy = mapping.rewrite_policy
+    graph = policy.symbol_graph
+    if not isinstance(mapping.records, tuple) or not isinstance(graph.symbols, tuple) or not isinstance(policy.decisions, tuple):
+        _fail("MAPPING_PER_FILE_INVALID", "mapping record, graph, or policy sequence is invalid")
+    if len(mapping.records) != len(graph.symbols) or len(mapping.records) != len(policy.decisions):
+        _fail("MAPPING_PER_FILE_INVALID", "mapping record projection is not one-to-one")
+
+    range_keys: list[dict[tuple[str, str, SourceRange], SourceRange]] = []
+    for record, symbol, decision in zip(mapping.records, graph.symbols, policy.decisions):
+        if not isinstance(record, MappingRecord) or not isinstance(symbol, SourceSymbol):
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record or graph symbol is invalid")
+        expected_fields = (
+            (record.symbol_id, symbol.symbol_id),
+            (record.category, getattr(decision, "category", None)),
+            (record.action, getattr(decision, "action", None)),
+            (record.reason, getattr(decision, "reason", None)),
+            (record.original_name, symbol.name),
+            (record.owner_module, symbol.owner_module),
+            (record.semantic_owner, symbol.semantic_owner),
+            (record.declaration, symbol.declaration),
+            (record.occurrences, symbol.occurrences),
+            (record.impact, symbol.impact),
+            (record.abi, symbol.abi),
+        )
+        if any(actual != expected for actual, expected in expected_fields):
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record does not match established execution inputs")
+        if record.action not in {"rename", "preserve", "unsupported"}:
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record action is invalid")
+        if not isinstance(record.original_name, str) or not record.original_name:
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record original_name is invalid")
+        if record.action == "rename":
+            if not isinstance(record.renamed_name, str) or not record.renamed_name:
+                _fail("MAPPING_PER_FILE_INVALID", "rename record renamed_name is invalid")
+        elif record.renamed_name is not None:
+            _fail("MAPPING_PER_FILE_INVALID", "preserve record renamed_name is invalid")
+        if not isinstance(record.occurrences, tuple):
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record occurrences are not canonical")
+
+        record_ranges: dict[tuple[str, str, SourceRange], SourceRange] = {}
+        declaration = _validate_source_range(record.declaration, files, label="declaration")
+        declaration_key = (record.symbol_id, "declaration", declaration)
+        record_ranges[declaration_key] = declaration
+        for occurrence in record.occurrences:
+            if not isinstance(occurrence, SymbolOccurrence) or not isinstance(occurrence.provenance, str) or not occurrence.provenance:
+                _fail("MAPPING_PER_FILE_INVALID", "mapping occurrence is invalid")
+            source_range = _validate_source_range(occurrence.source_range, files, label="occurrence")
+            key = (record.symbol_id, occurrence.provenance, source_range)
+            if key in record_ranges:
+                _fail("MAPPING_PER_FILE_INVALID", "mapping occurrence is duplicated")
+            record_ranges[key] = source_range
+        range_keys.append(record_ranges)
+    return tuple(range_keys)
+
+
+def _validate_mapping_execution(
+    mapping_execution: MappingExecutionVNext,
+) -> tuple[MappingVNext, tuple[str, ...], list[dict[str, object]]]:
+    if not isinstance(mapping_execution, MappingExecutionVNext) or not _is_schema_one(mapping_execution.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "mapping execution schema is invalid")
+    execution = mapping_execution.rewrite_execution
+    restore = mapping_execution.restore_result
+    if not isinstance(execution, RewriteExecution) or not _is_schema_one(execution.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "rewrite execution schema is invalid")
+    if not isinstance(restore, RestoreResult) or not _is_schema_one(restore.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "restore result schema is invalid")
+    if restore.rewrite_execution is not execution:
+        _fail("MAPPING_EXECUTION_INVALID", "restore result does not reference the execution")
+    mapping, _source_set, files = _mapping_execution_context(execution.mapping_vnext)
+    if execution.filelist != "design.f":
+        _fail("MAPPING_EXECUTION_INVALID", "rewrite execution filelist is invalid")
+    if not isinstance(execution.edits, tuple) or not isinstance(execution.compile_evidence, CompileEvidence):
+        _fail("MAPPING_EXECUTION_INVALID", "rewrite execution fields are invalid")
+    if execution.mapping_vnext is not restore.rewrite_execution.mapping_vnext:
+        _fail("MAPPING_EXECUTION_INVALID", "restore mapping identity does not match execution")
+    input_manifest = _validate_manifest(mapping.input_manifest, files, label="input_manifest")
+    gate_manifest = _validate_manifest(execution.gate_manifest, files, label="gate_manifest")
+    restored_manifest = _validate_manifest(restore.restored_manifest, files, label="restored_manifest")
+    if restored_manifest != input_manifest:
+        _fail("MAPPING_MANIFEST_INVALID", "restored_manifest does not equal input_manifest")
+
+    record_ranges = _validate_mapping_records(mapping, files)
+    expected_edits: list[tuple[str, str, str, str, SourceRange]] = []
+    for record in mapping.records:
+        if record.action != "rename":
+            continue
+        expected_edits.append((record.symbol_id, "declaration", record.original_name, record.renamed_name or "", record.declaration))
+        expected_edits.extend(
+            (record.symbol_id, occurrence.provenance, record.original_name, record.renamed_name or "", occurrence.source_range)
+            for occurrence in record.occurrences
+        )
+    if len(execution.edits) != len(expected_edits):
+        _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit count does not cover mapping rename ranges")
+    deltas: dict[str, list[tuple[int, int, int]]] = {}
+    for _symbol_id, _provenance, original_name, renamed_name, source_range in expected_edits:
+        deltas.setdefault(source_range.file, []).append(
+            (
+                source_range.start,
+                source_range.end,
+                len(renamed_name.encode("utf-8")) - len(original_name.encode("utf-8")),
+            )
+        )
+    edits_by_key: dict[tuple[str, str, SourceRange], AppliedEdit] = {}
+    for edit, expected in zip(execution.edits, expected_edits):
+        if not isinstance(edit, AppliedEdit):
+            _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit sequence contains an invalid item")
+        symbol_id, provenance, original_name, renamed_name, source_range = expected
+        if (
+            edit.symbol_id != symbol_id
+            or edit.provenance != provenance
+            or edit.original_name != original_name
+            or edit.renamed_name != renamed_name
+            or edit.source_range != source_range
+        ):
+            _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit does not match mapping range order")
+        gate_range = _validate_source_range(edit.gate_range, files, label="gate range")
+        if gate_range.file != source_range.file:
+            _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit gate range file differs from source range")
+        earlier_delta = sum(
+            delta
+            for start, _end, delta in deltas[source_range.file]
+            if start < source_range.start
+        )
+        expected_gate_range = SourceRange(
+            source_range.file,
+            source_range.start + earlier_delta,
+            source_range.start + earlier_delta + len(renamed_name.encode("utf-8")),
+        )
+        if gate_range != expected_gate_range:
+            _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit gate range is not canonical")
+        key = (edit.symbol_id, edit.provenance, edit.source_range)
+        if key in edits_by_key:
+            _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit is duplicated")
+        edits_by_key[key] = edit
+
+    input_by_file = {item.file: item.sha256 for item in input_manifest}
+    gate_by_file = {item.file: item.sha256 for item in gate_manifest}
+    per_file: list[dict[str, object]] = []
+    for file in files:
+        projected_records: list[dict[str, object]] = []
+        for record, ranges in zip(mapping.records, record_ranges):
+            projected_ranges: list[dict[str, object]] = []
+            ordered_ranges = [
+                ("declaration", record.declaration),
+                *[(occurrence.provenance, occurrence.source_range) for occurrence in record.occurrences],
+            ]
+            for provenance, source_range in ordered_ranges:
+                if source_range.file != file:
+                    continue
+                key = (record.symbol_id, provenance, source_range)
+                if record.action == "rename":
+                    edit = edits_by_key.get(key)
+                    if edit is None:
+                        _fail("MAPPING_PER_FILE_INVALID", "rename range has no AppliedEdit")
+                    gate_range = edit.gate_range
+                else:
+                    gate_range = source_range
+                projected_ranges.append(
+                    {
+                        "provenance": provenance,
+                        "source_range": _range_report(source_range),
+                        "gate_range": _range_report(gate_range),
+                    }
+                )
+            if projected_ranges:
+                projected_records.append(
+                    {
+                        "symbol_id": record.symbol_id,
+                        "category": record.category,
+                        "action": record.action,
+                        "reason": record.reason,
+                        "original_name": record.original_name,
+                        "renamed_name": record.renamed_name,
+                        "owner_module": record.owner_module,
+                        "semantic_owner": record.semantic_owner,
+                        "impact": record.impact,
+                        "abi": record.abi,
+                        "ranges": projected_ranges,
+                    }
+                )
+        per_file.append(
+            {
+                "file": file,
+                "input_sha256": input_by_file[file],
+                "gate_sha256": gate_by_file[file],
+                "records": projected_records,
+            }
+        )
+    return mapping, files, per_file
+
+
+def _validate_mapping_output_path(output_file: Path) -> Path:
+    try:
+        path = Path(output_file).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError) as error:
+        _fail("MAPPING_OUTPUT_INVALID", f"output path is invalid: {error}")
+    if path.exists() or not path.parent.is_dir():
+        _fail("MAPPING_OUTPUT_INVALID", "output_file must not exist and its parent must be a directory")
+    return path
+
+
+def _validate_mapping_output_protection(output_file: Path, source_set: SourceSet) -> None:
+    try:
+        source_root = Path(source_set.source_root).expanduser().resolve()
+        output_file.relative_to(source_root)
+    except ValueError:
+        return
+    except (OSError, RuntimeError, TypeError) as error:
+        _fail("MAPPING_OUTPUT_INVALID", f"source_root is invalid: {error}")
+    _fail("MAPPING_OUTPUT_INVALID", "output_file overlaps source_root or a physical source file")
+
+
+def build_mapping_execution_vnext(
+    rewrite_execution: RewriteExecution,
+    restore_result: RestoreResult,
+) -> MappingExecutionVNext:
+    """Project an established T046 execution/restore pair without rebuilding inputs."""
+
+    if not isinstance(rewrite_execution, RewriteExecution) or not isinstance(restore_result, RestoreResult):
+        _fail("MAPPING_EXECUTION_INVALID", "inputs are not RewriteExecution and RestoreResult")
+    envelope = MappingExecutionVNext(
+        schema_version=1,
+        rewrite_execution=rewrite_execution,
+        restore_result=restore_result,
+    )
+    _validate_mapping_execution(envelope)
+    return envelope
+
+
+def write_mapping_execution_vnext(
+    mapping_execution: MappingExecutionVNext,
+    *,
+    output_file: Path,
+) -> None:
+    """Write the validated envelope as one canonical, atomic JSON file."""
+
+    destination = _validate_mapping_output_path(output_file)
+    mapping, _files, _per_file_mapping = _validate_mapping_execution(mapping_execution)
+    source_set = mapping.rewrite_policy.symbol_graph.source_catalog.source_set
+    _validate_mapping_output_protection(destination, source_set)
+    try:
+        report = mapping_execution.to_report()
+        payload = json.dumps(report, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except RewriteVNextError:
+        raise
+    except (TypeError, ValueError, UnicodeError) as error:
+        _fail("MAPPING_IO_ERROR", f"cannot serialize mapping execution: {error}")
+
+    staging: Path | None = None
+    descriptor: int | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".mapping-execution-vnext-",
+            suffix=".tmp",
+            dir=str(destination.parent),
+        )
+        staging = Path(temporary_name)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = None
+            handle.write(payload)
+            handle.flush()
+        if staging.read_bytes() != payload:
+            _fail("MAPPING_IO_ERROR", "staged JSON readback differs from serialized bytes")
+        if json.loads(payload.decode("utf-8")) != report:
+            _fail("MAPPING_IO_ERROR", "staged JSON readback differs from report")
+        staging.rename(destination)
+    except RewriteVNextError:
+        raise
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        _fail("MAPPING_IO_ERROR", f"cannot write mapping execution atomically: {error}")
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if staging is not None and staging.exists():
+            try:
+                staging.unlink()
+            except OSError:
+                pass
 
 
 def _physical_files(source_set: SourceSet) -> tuple[str, ...]:

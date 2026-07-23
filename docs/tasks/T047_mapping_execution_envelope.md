@@ -1,6 +1,6 @@
 # T047：mapping vNext 最终执行封装、per-file mapping 与 manifest
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-D
@@ -193,22 +193,22 @@ T047 只生成报告和 JSON，不产生新的 rewritten RTL。
 ## 10. 子 Agent执行记录
 
 ~~~text
-status: NOT_STARTED
-starting_head:
-start_time:
-baseline_command:
-baseline_result:
-changed_files:
-commands:
-results:
-envelope_summary:
-manifest_result:
-per_file_result:
-negative_cases:
+status: READY_FOR_REVIEW
+starting_head: aafe23a6cff2bb3d37569fd28f882fb8d63a243a
+start_time: 2026-07-23T14:46:19+08:00
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_execution_vnext -v`
+baseline_result: target unittest unavailable before implementation; `ModuleNotFoundError: No module named 'tests.test_mapping_execution_vnext'`, Ran 1 test in 0.000s, FAILED, exit_code=1
+changed_files: rtl_obfuscator/rewrite_vnext.py; tests/test_mapping_execution_vnext.py; docs/tasks/T047_mapping_execution_envelope.md
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_execution_vnext -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite_vnext.py tests/test_mapping_execution_vnext.py`; `git diff --check HEAD`; `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T047_mapping_execution_envelope.md`
+results: target unittest PASS, Ran 7 tests in 0.179s, OK, exit_code=0; py_compile PASS, exit_code=0; `git diff --check HEAD` PASS with no output, exit_code=0; exact status guard PASS, matched `- 状态：`READY_FOR_REVIEW``, exit_code=0
+envelope_summary: format `rtl-obfuscation.mapping-execution-vnext`, schema_version 1, state `restored`, filelist `design.f`; full/top files=4, mapping_records=20, renamed_records=16, modified_tokens=41; canonical deterministic JSON is byte-identical across repeated reports and writes
+manifest_result: input manifest canonical order is `rtl/child.sv`, `rtl/shadow.sv`, `rtl/top.sv`, `rtl/unreachable.sv` with T045 hashes; gate manifest is projected directly from T046 RewriteExecution; restored manifest is projected directly from T046 RestoreResult and equals input manifest; restored byte identity is true
+per_file_result: per_file_mapping covers all 4 physical files in manifest order; all 53 source ranges project exactly once as 41 rename ranges plus 12 preserve ranges; rename gate ranges come from AppliedEdit and preserve/unsupported gate ranges equal source ranges
+negative_cases: execution/restore schema and identity, manifest order/equality, missing/duplicate/tampered AppliedEdit range, existing/missing/overlapping output paths, and atomic rename failure all fail closed with required stable codes; failed atomic output leaves neither output nor `.mapping-execution-vnext-*.tmp`
 formal_verification: N/A; no new rewritten RTL is produced by this task
-deviations_or_blockers:
-boundaries:
-review_request:
+deviations_or_blockers: none
+boundaries: gate hash correctness is trusted from the T046 RewriteExecution manifest because this API has no gate directory/bytes parameter; no source/gold bytes are read or reconstructed by T047; gate_dir overlap cannot be independently resolved from the frozen public T046 object fields
+review_request: READY_FOR_REVIEW; all implementation evidence recorded; Main Agent should independently rerun only the four section 9 commands
 ~~~
 
 ## 11. READY_FOR_REVIEW 条件
@@ -239,4 +239,26 @@ inputs: committed T043 parameter graph fixture + T046 public execution/restore A
 oracle: 4 physical files / 20 mapping records / 16 rename records / 41 edits / 41 rename ranges / 12 preserve ranges / restored byte-identical
 formal_verification: N/A - no new rewritten RTL is produced by this task
 forbidden: CLI, project-root, metrics, RISC Formal, legacy compatibility, fixture edits, T048 creation
+~~~
+
+## 14. 主 Agent最终验收记录（2026-07-23）
+
+~~~text
+status: ACCEPTED
+reviewed_head: aafe23a6cff2bb3d37569fd28f882fb8d63a243a; required T047 baseline commit is present
+prerequisites: PASS; T046 is ACCEPTED and T047 was the only active READY task
+scope: PASS; changed paths are exactly rewrite_vnext.py, tests/test_mapping_execution_vnext.py, and this task contract
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_execution_vnext -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite_vnext.py tests/test_mapping_execution_vnext.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T047_mapping_execution_envelope.md`
+independent_results: unittest exit 0, Ran 7 tests in 0.175s, OK; py_compile exit 0; diff check exit 0; READY_FOR_REVIEW guard exit 0 before this acceptance update
+envelope_oracle: PASS; format `rtl-obfuscation.mapping-execution-vnext`, schema_version=1, state=restored, files=4, mapping_records=20, renamed_records=16, modified_tokens=41
+manifest_oracle: PASS; input/gate/restored manifests use canonical physical order; restored manifest equals input manifest; restored_byte_identical=true
+per_file_oracle: PASS; all four physical files covered exactly once with 41 rename ranges and 12 preserve ranges; deterministic reports and JSON writes are byte-identical
+negative_oracle: PASS; execution/restore identity, manifest, AppliedEdit, output path and atomic I/O failures use the frozen stable codes without artifacts
+formal_verification: N/A; no new rewritten RTL is produced by this task
+decision: all frozen T047 requirements passed; ACCEPTED
+delivery: ready for Main Agent commit and push; no T048 implementation included
 ~~~
