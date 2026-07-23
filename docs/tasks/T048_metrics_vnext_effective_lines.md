@@ -1,6 +1,6 @@
 # T048：metrics vNext effective-line、coverage 与 leakage 基线
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-E
@@ -225,22 +225,22 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T048_metrics_vnext_effective
 ## 11. 子 Agent执行记录
 
 ~~~text
-status: NOT_STARTED
-starting_head:
-start_time:
-baseline_command:
-baseline_result:
-changed_files:
-commands:
-results:
-metrics_summary:
-line_denominator_result:
-coverage_leakage_result:
-negative_cases:
+status: READY_FOR_REVIEW
+starting_head: 3c70fad61ade0c1640d1c4da116be5977cfb1bc1
+start_time: 2026-07-23T15:33:32+08:00
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_metrics_vnext -v`
+baseline_result: target unittest unavailable before implementation; `ModuleNotFoundError: No module named 'tests.test_metrics_vnext'`, Ran 1 test in 0.000s, FAILED, exit_code=1
+changed_files: rtl_obfuscator/metrics_vnext.py; tests/test_metrics_vnext.py; docs/tasks/T048_metrics_vnext_effective_lines.md
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_metrics_vnext -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/metrics_vnext.py tests/test_metrics_vnext.py`; `git diff --check HEAD`; `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T048_metrics_vnext_effective_lines.md`
+results: target unittest PASS, Ran 7 tests in 0.188s, OK, exit_code=0; py_compile PASS, exit_code=0; `git diff --check HEAD` PASS with no output, exit_code=0; exact status guard PASS, matched `- 状态：`READY_FOR_REVIEW``, exit_code=0
+metrics_summary: format `rtl-obfuscation.metrics-vnext`, schema_version 1, state `verified`, filelist `design.f`; full/top symbols=16/16/1.0, occurrences=41/41/1.0, plaintext_leakage_rate=0.0, effective_coverage=1.0
+line_denominator_result: source physical files read in input-manifest order; every line uses `line.strip() != b"" and not line.strip().startswith(b"//")`; effective total and per-file counts are byte-derived and not hardcoded; affected lines use unique `(file, 1-based line)` pairs and `affected_lines.total == effective_lines.total`
+coverage_leakage_result: actual per-file rename symbol ids equal the 16 eligible mapping records; actual AppliedEdit keys equal 41 eligible occurrences; actual gate ranges contain renamed identifiers with plaintext leakage count 0; coverage and leakage oracle passed
+negative_cases: invalid envelope schema -> `METRICS_EXECUTION_INVALID`; forged source/gate manifest or gate bytes -> `METRICS_MANIFEST_INVALID`; forged effective-line equation -> `METRICS_AUDIT_INVALID`; existing/missing/source-root/gate-directory output -> `METRICS_OUTPUT_INVALID`; atomic rename failure -> `METRICS_IO_ERROR`; all failures leave no output or `.metrics-vnext-*.tmp`
 formal_verification: N/A; no new rewritten RTL is produced by this task
-deviations_or_blockers:
-boundaries:
-review_request:
+deviations_or_blockers: none
+boundaries: `write_metrics_vnext()` has no frozen gate_dir parameter; output protection identifies an intact actual gate directory by its `design.f` and gate manifest hashes, while gate bytes are fully verified during `build_metrics_vnext()`; no gold bytes, semantic rebuild, legacy path, or RTL fixture was used
+review_request: READY_FOR_REVIEW; all implementation evidence recorded; Main Agent should independently rerun only the four section 10 commands
 ~~~
 
 ## 12. READY_FOR_REVIEW 条件
@@ -271,4 +271,25 @@ inputs: committed T043 parameter fixture + T047 MappingExecutionVNext + actual s
 oracle: symbol 16/16/1.0; occurrence 41/41/1.0; plaintext leakage 0.0; effective coverage 1.0; effective denominator computed from bytes
 formal_verification: N/A - no new rewritten RTL is produced by this task
 forbidden: rate selection, CLI, project-root, RISC Formal, legacy compatibility, fixture edits, T049 creation
+~~~
+
+## 15. 主 Agent最终验收记录（2026-07-23）
+
+~~~text
+status: ACCEPTED
+reviewed_head: 3c70fad61ade0c1640d1c4da116be5977cfb1bc1; required T048 baseline commit is present
+prerequisites: PASS; T046 and T047 are ACCEPTED and T048 was the only active READY task
+scope: PASS; changed paths are exactly metrics_vnext.py, tests/test_metrics_vnext.py, and this task contract
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_metrics_vnext -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/metrics_vnext.py tests/test_metrics_vnext.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T048_metrics_vnext_effective_lines.md`
+independent_results: unittest exit 0, Ran 7 tests in 0.198s, OK; py_compile exit 0; diff check exit 0; READY_FOR_REVIEW guard exit 0 before this acceptance update
+metrics_oracle: PASS; symbols=16/16/1.0, occurrences=41/41/1.0, plaintext_leakage_rate=0.0, effective_coverage=1.0; effective-line denominator is derived from source bytes and affected lines are unique physical line pairs
+portable_output: PASS; normalized single/filelist reports and deterministic JSON output are byte-identical; no absolute paths or temporary artifacts remain
+negative_oracle: PASS; envelope, manifest/bytes, equation, output path and atomic I/O failures use frozen stable codes and leave no output
+formal_verification: N/A; no new rewritten RTL is produced by this task
+decision: all frozen T048 requirements passed; ACCEPTED
+delivery: ready for Main Agent commit and push; no T049 implementation included
 ~~~
