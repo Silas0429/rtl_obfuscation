@@ -1,6 +1,6 @@
 # T049：MappingVNext greedy unique-line rate selector
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-F
@@ -199,21 +199,27 @@ rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T049_rate_selection_vnext.md
 
 ## 11. 子 Agent执行记录
 
-status: NOT_STARTED
-starting_head:
-start_time:
-baseline_command:
-baseline_result:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 9ec9f5cc1980ee480522e9ce071e3d70a7606316
+start_time: 2026-07-23T15:51:04+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 2]`; no other status entries
+allowed_files: rtl_obfuscator/rate_vnext.py; tests/test_rate_vnext.py; docs/tasks/T049_rate_selection_vnext.md; all were absent/unmodified in the starting tree
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_rate_vnext -v`
+baseline_result: target unittest unavailable before implementation; `ModuleNotFoundError: No module named 'tests.test_rate_vnext'`, Ran 1 test in 0.000s, FAILED, exit_code=1
+changed_files: rtl_obfuscator/rate_vnext.py; tests/test_rate_vnext.py; docs/tasks/T049_rate_selection_vnext.md
 commands:
-results:
-selection_summary:
-rate_equations:
-negative_cases:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_rate_vnext -v` — actual output: Ran 8 tests in 0.110s; OK; exit_code=0
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_vnext.py tests/test_rate_vnext.py` — actual output: no stdout/stderr; exit_code=0
+  - `git diff --check HEAD` — actual output: no stdout/stderr; exit_code=0
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T049_rate_selection_vnext.md` — actual output: `- 状态：READY_FOR_REVIEW`; exit_code=0
+results: T049 acceptance row passed; the final status guard passed.
+selection_summary: full/top real MappingVNext produced 16 rename candidates; candidates are stably ordered by (declaration.file, declaration.start, category, owner_module, original_name, symbol_id). Selection is complete-record only, with declaration plus all occurrences projected to unique physical (file, 1-based line) pairs. Single-file and filelist reports are normalized and deterministic.
+rate_equations: finite Decimal input is restricted to 0 < rate <= 1; target_lines = ceil(Decimal(rate) * total_lines); candidate_lines and selected_lines are unique affected-line union sizes; actual_rate = selected_lines / total_lines, maximum_rate = candidate_lines / total_lines, denominator-zero rates are 0.0, and overshoot_lines = max(0, selected_lines - target_lines). Reachable targets use greedy_unique_line_v1; zero-line, empty-candidate, and unreachable targets select all candidates with selection_mode=all_candidates.
+negative_cases: invalid rates returned RATE_SELECTION_INVALID; manifest and range/record identity corruption returned RATE_MAPPING_INVALID; forged candidate sequence/target returned fail-closed errors; no-candidate and zero-effective-line cases selected all candidates without output; deterministic JSON was byte-identical; legacy _parse_encryption_rate and _rate_selection were patched to fail and were not called.
 formal_verification: N/A; no rewritten RTL is produced by this task
-deviations_or_blockers:
-boundaries:
-review_request:
+deviations_or_blockers: none at start
+boundaries: selector consumes only the established MappingVNext and verified source manifest bytes; it does not apply selected records to gate output and does not implement CLI, encryption-rate integration, project-root handling, metrics integration, or legacy cleanup.
+review_request: READY_FOR_REVIEW; Main Agent may independently rerun the four commands in section 10.
 
 ## 12. READY_FOR_REVIEW 条件
 
@@ -242,3 +248,22 @@ inputs: committed T043 parameter fixture + MappingVNext + T048 effective-line de
 oracle: greedy_unique_line_v1; complete rename records only; unique physical lines; unreachable selects all candidates
 formal_verification: N/A - no rewritten RTL is produced by this task
 forbidden: gate rewrite, restore, CLI, project-root, RISC Formal, legacy compatibility, fixture edits, T050 creation
+
+## 15. 主 Agent最终验收记录（2026-07-23）
+
+status: ACCEPTED
+reviewed_head: 9ec9f5cc1980ee480522e9ce071e3d70a7606316; required T049 baseline commit is present
+prerequisites: PASS; T047 and T048 are ACCEPTED and T049 was the only active READY task
+scope: PASS; changed paths are exactly rate_vnext.py, tests/test_rate_vnext.py, and this task contract
+acceptance_commands:
+  - conda run -n rtl_obfuscation python -m unittest tests.test_rate_vnext -v
+  - conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_vnext.py tests/test_rate_vnext.py
+  - git diff --check HEAD
+  - rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T049_rate_selection_vnext.md
+independent_results: unittest exit 0, Ran 8 tests in 0.113s, OK; py_compile exit 0; diff check exit 0; READY_FOR_REVIEW guard exit 0 before this acceptance update
+selection_oracle: PASS; full/top has 16 rename candidates, complete declaration/occurrence records, unique affected lines, finite Decimal/ceil equations, deterministic greedy selection, and correct unreachable/empty/zero-line behavior
+portable_output: PASS; normalized single/filelist reports and deterministic JSON are byte-identical and contain no absolute paths
+negative_oracle: PASS; invalid rates, manifest/range/identity corruption and failed selection use frozen errors; legacy rate helpers are blocked
+formal_verification: N/A; no rewritten RTL is produced by this task
+decision: all frozen T049 requirements passed; ACCEPTED
+delivery: ready for Main Agent commit and push; no T050 implementation included
