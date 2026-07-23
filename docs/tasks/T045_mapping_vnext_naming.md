@@ -1,6 +1,6 @@
 # T045：mapping vNext 核心与命名器合同
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-B
@@ -421,20 +421,24 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T045_mapping_vnext_naming.md
 ## 16. 子 Agent执行记录
 
 ~~~text
-status: NOT_STARTED
-starting_head:
-fixture_hash_check:
-preflight_counts:
-baseline_command:
-baseline_result:
-changed_files:
-commands:
-results:
-schema_or_behavior:
-deviations_or_blockers:
-boundaries:
+status: READY_FOR_REVIEW
+starting_head: 1e4970d04d12831713c3cf8bdaa01cde79529272; required current baseline 1e4970d; T044 delivery 451cf13 is an ancestor
+start_time: 2026-07-23T13:36:46+0800
+first_command: `git status --short --branch`
+inherited_worktree: clean (`## main...origin/main [ahead 6]`); no existing user modifications; allowed files are not overlapped
+allowed_files: rtl_obfuscator/systemverilog_names.py; rtl_obfuscator/mapping_vnext.py; tests/test_mapping_vnext.py; docs/tasks/T045_mapping_vnext_naming.md (status and execution record only)
+fixture_hash_check: PASS; 18/18 T043 frozen fixture SHA-256 values match docs/tasks/T043_symbol_graph_parameters.md section 3.3; no fixture changed
+preflight_counts: PASS; public T044 baseline and T045 target coverage confirm full/no-top 20/13/7/53, full/top+parameter ABI 20/16/4/53, closure/top+parameter ABI 17/14/3/48, single 3/2/1/5, positional/top+ABI 1/1/0/1, full/top signals-only 20/7/13/53
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_rewrite_policy tests.test_mapping_vnext -v`
+baseline_result: expected pre-implementation result; T044 12 tests passed, T045 module import failed, exit_code=1 (`ModuleNotFoundError: No module named 'tests.test_mapping_vnext'`)
+changed_files: rtl_obfuscator/systemverilog_names.py; rtl_obfuscator/mapping_vnext.py; tests/test_mapping_vnext.py; docs/tasks/T045_mapping_vnext_naming.md
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_rewrite_policy tests.test_mapping_vnext -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/systemverilog_names.py rtl_obfuscator/mapping_vnext.py tests/test_mapping_vnext.py`; `git diff --check HEAD`; `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T045_mapping_vnext_naming.md`
+results: returned-contract target unittest PASS, Ran 26 tests in 0.469s, OK, exit_code=0; py_compile PASS, exit_code=0; diff check PASS, exit_code=0; status guard PASS, matched `- 状态：`READY_FOR_REVIEW`` and exit_code=0
+schema_or_behavior: mapping-vnext format/schema_version/state are rtl-obfuscation.mapping-vnext/1/planned; canonical source_set, selection, records, manifest, summary and range_audit reports; fail-closed policy/owner/file/range/name validation; injected NameFactory only for rename decisions
+deviations_or_blockers: none; first review gaps addressed without changing mapping_vnext.py, public API, fixture, test count, or acceptance commands
+boundaries: no recompile, SymbolGraph rebuild, legacy inventory/rewrite/category-profile call, fixture edit, RTL edit, random naming, or Formal; source-root/origin are omitted from report; Formal is N/A because no rewritten RTL is produced
 formal_verification: N/A - no rewritten RTL is produced
-review_request:
+review_request: READY_FOR_REVIEW; returned-contract fixes are complete; please independently review the four allowed files and rerun only the four section 15 commands
 ~~~
 
 ## 17. READY_FOR_REVIEW 条件
@@ -474,4 +478,40 @@ positive_oracles: 20/13/7/53, 20/16/4/53, 17/14/3/48, 3/2/1/5, 1/1/0/1
 negative_matrix: request, factory, policy, owner, file, bytes, duplicate, overlap, collision
 acceptance: exactly four commands; 26 tests; no Formal or hidden probe
 formal_verification: N/A - no rewritten RTL is produced
+~~~
+
+## 20. 主 Agent审核记录（2026-07-23，第一次）
+
+~~~text
+status: IN_PROGRESS
+reviewed_head: 1e4970d04d12831713c3cf8bdaa01cde79529272
+scope_check: PASS; only the four files allowed by section 12 are changed
+acceptance_commands: all four section 15 commands exit 0; 26 tests pass
+decision: NOT_ACCEPTED; explicit contract coverage is incomplete
+required_fixes:
+  1. Section 5 requires all IEEE 1800 keywords. SYSTEMVERILOG_KEYWORDS is missing cmos, config, endcase, endconfig, forever, instance, protected, pulsestyle_ondetect, pulsestyle_onevent, and soft.
+  2. Section 11 item 10 requires a keyword negative. The current candidate "module" is tested with name_length=16, so length mismatch alone produces MAPPING_NAME_INVALID and keyword rejection is not isolated. In the existing test method, use matching name lengths and cover the missing keywords; do not add a test method.
+  3. Section 7.1 and section 11 item 11 require decision count and all listed decision identity fields to fail closed. The existing matrix covers order and action/reason but not a shortened decision tuple, symbol_id, or category mutation. Add those cases to the existing test method.
+  4. Section 10 item 4 requires closure, single, and positional input manifests to contain exactly their SourceSet physical files. Add these assertions to the existing positive test methods; do not add a test method.
+  5. Section 16 still records "status guard pending". After rerunning the unchanged four commands, record the actual guard PASS result.
+unchanged_scope: mapping_vnext.py behavior, public API, schema, fixture, test count, and acceptance commands must not change
+rerun: only the original four section 15 commands
+formal_verification: N/A - no rewritten RTL is produced
+~~~
+
+## 21. 主 Agent最终验收记录（2026-07-23）
+
+~~~text
+status: ACCEPTED
+reviewed_head: 1e4970d04d12831713c3cf8bdaa01cde79529272
+scope: only the four files allowed by section 12 are changed
+returned_fixes: PASS; all 248 IEEE keyword entries are present; keyword rejection uses matching lengths; decision count/symbol_id/category mutations fail closed; closure/single/positional manifests are asserted; status guard is recorded PASS
+implementation_review: planned mapping is one-to-one with RewritePolicy; owner/file/range/name validation is fail-closed; report and manifest are canonical; no recompile, graph rebuild, legacy call, source edit, random naming, origin branch, or API/schema expansion
+acceptance_commands:
+  - T044 + T045 unittest: exit 0; Ran 26 tests in 0.470s; OK
+  - py_compile: exit 0
+  - git diff --check HEAD: exit 0
+  - READY_FOR_REVIEW status guard before acceptance: exit 0
+formal_verification: N/A - no rewritten RTL is produced
+decision: all frozen T045 contract requirements passed; ACCEPTED
 ~~~
