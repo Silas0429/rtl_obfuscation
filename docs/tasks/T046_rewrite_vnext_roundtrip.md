@@ -1,6 +1,6 @@
 # T046：mapping vNext 单次改写、strict gate 与解密闭环
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-C
@@ -554,24 +554,30 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T046_rewrite_vnext_roundtrip
 ## 19. 子 Agent执行记录
 
 ~~~text
-status: NOT_STARTED
-starting_head:
-fixture_hash_check:
-preflight_mapping_counts:
-baseline_command:
-baseline_result:
-changed_files:
-commands:
-results:
-rewrite_summary:
-strict_compile:
-restore_summary:
-formal_positive:
-formal_negative:
-schema_or_behavior:
-deviations_or_blockers:
-boundaries:
-review_request:
+status: READY_FOR_REVIEW
+starting_head: 8c366e742e9d87d61372da2f63d32134e711e689; required start HEAD 8c366e7; baseline 8c366e7
+start_time: 2026-07-23T14:12:55+0800
+first_command: `git status --short --branch`
+inherited_worktree: clean (`## main...origin/main [ahead 8]`); no existing user modifications; allowed files are not overlapped
+active_task_checks: PASS; 27902a1 is a HEAD ancestor; T045 top status is ACCEPTED; T046 is the only current READY task
+allowed_files: rtl_obfuscator/systemverilog_names.py (secure factory only); rtl_obfuscator/rewrite_vnext.py; tests/test_rewrite_vnext.py; docs/tasks/T046_rewrite_vnext_roundtrip.md (status and execution record only)
+fixture_hash_check: PASS; 18/18 T043 frozen fixture SHA-256 values match docs/tasks/T043_symbol_graph_parameters.md section 3.3; no fixture changed
+preflight_mapping_counts: PASS; T045 accepted evidence confirms full/top mapping 20 records / 16 renames / 4 preserves / 53 ranges; T046 frozen main oracle is 4 physical files / 41 modified tokens / 41 renamed ranges / 12 preserved ranges; single oracle is 3 records / 2 renames / 3 modified tokens
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_vnext tests.test_rewrite_vnext -v`
+baseline_result: expected pre-implementation result; T045 14 tests passed, T046 module import failed, exit_code=1 (`ModuleNotFoundError: No module named 'tests.test_rewrite_vnext'`)
+changed_files: rtl_obfuscator/systemverilog_names.py; rtl_obfuscator/rewrite_vnext.py; tests/test_rewrite_vnext.py; docs/tasks/T046_rewrite_vnext_roundtrip.md
+commands: `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_vnext tests.test_rewrite_vnext -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/systemverilog_names.py rtl_obfuscator/rewrite_vnext.py tests/test_rewrite_vnext.py`; `git diff --check HEAD`; `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T046_rewrite_vnext_roundtrip.md`
+results: target unittest PASS, Ran 26 tests in 0.632s, OK, exit_code=0; py_compile PASS, exit_code=0; diff check PASS, exit_code=0; status guard PASS, matched `- 状态：`READY_FOR_REVIEW`` and exit_code=0
+rewrite_summary: PASS; full/top execution report summary files=4, mapping_records=20, renamed_records=16, modified_tokens=41; edits=41; gate manifest has rtl/child.sv, rtl/shadow.sv, rtl/top.sv, rtl/unreachable.sv; all four gate physical files differ from gold; canonical design.f preserves compile_order
+strict_compile: PASS; actual renamed gate catalog parse/semantic=0/0 and top-overlay parse/semantic=0/0; no-top gate catalog=0/0 and top-overlay fields=null; exact one-byte `~` negative gate catalog/top-overlay=0/0; no SymbolGraph rebuild or legacy path
+restore_summary: PASS; full/top restore files=4, modified_tokens=41, restored_manifest exactly equals MappingVNext.input_manifest, all physical files byte-identical; single filelist and single-file use the same engine, gate bytes and normalized execution reports match; no-top restore byte-identical
+formal_positive: PASS; actual renamed gate only (before restore), gold_filelist=`tests/fixtures/refactor_symbol_graph_parameters/design.f`, gold_root=`tests/fixtures/refactor_symbol_graph_parameters`, gate_filelist=`<TemporaryDirectory>/gate/design.f`, gate_root=`<TemporaryDirectory>/gate`, top=`parameter_top`, seq=5; command uses `sys.executable scripts/formal_equivalence.py`; exit_code=0; JSON contains `{"formal_equivalence":"pass","seq":5,"top":"parameter_top"}` (script also emits gold/gate paths)
+formal_negative: PASS expected failure; negative gate copied from actual verified gate and only `rtl/child.sv` has one ASCII `~` inserted immediately after the unique `assign data_o = ` sequence (exactly +1 byte, all other bytes unchanged); same gold/filelist/top/seq; strict compile=0/0; Formal exit_code nonzero; combined output contains `unproven` and `equiv_status -assert`
+schema_or_behavior: secure_name_factory uses secrets with 1000-attempt collision bound and immutable input set; rewrite execution validates MappingVNext/manifest/ranges/names, applies declaration-first edits once per file in reverse source order, records delta gate ranges, atomically publishes design.f and physical files, strict-compiles the same SourceSet context, and restores only from execution plus gate bytes; reports are canonical and omit source_root/output_dir
+deviations_or_blockers: none; ordinary implementation/test/Formal failures were fixed within T046; no contract/API/schema/fixture expansion
+boundaries: no legacy collector/rewrite/decrypt/formal-align, CLI, metrics, per-file mapping, project-root branch, fixture edit, MappingVNext core edit, gold copy, identity proof, or Formal script edit
+formal_verification: PASS; compact actual renamed gate positive and exact one-byte functional negative both executed inside the target unittest command
+review_request: READY_FOR_REVIEW; all T046 contract evidence is recorded; please independently rerun only the four section 18 commands
 ~~~
 
 ## 20. READY_FOR_REVIEW 条件
@@ -616,4 +622,25 @@ formal_negative: insert one ASCII ~ after unique "assign data_o = "; strict 0/0;
 negative_matrix: output, mapping, source manifest, ranges, compile, execution, gate manifest, gate token, restored hash
 acceptance: exactly four commands; 26 tests; Formal runs only inside tests 11 and 12
 forbidden: identity proof, gold copy, legacy helper, RISC, CLI, metrics, origin branch
+~~~
+
+## 23. 主 Agent最终验收记录（2026-07-23）
+
+~~~text
+status: ACCEPTED
+reviewed_head: 8c366e742e9d87d61372da2f63d32134e711e689; required start HEAD 8c366e7
+prerequisites: PASS; 27902a1 is a HEAD ancestor, T045 is ACCEPTED, and T046 was the only active READY task
+scope: PASS; only the four contract-allowed paths are changed; no fixture, MappingVNext core, or Formal script change
+fixture_hash: PASS; 18/18 frozen T043 fixture SHA-256 values match
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_mapping_vnext tests.test_rewrite_vnext -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/systemverilog_names.py rtl_obfuscator/rewrite_vnext.py tests/test_rewrite_vnext.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：`READY_FOR_REVIEW`' docs/tasks/T046_rewrite_vnext_roundtrip.md`
+independent_results: unittest exit 0, Ran 26 tests in 0.657s, OK; py_compile exit 0; diff check exit 0; READY_FOR_REVIEW guard exit 0 before this acceptance update
+rewrite_oracle: PASS; full/top files=4, mapping_records=20, renamed_records=16, edits=41, strict catalog/top-overlay=0/0, all gate files changed
+restore_oracle: PASS; files=4, modified_tokens=41, restored manifest equals input manifest, all physical files byte-identical
+formal_verification: PASS; actual renamed gate positive exits 0 with `formal_equivalence=pass`; exact one-byte `~` functional negative remains strict-compile 0/0 and exits nonzero with `unproven` and `equiv_status -assert`
+decision: all frozen T046 requirements passed; ACCEPTED
+delivery: accepted tree is ready for the Main Agent commit and push; no T047 implementation was included
 ~~~

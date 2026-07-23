@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import secrets
+import string
 
 
 # IEEE 1800 reserved words.  Keep this independent from the legacy inventory
@@ -273,3 +275,24 @@ def is_plain_identifier(value: object) -> bool:
         and _PLAIN_IDENTIFIER.fullmatch(value) is not None
         and value not in SYSTEMVERILOG_KEYWORDS
     )
+
+
+def secure_name_factory(
+    symbol_id: str,
+    name_length: int,
+    unavailable: frozenset[str],
+) -> str:
+    """Return a cryptographically unpredictable, collision-free identifier."""
+
+    del symbol_id
+    if type(name_length) is not int or name_length < 1:
+        raise RuntimeError("name_length cannot produce a plain identifier")
+    first_alphabet = string.ascii_letters
+    rest_alphabet = string.ascii_letters + string.digits + "_"
+    for _ in range(1000):
+        candidate = secrets.choice(first_alphabet) + "".join(
+            secrets.choice(rest_alphabet) for _ in range(name_length - 1)
+        )
+        if is_plain_identifier(candidate) and candidate not in unavailable:
+            return candidate
+    raise RuntimeError("secure name factory exhausted its collision budget")
