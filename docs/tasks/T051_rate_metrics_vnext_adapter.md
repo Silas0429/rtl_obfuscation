@@ -1,6 +1,6 @@
 # T051：rate-selected execution 到 metrics vNext 的审计适配器
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-H
@@ -184,22 +184,29 @@ selected gate；子 Agent 必须在执行记录写明 `formal_verification: N/A`
 ## 9. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-start_time:
-baseline_command:
-baseline_result:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 7884b5e0212fbf8a9fda8c3ed53fd15bbd9e4bb7
+start_time: 2026-07-23T16:45:28+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 1]`; no other status entries
+prerequisites: HEAD contains `2ad27a1`; T047/T048/T049/T050 are ACCEPTED; no other IN_PROGRESS or READY_FOR_REVIEW task was found
+allowed_files: rtl_obfuscator/rate_metrics_vnext.py; tests/test_rate_metrics_vnext.py; docs/tasks/T051_rate_metrics_vnext_adapter.md
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_rate_metrics_vnext -v`
+baseline_result: `ModuleNotFoundError: No module named 'tests.test_rate_metrics_vnext'`; Ran 1 test in 0.000s, FAILED, exit_code=1
+changed_files: rtl_obfuscator/rate_metrics_vnext.py; tests/test_rate_metrics_vnext.py; docs/tasks/T051_rate_metrics_vnext_adapter.md
 commands:
-results:
-rate_metrics_summary:
-identity_result:
-restore_summary:
-report_result:
-formal_verification: N/A
-deviations_or_blockers:
-boundaries:
-review_request:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_rate_metrics_vnext -v` — actual output: Ran 4 tests in 0.152s; OK; exit_code=0.
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_metrics_vnext.py tests/test_rate_metrics_vnext.py` — actual output: no stdout/stderr; exit_code=0.
+  - `git diff --check HEAD` — actual output: no stdout/stderr; exit_code=0.
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T051_rate_metrics_vnext_adapter.md` — actual output: `- 状态：READY_FOR_REVIEW`; exit_code=0.
+results: T051 adapter tests, py_compile, and diff check passed; the test module exercised actual T050 restore, T047 envelope, and T048 metrics without Formal.
+rate_metrics_summary: actual selected gate from design.f with top=parameter_top and rate=0.35 was adapted to format `rtl-obfuscation.rate-metrics-vnext`, schema_version=1, state=restored, with all four physical files audited. Metrics report state was `verified`, symbol/occurrence coverage was complete, plaintext leakage was 0.0, and effective coverage was 1.0.
+identity_result: PASS; the returned RateMetricsVNext retained the exact RateRewriteExecutionVNext object, T047 MappingExecutionVNext retained the exact T050 RewriteExecution object, and T048 MetricsVNext retained the exact T047 envelope object. Selection and selected-mapping semantic graph identity was also checked without rebuilding it.
+restore_summary: PASS; T050 restore API produced the actual RestoreResult, restored manifest equaled the input manifest, and every physical file in restore_dir was byte-identical to the source bytes.
+report_result: PASS; fixed top-level key order and summary equations passed; rate selection, mapping execution, and metrics reports were projected with portable relative paths, without source_root/gate_dir/restore_dir/TemporaryDirectory or absolute paths. Single-file and filelist canonical JSON matched byte-for-byte, and repeated JSON was deterministic.
+formal_verification: N/A; this task only audits the T050 already verified actual selected gate and produces no new rewritten RTL.
+deviations_or_blockers: none
+boundaries: no CLI, project-root, legacy rewrite/decrypt/inventory/rate helper, semantic rebuild, fixture, README, planning-document, or Formal-script changes. T050 does not carry its original MappingVNext as a separate field, so this adapter verifies selection-to-selected-mapping relation through the existing shared SymbolGraph object identity without reconstructing inputs.
+review_request: READY_FOR_REVIEW; Main Agent may independently rerun the four commands in section 8.
 ```
 
 ## 10. READY_FOR_REVIEW 条件
@@ -229,4 +236,25 @@ inputs: T050 RateRewriteExecutionVNext + T047 MappingExecutionVNext + T048 Metri
 oracle: actual selected gate restored byte-identically; mapping/metrics identity preserved; portable deterministic rate-metrics report
 formal_verification: N/A - no new rewritten RTL is produced by this adapter
 forbidden: CLI, project-root, legacy paths, selector changes, gate engine changes, fixture edits, T052 creation
+
+## 13. 主 Agent验收记录（2026-07-23）
+
+```text
+status: ACCEPTED
+reviewed_head: 7884b5e0212fbf8a9d8c3ed53fd15bbd9e4bb7
+prerequisites: PASS; T047/T048/T049/T050 已 ACCEPTED，T051 是唯一 READY_FOR_REVIEW 任务
+scope: PASS; 实际修改仅限 rate_metrics_vnext.py、test_rate_metrics_vnext.py 和本任务合同
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_rate_metrics_vnext -v` — 4 tests，OK，exit_code=0
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rate_metrics_vnext.py tests/test_rate_metrics_vnext.py` — exit_code=0
+  - `git diff --check HEAD` — exit_code=0
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T051_rate_metrics_vnext_adapter.md` — 状态更新前匹配成功，exit_code=0
+rate_metrics: PASS; actual T050 selected gate 经 restore 后建立 T047 envelope 和 T048 verified metrics，report schema、summary equations、portable paths 和 deterministic JSON 均通过
+identity: PASS; RateRewriteExecutionVNext、MappingExecutionVNext、MetricsVNext 三层对象 identity 保持，未重建 semantic graph、mapping 或 selector
+restore: PASS; restored manifest 等于 input manifest，所有 physical files byte-identical
+negative_cases: PASS; 非法 execution、restore、envelope 和 metrics 输入 fail-closed，且 legacy/rebuild/identity proof 均被测试阻断
+formal_verification: N/A; 本任务只审计 T050 已验证的 actual selected gate，未产生新的 rewritten RTL
+decision: ACCEPTED
+next_step: T051 可提交交付；下一任务应另行冻结 T052 single-file/filelist CLI adapter，不在本任务中实现
+```
 ```
