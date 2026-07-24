@@ -19,7 +19,7 @@
 - 已验收 rate selection vNext：[`docs/tasks/T049_rate_selection_vnext.md`](tasks/T049_rate_selection_vnext.md)，提交 `1c8851f`
 - 已验收 rate-selected execution：[`docs/tasks/T050_rate_selected_execution.md`](tasks/T050_rate_selected_execution.md)，提交 `2ad27a1`
 - 已验收 rate/metrics adapter：[`docs/tasks/T051_rate_metrics_vnext_adapter.md`](tasks/T051_rate_metrics_vnext_adapter.md)，提交 `50a4e8e`
-- 下一待冻结任务：R3-I/T052 single-file/filelist vNext orchestration 与 CLI adapter
+- 下一待冻结任务：R3-I/T052 single-file/filelist vNext orchestration service
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -253,10 +253,10 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 - R3-H 由 [`T051`](tasks/T051_rate_metrics_vnext_adapter.md) 将 rate-selected execution 接入 T047
   mapping envelope 与 T048 metrics，冻结一个可审计的 rate/metrics vNext 服务对象；不生成新的
   rewrite engine，不接入 CLI；
-- R3-I/T052 将建立 single-file/filelist 的 vNext orchestration 与 CLI adapter，统一产出 mapping、
-  gate、restore、metrics 和 rate report；仍不接入 project-root；
-- R3-J/T053 再把已验证的 orchestration 接入用户-facing 三入口中的 single/filelist 命令，并冻结
-  CLI 输出与失败边界；project-root 入口留给 R4；
+- R3-I/T052 将建立 single-file/filelist 的 vNext orchestration service，统一产出 mapping、gate、
+  restore、metrics 和 rate report；不接入 argparse、不接入 project-root；
+- R3-J/T053 再把已验证的 orchestration 接入用户-facing single/filelist 命令，并冻结 CLI 输出与
+  失败边界；project-root 入口留给 R4；
   不得回到 legacy inventory，也不得把这些步骤并入 T044/T045；
 - 无 top：全部 module 非 ABI；有 top：全部 module 非 ABI，加上闭包内授权的 child ABI；
 - 冻结 mapping vNext、effective-line 和测试命名器边界；
