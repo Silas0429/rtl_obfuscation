@@ -22,7 +22,7 @@
 - 已验收 orchestration service：[`docs/tasks/T052_orchestration_vnext.md`](tasks/T052_orchestration_vnext.md)，提交 `c681cea`
 - 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
 - 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
-- 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，待本次验收提交固化
+- 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
