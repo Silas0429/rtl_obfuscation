@@ -3,7 +3,7 @@
 - 文档状态：`APPROVED_DESIGN`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052 已验收；R3-J/T053 已冻结为当前活动任务；本文不是活动任务合同
+- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053 已验收；R3-K/T054 已冻结为当前活动任务；本文不是活动任务合同
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
 - 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
@@ -20,7 +20,8 @@
 - 已验收 rate-selected execution：[`docs/tasks/T050_rate_selected_execution.md`](tasks/T050_rate_selected_execution.md)，提交 `2ad27a1`
 - 已验收 rate/metrics adapter：[`docs/tasks/T051_rate_metrics_vnext_adapter.md`](tasks/T051_rate_metrics_vnext_adapter.md)，提交 `50a4e8e`
 - 已验收 orchestration service：[`docs/tasks/T052_orchestration_vnext.md`](tasks/T052_orchestration_vnext.md)，提交 `c681cea`
-- 当前实现任务：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)
+- 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
+- 当前实现任务：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -258,8 +259,9 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
   restore、metrics 和 rate report；不接入 argparse、不接入 project-root；
 - R3-J/T053 新增明确的 `encrypt-vnext` single/filelist 加密入口，输出 vNext gate、orchestration
   report 和 metrics；不修改旧 `encrypt`/`decrypt`、不接入 project-root；
-- R3-K/T054 再建立 vNext report 的持久化 restore/decrypt adapter，验证跨进程 byte-identical restore；
-  完成后才进入 R4 project-root adapter；
+- R3-K/T054 建立 `decrypt-vnext` 持久化 restore/decrypt adapter：从 T053 report、用户提供的
+  `source-root` 和 actual gate 重建并校验执行 envelope，验证跨进程 byte-identical restore；完成后
+  才进入 R4 project-root adapter；
   不得回到 legacy inventory，也不得把这些步骤并入 T044/T045；
 - 无 top：全部 module 非 ABI；有 top：全部 module 非 ABI，加上闭包内授权的 child ABI；
 - 冻结 mapping vNext、effective-line 和测试命名器边界；
