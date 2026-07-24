@@ -125,6 +125,34 @@ conda run -n rtl_obfuscation python -m unittest \
 只要设计依赖其他 `.sv` 中的 module、interface 或类型，就应使用 filelist 或
 `project-root + top` 模式。三种模式都不会原地修改 gold，输出路径必须与源码路径分开。
 
+### 3.1.1 vNext `encrypt-vnext` 入口
+
+single-file 和显式 filelist 也可以通过新的 vNext orchestration service 使用统一的实际 gate、
+metrics 和 portable report：
+
+```sh
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
+  --filelist tests/fixtures/refactor_symbol_graph_parameters/design.f \
+  --source-root tests/fixtures/refactor_symbol_graph_parameters \
+  --top parameter_top \
+  --category signals --category parameters --category genvars \
+  --abi-category parameters \
+  --encryption-rate 0.35 \
+  --output-dir /tmp/rtl_vnext/gate \
+  --map /tmp/rtl_vnext/orchestration.json \
+  --metrics /tmp/rtl_vnext/metrics.json
+```
+
+单文件入口将 `--filelist` 换成 `--input <file.sv>`；二者必须二选一，并且都需要
+`--source-root`。`--category` 默认选择 `signals parameters genvars`，`--abi-category` 只接受
+`parameters`。成功后，`--output-dir` 是 actual gate，`--map` 是
+`rtl-obfuscation.orchestration-vnext` report，`--metrics` 是其中已验证的
+`rtl-obfuscation.metrics-vnext` report，stdout 提供固定的 `rtl-obfuscation.cli-vnext` summary。
+三个输出均原子发布、不得覆盖已有路径，也不包含绝对路径。
+
+`encrypt-vnext` 不接受 project-root，不改变旧 `encrypt`、`decrypt`、`encrypt-project` 或
+`decrypt-project` 分派；vNext report 的跨进程 restore/decrypt loader 尚未提供。
+
 ### 3.2 Category 选择
 
 `--category all` 只启用以下 13 个默认 canonical category：

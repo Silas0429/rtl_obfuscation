@@ -1,6 +1,6 @@
 # T053：single-file/filelist `encrypt-vnext` CLI wiring
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-J
@@ -198,26 +198,30 @@ rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T053_cli_vnext_encryption.md
 ## 11. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-start_time:
-starting_worktree:
-baseline_command:
-baseline_result:
-allowed_files:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 6b2d76549f9c566bbd8a535c18c5654f5a6c1d8f
+start_time: 2026-07-24T10:33:40+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 5]`; no other status entries
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_cli_vnext_encryption -v`
+baseline_result: `ModuleNotFoundError: No module named 'tests.test_cli_vnext_encryption'`; Ran 1 test in 0.000s, FAILED, exit_code=1
+allowed_files: rtl_obfuscator/rewrite.py; tests/test_cli_vnext_encryption.py; README.md; docs/tasks/T053_cli_vnext_encryption.md
+changed_files: rtl_obfuscator/rewrite.py; tests/test_cli_vnext_encryption.py; README.md; docs/tasks/T053_cli_vnext_encryption.md
 commands:
-results:
-single_no_rate:
-filelist_rate:
-output_and_error_boundaries:
-legacy_blocking:
-formal_positive:
-formal_negative:
-formal_verification: PASS | FAIL | BLOCKED
-deviations_or_blockers:
-boundaries:
-review_request:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_cli_vnext_encryption -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite.py tests/test_cli_vnext_encryption.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T053_cli_vnext_encryption.md`
+results: unittest printed five named tests, `Ran 5 tests in 0.857s`, `OK`, exit_code=0; py_compile produced no stdout/stderr, exit_code=0; `git diff --check HEAD` produced no stdout/stderr, exit_code=0; final status guard matched `- 状态：READY_FOR_REVIEW`, exit_code=0
+single_no_rate: actual CLI single-file `single.sv` no-rate path produced a gate directory, orchestration report format `rtl-obfuscation.orchestration-vnext`, verified metrics format `rtl-obfuscation.metrics-vnext`, and stdout format `rtl-obfuscation.cli-vnext`; stdout summary matched the orchestration summary, JSON readback was byte-stable, restore/metrics audit completed in the temporary restore directory, and no restore directory was published
+filelist_rate: actual CLI `design.f`/`parameter_top` rate path with `encryption_rate=0.35` produced the selected gate and rate metrics; strict compile remained 0/0, T052 restore was byte-identical, metrics state was `verified`, plaintext leakage was 0.0, effective coverage was 1.0, and all reports were portable
+output_and_error_boundaries: output directory, map, and metrics paths require absent targets, existing parents, no source-root overlap, and no mutual overlap; staged gate/report/metrics publication is atomic with rollback; invalid input and rate returned `CLI_VNEXT_INPUT_INVALID`/`CLI_VNEXT_RATE_INVALID`, existing output returned `CLI_VNEXT_OUTPUT_INVALID`, forced T052 failure returned `CLI_VNEXT_ORCHESTRATION_INVALID`, forced JSON failure returned `CLI_VNEXT_IO_ERROR`, and no gate/map/metrics artifacts remained after failure
+legacy_blocking: PASS; vNext execution was tested with legacy encrypt, encrypt-project, decrypt, and decrypt-project helpers patched to fail; none was called. Existing legacy parser/dispatch branches were left unchanged, and no project-root or vNext decrypt loader was added
+formal_positive: PASS; unittest invoked `python scripts/formal_equivalence.py --gold-filelist tests/fixtures/refactor_symbol_graph_parameters/design.f --gold-root tests/fixtures/refactor_symbol_graph_parameters --gate-filelist <actual_cli_gate>/design.f --gate-root <actual_cli_gate> --top parameter_top --seq 5`; exit_code=0 and final JSON contained `formal_equivalence=pass`, `top=parameter_top`, `seq=5`
+formal_negative: PASS; unittest copied only the actual CLI selected gate, inserted one ASCII `~` after the unique `assign data_o = `, verified negative strict compile catalog/top-overlay 0/0, and invoked the same Formal command against the negative gate; exit_code was non-zero and output contained `unproven` and `equiv_status -assert`
+formal_verification: PASS; this task produces actual rewritten RTL and the required compact actual-CLI-gate Formal positive and functional negative both passed their expected assertions
+deviations_or_blockers: none
+boundaries: project-root, vNext decrypt/restore loader, legacy cleanup, RISC Formal, fixture changes, and CLI options outside the frozen T053 interface remain intentionally uncovered
+review_request: READY_FOR_REVIEW; Main Agent may independently rerun the four commands in section 10
 ```
 
 ## 12. READY_FOR_REVIEW 条件
@@ -236,6 +240,20 @@ review_request:
 主 Agent只独立复跑第 10 节四条命令，审查 actual CLI gate、portable reports、原子发布/清理、旧
 分派未改变和 Formal 正负例；全部通过后写本节验收记录并设置 `ACCEPTED`。不增加 legacy、RISC、
 全量回归、project-root 或隐藏 probe。
+
+## 13.1 主 Agent独立验收记录（2026-07-24）
+
+```text
+review_head: 6b2d76549f9c566bbd8a535c18c5654f5a6c1d8f
+review_worktree: T053 four allowed files only; no unrelated paths
+unittest: `conda run -n rtl_obfuscation python -m unittest tests.test_cli_vnext_encryption -v` -> 5 tests, OK, exit_code=0
+py_compile: `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite.py tests/test_cli_vnext_encryption.py` -> exit_code=0
+diff_check: `git diff --check HEAD` -> clean, exit_code=0
+status_guard: `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T053_cli_vnext_encryption.md` -> matched before ACCEPTED update, exit_code=0
+formal: unittest independently exercised the actual CLI filelist rate gate; positive Formal passed with `formal_equivalence=pass`; one-byte `~` negative retained strict compile 0/0 and failed Formal with `unproven` and `equiv_status -assert`
+scope_review: single/filelist outputs, portable orchestration/metrics reports, atomic cleanup, legacy helper blocking, and unchanged old dispatch reviewed; no project-root, vNext decrypt loader, fixture, or RISC Formal changes
+decision: ACCEPTED
+```
 
 ## 14. 主 Agent合同冻结记录（2026-07-24）
 

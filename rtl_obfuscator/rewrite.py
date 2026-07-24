@@ -6,6 +6,7 @@ import argparse
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,6 +17,8 @@ from typing import Any
 import pyslang
 
 from rtl_obfuscator import category_profile, formal_view, inventory, project
+from rtl_obfuscator import orchestration_vnext
+from rtl_obfuscator.source_set import SourceSetError, from_filelist, from_single_file
 
 
 _PROJECT_ROOT_GROUPS = tuple(
@@ -51,6 +54,276 @@ def _write_json(path: Path, content: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as stream:
         json.dump(content, stream, indent=2)
         stream.write("\n")
+
+
+class _CliVNextError(ValueError):
+    """Stable user-facing failure for the explicit vNext CLI."""
+
+    def __init__(self, code: str, message: str = "") -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}" if message else code)
+
+
+_CLI_VNEXT_DEFAULT_CATEGORIES = ("signals", "parameters", "genvars")
+_CLI_VNEXT_CATEGORIES = frozenset(_CLI_VNEXT_DEFAULT_CATEGORIES)
+_CLI_VNEXT_ABI_CATEGORIES = frozenset({"parameters"})
+_CLI_VNEXT_PATH_FIELDS = ("output_dir", "map_file", "metrics_file")
+
+
+def _cli_vnext_fail(code: str, message: str = "") -> None:
+    raise _CliVNextError(code, message)
+
+
+def _cli_vnext_path_overlap(first: Path, second: Path) -> bool:
+    try:
+        first.relative_to(second)
+        return True
+    except ValueError:
+        pass
+    try:
+        second.relative_to(first)
+        return True
+    except ValueError:
+        return False
+
+
+def _cli_vnext_output_path(value: object, option: str) -> Path:
+    try:
+        path = Path(value).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError) as error:
+        _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", f"{option}: {error}")
+    if path.exists() or path.is_symlink() or not path.parent.is_dir():
+        _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", option)
+    return path
+
+
+def _cli_vnext_validate_rate(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        _cli_vnext_fail("CLI_VNEXT_RATE_INVALID")
+    try:
+        rate = Decimal(value)
+    except (InvalidOperation, ValueError):
+        _cli_vnext_fail("CLI_VNEXT_RATE_INVALID")
+    if not rate.is_finite() or rate <= 0 or rate > 1:
+        _cli_vnext_fail("CLI_VNEXT_RATE_INVALID")
+    return value
+
+
+def _cli_vnext_validate_arguments(
+    args: argparse.Namespace,
+) -> tuple[Path, tuple[Path, Path, Path], tuple[str, ...], tuple[str, ...], int, str | None]:
+    if (args.input_file is None) == (args.filelist is None):
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    if args.source_root is None:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    try:
+        source_root = Path(args.source_root).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError) as error:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+    if not source_root.is_dir():
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+
+    categories = tuple(args.category or _CLI_VNEXT_DEFAULT_CATEGORIES)
+    if not categories or any(category not in _CLI_VNEXT_CATEGORIES for category in categories):
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    abi_categories = tuple(args.abi_category or ())
+    if any(category not in _CLI_VNEXT_ABI_CATEGORIES for category in abi_categories):
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    if abi_categories and args.top is None:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    try:
+        name_length = int(args.name_length)
+    except (TypeError, ValueError):
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    if name_length < 4:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    rate = _cli_vnext_validate_rate(args.encryption_rate)
+
+    output_dir = _cli_vnext_output_path(args.output_dir, "--output-dir")
+    map_file = _cli_vnext_output_path(args.map_file, "--map")
+    metrics_file = _cli_vnext_output_path(args.metrics_file, "--metrics")
+    paths = (output_dir, map_file, metrics_file)
+    for path in paths:
+        if _cli_vnext_path_overlap(path, source_root):
+            _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+    for index, first in enumerate(paths):
+        for second in paths[index + 1 :]:
+            if _cli_vnext_path_overlap(first, second):
+                _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+    return source_root, paths, categories, abi_categories, name_length, rate
+
+
+def _cli_vnext_input_path(value: Path, source_root: Path) -> Path:
+    if value.is_absolute():
+        return value
+    return source_root / value
+
+
+def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
+    try:
+        if args.input_file is not None:
+            return from_single_file(
+                source_file=_cli_vnext_input_path(args.input_file, source_root),
+                source_root=source_root,
+                include_dirs=args.include_dirs,
+                defines=args.defines,
+                top=args.top,
+            )
+        return from_filelist(
+            filelist=_cli_vnext_input_path(args.filelist, source_root),
+            source_root=source_root,
+            include_dirs=args.include_dirs,
+            defines=args.defines,
+            top=args.top,
+        )
+    except (OSError, RuntimeError, SourceSetError, TypeError, ValueError) as error:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+
+
+def _cli_vnext_portable_report(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"source_root", "gate_dir", "restore_dir", "TemporaryDirectory"}:
+                return False
+            if not _cli_vnext_portable_report(item):
+                return False
+        return True
+    if isinstance(value, list):
+        return all(_cli_vnext_portable_report(item) for item in value)
+    if isinstance(value, str):
+        return not value.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", value)
+    return True
+
+
+def _cli_vnext_write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = -1
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            if temporary.read_bytes() != payload or json.loads(payload.decode("utf-8")) != value:
+                raise ValueError("JSON readback differs from report")
+            temporary.replace(path)
+        except BaseException:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+            raise
+    except (OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+        _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+
+
+def _cli_vnext_remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
+def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
+    prepared: list[tuple[Path, Path, bool]] = []
+    success = False
+    try:
+        for source, target in artifacts:
+            container = Path(tempfile.mkdtemp(prefix=".rtl-obfuscation-cli-vnext-", dir=target.parent))
+            payload = container / "payload"
+            if source.is_dir():
+                shutil.copytree(source, payload)
+            else:
+                shutil.copy2(source, payload)
+            prepared.append((container, target, False))
+        for index, (container, target, _published) in enumerate(prepared):
+            if target.exists() or target.is_symlink():
+                _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+            (container / "payload").replace(target)
+            prepared[index] = (container, target, True)
+        success = True
+    except _CliVNextError:
+        raise
+    except (OSError, shutil.Error, ValueError) as error:
+        _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+    finally:
+        for container, target, published in reversed(prepared):
+            if published and not success:
+                try:
+                    _cli_vnext_remove(target)
+                except OSError:
+                    pass
+            shutil.rmtree(container, ignore_errors=True)
+
+
+def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
+    source_root, (output_dir, map_file, metrics_file), categories, abi_categories, name_length, rate = _cli_vnext_validate_arguments(args)
+    source_set = _cli_vnext_source_set(args, source_root)
+    try:
+        staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-cli-vnext-"))
+    except OSError as error:
+        _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+    try:
+        gate_dir = staging_root / "gate"
+        restore_dir = staging_root / "restore"
+        try:
+            result = orchestration_vnext.run_vnext(
+                source_set,
+                categories=categories,
+                abi_categories=abi_categories,
+                name_length=name_length,
+                encryption_rate=rate,
+                gate_dir=gate_dir,
+                restore_dir=restore_dir,
+            )
+            report = result.to_report()
+        except orchestration_vnext.OrchestrationVNextError as error:
+            code = (
+                "CLI_VNEXT_RATE_INVALID"
+                if error.code == "ORCHESTRATION_RATE_INVALID"
+                else "CLI_VNEXT_ORCHESTRATION_INVALID"
+            )
+            _cli_vnext_fail(code)
+        except (OSError, RuntimeError, ValueError) as error:
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID", str(error))
+        if not isinstance(report, dict) or report.get("format") != "rtl-obfuscation.orchestration-vnext":
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        metrics_report = report.get("metrics")
+        summary = report.get("summary")
+        if not isinstance(metrics_report, dict) or metrics_report.get("format") != "rtl-obfuscation.metrics-vnext":
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        if not isinstance(summary, dict) or not _cli_vnext_portable_report(report):
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        staged_map = staging_root / "orchestration.json"
+        staged_metrics = staging_root / "metrics.json"
+        _cli_vnext_write_json_atomic(staged_map, report)
+        _cli_vnext_write_json_atomic(staged_metrics, metrics_report)
+        _cli_vnext_publish(
+            [
+                (gate_dir, output_dir),
+                (staged_map, map_file),
+                (staged_metrics, metrics_file),
+            ]
+        )
+        return {
+            "format": "rtl-obfuscation.cli-vnext",
+            "schema_version": 1,
+            "state": "restored",
+            "summary": summary,
+        }
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def _entry_ranges(entry: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2972,6 +3245,38 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     )
     operations = parser.add_subparsers(dest="operation", required=True)
 
+    encrypt_vnext = operations.add_parser(
+        "encrypt-vnext",
+        help="Encrypt one SystemVerilog file or explicit filelist through the vNext pipeline.",
+    )
+    encrypt_vnext.add_argument("--input", required=False, type=Path, dest="input_file")
+    encrypt_vnext.add_argument("--filelist", required=False, type=Path, dest="filelist")
+    encrypt_vnext.add_argument("--source-root", required=False, type=Path, dest="source_root")
+    encrypt_vnext.add_argument(
+        "--include-dir", action="append", default=[], dest="include_dirs"
+    )
+    encrypt_vnext.add_argument("--define", action="append", default=[], dest="defines")
+    encrypt_vnext.add_argument("--top", required=False, type=str, dest="top")
+    encrypt_vnext.add_argument(
+        "--category", action="append", default=None, dest="category"
+    )
+    encrypt_vnext.add_argument(
+        "--abi-category", action="append", default=None, dest="abi_category"
+    )
+    encrypt_vnext.add_argument(
+        "--encryption-rate", required=False, dest="encryption_rate"
+    )
+    encrypt_vnext.add_argument(
+        "--name-length", required=False, default="20", dest="name_length"
+    )
+    encrypt_vnext.add_argument(
+        "--output-dir", required=False, type=Path, dest="output_dir"
+    )
+    encrypt_vnext.add_argument("--map", required=False, type=Path, dest="map_file")
+    encrypt_vnext.add_argument(
+        "--metrics", required=False, type=Path, dest="metrics_file"
+    )
+
     encrypt = operations.add_parser("encrypt")
     encrypt.add_argument("--input", required=True, type=Path, dest="input_file")
     encrypt.add_argument(
@@ -3169,6 +3474,13 @@ def _create_argument_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _create_argument_parser()
     args = parser.parse_args()
+    if args.operation == "encrypt-vnext":
+        try:
+            summary = _encrypt_vnext(args)
+        except _CliVNextError as error:
+            parser.exit(1, f"error: {error.code}\n")
+        print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+        return 0
     if args.operation == "inspect-project":
         try:
             _, summary, success = project.inspect_project(
