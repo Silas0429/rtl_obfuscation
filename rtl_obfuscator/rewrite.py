@@ -18,6 +18,7 @@ import pyslang
 
 from rtl_obfuscator import category_profile, formal_view, inventory, project
 from rtl_obfuscator import orchestration_vnext
+from rtl_obfuscator import restore_vnext
 from rtl_obfuscator.source_set import SourceSetError, from_filelist, from_single_file
 
 
@@ -321,6 +322,50 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             "schema_version": 1,
             "state": "restored",
             "summary": summary,
+        }
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
+    """Restore one persisted T053 orchestration envelope in a new process."""
+
+    try:
+        map_path, gate_path, source_path, output_path, report_path = restore_vnext._validate_paths(
+            args.map_file,
+            args.gate_dir,
+            args.source_root,
+            args.output_dir,
+            args.report,
+        )
+    except restore_vnext.RestoreVNextError:
+        raise
+    if report_path is None:
+        raise restore_vnext.RestoreVNextError(
+            "RESTORE_VNEXT_OUTPUT_INVALID", "report is required"
+        )
+    try:
+        staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-restore-cli-vnext-"))
+    except OSError as error:
+        raise restore_vnext.RestoreVNextError("RESTORE_VNEXT_IO_ERROR", str(error)) from error
+    staging_restore = staging_root / "restore"
+    staging_report = staging_root / "restore.json"
+    try:
+        restored = restore_vnext.load_restore_vnext(
+            map_path,
+            gate_dir=gate_path,
+            source_root=source_path,
+            output_dir=staging_restore,
+        )
+        restore_vnext.write_restore_report_vnext(restored, staging_report)
+        restore_vnext.publish_restore_vnext(
+            [(staging_restore, output_path), (staging_report, report_path)]
+        )
+        return {
+            "format": "rtl-obfuscation.restore-vnext-cli",
+            "schema_version": 1,
+            "state": "restored",
+            "summary": restored.report["summary"],
         }
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
@@ -3409,6 +3454,16 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     decrypt_project.add_argument("--map", required=True, type=Path, dest="map_file")
     decrypt_project.add_argument("--output-dir", required=True, type=Path, dest="output_dir")
 
+    decrypt_vnext = operations.add_parser(
+        "decrypt-vnext",
+        help="Restore a persisted vNext orchestration report and actual gate.",
+    )
+    decrypt_vnext.add_argument("--map", required=False, type=Path, dest="map_file")
+    decrypt_vnext.add_argument("--gate-dir", required=False, type=Path, dest="gate_dir")
+    decrypt_vnext.add_argument("--source-root", required=False, type=Path, dest="source_root")
+    decrypt_vnext.add_argument("--output-dir", required=False, type=Path, dest="output_dir")
+    decrypt_vnext.add_argument("--report", required=False, type=Path, dest="report")
+
     decrypt = operations.add_parser("decrypt")
     decrypt.add_argument("--input", required=True, type=Path, dest="input_file")
     decrypt.add_argument("--output", required=True, type=Path, dest="output_file")
@@ -3478,6 +3533,13 @@ def main() -> int:
         try:
             summary = _encrypt_vnext(args)
         except _CliVNextError as error:
+            parser.exit(1, f"error: {error.code}\n")
+        print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+        return 0
+    if args.operation == "decrypt-vnext":
+        try:
+            summary = _decrypt_vnext(args)
+        except restore_vnext.RestoreVNextError as error:
             parser.exit(1, f"error: {error.code}\n")
         print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
         return 0

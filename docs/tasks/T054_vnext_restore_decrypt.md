@@ -1,6 +1,6 @@
 # T054：vNext report 持久化 restore/decrypt adapter
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-K
@@ -191,26 +191,32 @@ Formal；它必须记录跨进程边界、actual gate 输入、restore byte iden
 ## 9. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-start_time:
-starting_worktree:
-baseline_command:
-baseline_result:
-allowed_files:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 82b5f94d3a89560d240dac73199edc0bb02f3f88
+start_time: 2026-07-24T10:55:05+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 7]`; no other status entries
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_restore_vnext -v`
+baseline_result: exit 1; `ModuleNotFoundError: No module named 'tests.test_restore_vnext'`; Ran 1 test in 0.000s (expected before creating the T054 test file)
+allowed_files: rtl_obfuscator/restore_vnext.py; rtl_obfuscator/rewrite.py; tests/test_restore_vnext.py; README.md; docs/tasks/T054_vnext_restore_decrypt.md
+changed_files: rtl_obfuscator/restore_vnext.py; rtl_obfuscator/rewrite.py; tests/test_restore_vnext.py; README.md; docs/tasks/T054_vnext_restore_decrypt.md
 commands:
-results:
-cross_process_single_no_rate:
-cross_process_filelist_rate:
-report_hydration_and_manifest_audit:
-failure_cleanup:
-legacy_blocking:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_restore_vnext -v` -> exit 0; Ran 5 tests in 1.485s; OK, including missing `--report` stable-error black-box coverage
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/restore_vnext.py rtl_obfuscator/rewrite.py tests/test_restore_vnext.py` -> exit 0; no output
+  - `git diff --check HEAD` -> exit 0; no output
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T054_vnext_restore_decrypt.md` -> exit 0; output `- 状态：READY_FOR_REVIEW`
+results: all four final contract acceptance commands passed; no files outside allowed_files were modified
+cross_process_single_no_rate: passed; independent encrypt-vnext then decrypt-vnext processes restored the single physical file byte-identically; restore report was deterministic byte-identical across two decrypt runs and stdout matched the portable summary
+cross_process_filelist_rate: passed; independent encrypt-vnext --filelist design.f --top parameter_top --encryption-rate 0.35 then decrypt-vnext restored all physical files byte-identically; effective mapping preserved rate_unselected records and manifest order
+report_hydration_and_manifest_audit: passed; report loader rebuilt SourceSet, SourceCatalog, SymbolGraph, RewritePolicy, MappingVNext and RewriteExecution, called T046 restore and T048 metrics audit, and verified mapping/execution reports, ranges, gate/restored manifests, metrics and byte identity
+failure_cleanup: passed; report/gate/source tamper, malformed JSON, missing gate, missing `--report`, existing/overlapping output, JSON-write failure and publish-copy failure returned stable fail-closed errors with no output, report or publish temporary directories
+legacy_blocking: passed; decrypt-vnext did not call legacy decrypt/decrypt-project, T052 run_vnext or T050 gate generation paths; old dispatch remains separate
 formal_verification: N/A
 reason: no new rewritten RTL is produced by this task; T053 actual gate Formal is inherited evidence only
-deviations_or_blockers:
-boundaries:
-review_request:
+deviations_or_blockers: none at start
+boundaries: no vNext decrypt loader, project-root, mapping-version compatibility, legacy mapping, Formal rerun or new RTL generation was added; T053 actual gate Formal remains inherited evidence only
+review_request: READY_FOR_REVIEW; missing-report stable error corrected and all required evidence is complete
+correction_start: 2026-07-24; T054 returned to IN_PROGRESS by Main Agent because missing --report raised uncaught _CliVNextError instead of RESTORE_VNEXT_OUTPUT_INVALID
+correction_scope: fix stable missing-report dispatch, add black-box coverage, rerun only the four contract commands; no implementation scope expansion
 ```
 
 ## 10. READY_FOR_REVIEW 条件
@@ -230,6 +236,30 @@ review_request:
 主 Agent只独立复跑第 8 节四条命令，审查跨进程 actual gate 输入、restore report、portable 输出、
 原子清理、旧分派和 T054 不生成新 RTL 的边界；不增加 Formal、RISC、project-root、legacy 全量
 回归或隐藏 probe。全部通过后写本节验收记录并设置 `ACCEPTED`。
+
+## 11.2 主 Agent独立验收记录（2026-07-24）
+
+```text
+review_head: 82b5f94d3a89560d240dac73199edc0bb02f3f88
+review_worktree: only the five contract-allowed files changed; no fixture or unrelated path changes
+unittest: `conda run -n rtl_obfuscation python -m unittest tests.test_restore_vnext -v` -> 5 tests, OK, exit_code=0
+py_compile: `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/restore_vnext.py rtl_obfuscator/rewrite.py tests/test_restore_vnext.py` -> exit_code=0
+diff_check: `git diff --check HEAD` -> clean, exit_code=0
+status_guard: `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T054_vnext_restore_decrypt.md` -> matched before ACCEPTED update, exit_code=0
+missing_report: black-box decrypt-vnext returned exactly `error: RESTORE_VNEXT_OUTPUT_INVALID`, no traceback, and no partial output directory
+scope_review: cross-process single no-rate and filelist rate restore, report hydration, tamper detection, path conflicts, atomic cleanup, and legacy/regeneration blocking independently reviewed; formal_verification=N/A because T054 produces no new rewritten RTL
+record_note: stale execution-record status from the correction run was normalized to READY_FOR_REVIEW before this acceptance record
+decision: ACCEPTED
+```
+
+## 11.1 主 Agent复核退回记录（2026-07-24）
+
+```text
+review_status: RETURNED_TO_IN_PROGRESS
+finding: `decrypt-vnext` 缺少 `--report` 时，`_decrypt_vnext()` 通过 `_cli_vnext_fail()` 抛出 `_CliVNextError`，但 `main()` 的 decrypt-vnext 分支只捕获 `RestoreVNextError`；实际复现为未处理 traceback，而不是稳定 `error: RESTORE_VNEXT_OUTPUT_INVALID`。
+required_fix: 将缺少 report 纳入 argparse required 或统一映射为 RestoreVNextError，并在目标 unittest 中增加缺少 report 的黑盒断言；不得放宽稳定错误合同。
+acceptance: NOT_ACCEPTED
+```
 
 ## 12. 主 Agent合同冻结记录（2026-07-24）
 

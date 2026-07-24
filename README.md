@@ -151,7 +151,26 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
 三个输出均原子发布、不得覆盖已有路径，也不包含绝对路径。
 
 `encrypt-vnext` 不接受 project-root，不改变旧 `encrypt`、`decrypt`、`encrypt-project` 或
-`decrypt-project` 分派；vNext report 的跨进程 restore/decrypt loader 尚未提供。
+`decrypt-project` 分派。
+
+### 3.1.2 vNext `decrypt-vnext` 入口
+
+T053 产生的 orchestration report 和 actual gate 可以在新的 Python 进程中恢复：
+
+```sh
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-vnext \
+  --map /tmp/rtl_vnext/orchestration.json \
+  --gate-dir /tmp/rtl_vnext/gate \
+  --source-root tests/fixtures/refactor_symbol_graph_parameters \
+  --output-dir /tmp/rtl_vnext/restored \
+  --report /tmp/rtl_vnext/restore.json
+```
+
+`--source-root` 必须指向原始 source root；`--output-dir` 和 `--report` 必须是不存在且不与
+输入重叠的路径。命令只消费持久化 report、actual gate 和 source bytes，重建 vNext mapping/
+execution envelope，校验 manifest、ranges、metrics 后原子发布 byte-identical physical files。
+restore report 和 stdout summary 均为 portable JSON；失败时不会留下部分输出。该入口不接受
+project-root，也不改变旧 `decrypt` 或 `decrypt-project` 分派。
 
 ### 3.2 Category 选择
 
