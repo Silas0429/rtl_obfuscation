@@ -3,7 +3,7 @@
 - 文档状态：`APPROVED_DESIGN`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051 已验收；下一步等待冻结 R3-I/T052；本文不是活动任务合同
+- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051 已验收；R3-I/T052 已冻结为当前活动任务；本文不是活动任务合同
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
 - 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
@@ -19,7 +19,7 @@
 - 已验收 rate selection vNext：[`docs/tasks/T049_rate_selection_vnext.md`](tasks/T049_rate_selection_vnext.md)，提交 `1c8851f`
 - 已验收 rate-selected execution：[`docs/tasks/T050_rate_selected_execution.md`](tasks/T050_rate_selected_execution.md)，提交 `2ad27a1`
 - 已验收 rate/metrics adapter：[`docs/tasks/T051_rate_metrics_vnext_adapter.md`](tasks/T051_rate_metrics_vnext_adapter.md)，提交 `50a4e8e`
-- 下一待冻结任务：R3-I/T052 single-file/filelist vNext orchestration service
+- 当前实现任务：[`docs/tasks/T052_orchestration_vnext.md`](tasks/T052_orchestration_vnext.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
