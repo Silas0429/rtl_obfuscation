@@ -1,6 +1,6 @@
 # T055：project-root 接入 vNext 统一流水线
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R4
@@ -209,27 +209,31 @@ rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T055_project_root_vnext.md
 ## 10. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-start_time:
-starting_worktree:
-baseline_command:
-baseline_result:
-allowed_files:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 810228dcf42333730537df493474200a985bcd26
+start_time: 2026-07-24T13:27:08+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 10]`; no other status entries
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_project_root_vnext -v`
+baseline_result: exit 1; `ModuleNotFoundError: No module named 'tests.test_project_root_vnext'`; Ran 1 test in 0.000s before creating the T055 test file
+allowed_files: rtl_obfuscator/rewrite.py; rtl_obfuscator/orchestration_vnext.py; rtl_obfuscator/restore_vnext.py; tests/test_project_root_vnext.py; README.md; docs/tasks/T055_project_root_vnext.md
+changed_files: rtl_obfuscator/rewrite.py; rtl_obfuscator/orchestration_vnext.py; rtl_obfuscator/restore_vnext.py; tests/test_project_root_vnext.py; README.md; docs/tasks/T055_project_root_vnext.md
 commands:
-results:
-project_root_source_set:
-filelist_equivalence:
-rate_no_rate:
-restore_and_cleanup:
-formal_positive:
-formal_negative:
-legacy_blocking:
-formal_verification: PASS | FAIL | BLOCKED
-deviations_or_blockers:
-boundaries:
-review_request:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_project_root_vnext -v` -> exit 0; Ran 3 tests in 0.952s; OK
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite.py rtl_obfuscator/orchestration_vnext.py rtl_obfuscator/restore_vnext.py tests/test_project_root_vnext.py` -> exit 0; no output
+  - `git diff --check HEAD` -> exit 0; no output
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T055_project_root_vnext.md` -> exit 0; output `- 状态：READY_FOR_REVIEW`
+results: all four final contract acceptance commands passed; no files outside allowed_files were modified
+project_root_source_set: passed; `from_project_root()` preserved origin=project-root, ordered source files/top closure/compile order `rtl/child.sv`, `rtl/shadow.sv`, `rtl/top.sv`; closure-external `rtl/unreachable.sv` was absent from gate
+filelist_equivalence: passed; project-root and equivalent `closure.f` no-rate orchestration reports matched after removing origin, random names and derived hashes; file order, symbol identity, owners, ranges, actions and reasons remained equal
+rate_no_rate: passed; project-root no-rate and rate actual gates had strict_compile_passed=true and restored_byte_identical=true; rate report preserved rate_unselected and portable metrics/manifests
+restore_and_cleanup: passed; independent decrypt-vnext restored all project-root physical files byte-identically without design.f; invalid three-way input, missing top, source-root conflict, output overlap and discovery failure were fail-closed with no partial output
+formal_positive: passed; unittest subprocess invoked `scripts/formal_equivalence.py --gold-filelist tests/fixtures/refactor_symbol_graph_parameters/closure.f --gold-root tests/fixtures/refactor_symbol_graph_parameters --gate-filelist <actual-project-root-gate>/design.f --gate-root <actual-project-root-gate> --top parameter_top --seq 5`; exit 0; JSON contained `formal_equivalence=pass`, `top=parameter_top`, `seq=5`
+formal_negative: passed; copied actual project-root gate with one ASCII `~` after the unique `assign data_o = `; strict compile remained 0/0; Formal exit nonzero and output contained `unproven` and `equiv_status -assert`
+legacy_blocking: passed; project-root encrypt-vnext did not call `_encrypt_project`; decrypt-vnext did not call `_decrypt_project`, T052 run_vnext regeneration or T050 writer paths; old commands were not modified
+formal_verification: PASS
+deviations_or_blockers: none at start
+boundaries: no new category, inventory collector, mapping schema, rate algorithm, gate engine, project.py/source_set.py, fixture, Formal script, R5/T056 or legacy behavior was changed
+review_request: READY_FOR_REVIEW; implementation and required evidence are complete
 ```
 
 ## 11. READY_FOR_REVIEW 条件
@@ -248,6 +252,23 @@ review_request:
 主 Agent只独立复跑第 9 节四条命令，审查 project-root/filelist normalized 等价、actual gate、
 Formal 正负例、T054 restore、路径失败清理和旧分派隔离；不增加 RISC、旧全量回归、R5 删除任务
 或隐藏 probe。全部通过后写本节验收记录并设置 `ACCEPTED`。
+
+## 12.1 主 Agent独立验收记录（2026-07-24）
+
+```text
+review_head: 810228dcf42333730537df493474200a985bcd26
+review_worktree: only the six contract-allowed paths changed; no fixture, Formal script, or unrelated path changes
+unittest: `conda run -n rtl_obfuscation python -m unittest tests.test_project_root_vnext -v` -> 3 tests, OK, exit_code=0
+py_compile: `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rewrite.py rtl_obfuscator/orchestration_vnext.py rtl_obfuscator/restore_vnext.py tests/test_project_root_vnext.py` -> exit_code=0
+diff_check: `git diff --check HEAD` -> clean, exit_code=0
+status_guard: `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T055_project_root_vnext.md` -> matched before ACCEPTED update, exit_code=0
+equivalence: project-root and equivalent closure.f filelist normalized reports matched after removing origin, random names, and derived hashes; owner/range/action/reason/file order remained equal; rtl/unreachable.sv was absent from both gates
+restore_rate: project-root rate=0.35 actual gate restored through decrypt-vnext with portable report and byte-identical physical files; rate_unselected and manifest order audited
+formal_positive: PASS; actual project-root selected gate Formal used gold=closure.f, top=parameter_top, seq=5; exit_code=0 and JSON contained formal_equivalence=pass
+formal_negative: PASS; one ASCII `~` functional mutation retained strict compile 0/0; Formal exit was non-zero and output contained `unproven` and `equiv_status -assert`
+scope_review: old encrypt-project/decrypt-project, legacy helpers, T052/T050 regeneration paths, fixtures, and RISC Formal remained outside the new adapter
+decision: ACCEPTED
+```
 
 ## 13. 主 Agent合同冻结记录（2026-07-24）
 

@@ -175,7 +175,7 @@ def _parse_source_set(value: object, source_root: Path) -> SourceSet:
     }
     if set(value) != expected_keys:
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set schema is invalid")
-    if value["schema_version"] != 1 or value["origin"] not in {"single-file", "filelist"}:
+    if value["schema_version"] != 1 or value["origin"] not in {"single-file", "filelist", "project-root"}:
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set schema or origin is invalid")
     sequences = [
         value["ordered_source_files"],
@@ -198,6 +198,8 @@ def _parse_source_set(value: object, source_root: Path) -> SourceSet:
     top = value["top"]
     if top is not None and not isinstance(top, str):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set top is invalid")
+    if value["origin"] == "project-root" and not isinstance(top, str):
+        _fail("RESTORE_VNEXT_INPUT_INVALID", "project-root source_set requires top")
     return SourceSet(
         schema_version=1,
         origin=value["origin"],

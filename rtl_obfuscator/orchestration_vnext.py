@@ -108,8 +108,10 @@ def _validate_source_set(source_set: object) -> SourceSet:
         _fail("ORCHESTRATION_INPUT_INVALID", "input is not SourceSet")
     if type(source_set.schema_version) is not int or source_set.schema_version != 1:
         _fail("ORCHESTRATION_INPUT_INVALID", "SourceSet schema is invalid")
-    if source_set.origin not in {"single-file", "filelist"}:
-        _fail("ORCHESTRATION_INPUT_INVALID", "only single-file and filelist origins are supported")
+    if source_set.origin not in {"single-file", "filelist", "project-root"}:
+        _fail("ORCHESTRATION_INPUT_INVALID", "only single-file, filelist, and project-root origins are supported")
+    if source_set.origin == "project-root" and not isinstance(source_set.top, str):
+        _fail("ORCHESTRATION_INPUT_INVALID", "project-root SourceSet requires top")
     try:
         source_root = Path(source_set.source_root).expanduser().resolve()
     except (OSError, RuntimeError, TypeError) as error:

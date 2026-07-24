@@ -19,7 +19,12 @@ import pyslang
 from rtl_obfuscator import category_profile, formal_view, inventory, project
 from rtl_obfuscator import orchestration_vnext
 from rtl_obfuscator import restore_vnext
-from rtl_obfuscator.source_set import SourceSetError, from_filelist, from_single_file
+from rtl_obfuscator.source_set import (
+    SourceSetError,
+    from_filelist,
+    from_project_root,
+    from_single_file,
+)
 
 
 _PROJECT_ROOT_GROUPS = tuple(
@@ -116,12 +121,22 @@ def _cli_vnext_validate_rate(value: object) -> str | None:
 def _cli_vnext_validate_arguments(
     args: argparse.Namespace,
 ) -> tuple[Path, tuple[Path, Path, Path], tuple[str, ...], tuple[str, ...], int, str | None]:
-    if (args.input_file is None) == (args.filelist is None):
+    input_file = getattr(args, "input_file", None)
+    filelist = getattr(args, "filelist", None)
+    project_root_arg = getattr(args, "project_root", None)
+    modes = sum(value is not None for value in (input_file, filelist, project_root_arg))
+    if modes != 1:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
-    if args.source_root is None:
-        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    if project_root_arg is not None:
+        if getattr(args, "source_root", None) is not None or args.top is None:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        source_root_arg = project_root_arg
+    else:
+        source_root_arg = getattr(args, "source_root", None)
+        if source_root_arg is None:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     try:
-        source_root = Path(args.source_root).expanduser().resolve()
+        source_root = Path(source_root_arg).expanduser().resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
     if not source_root.is_dir():
@@ -165,6 +180,13 @@ def _cli_vnext_input_path(value: Path, source_root: Path) -> Path:
 
 def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
     try:
+        if getattr(args, "project_root", None) is not None:
+            return from_project_root(
+                project_root=source_root,
+                top=args.top,
+                include_dirs=args.include_dirs,
+                defines=args.defines,
+            )
         if args.input_file is not None:
             return from_single_file(
                 source_file=_cli_vnext_input_path(args.input_file, source_root),
@@ -3296,6 +3318,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     )
     encrypt_vnext.add_argument("--input", required=False, type=Path, dest="input_file")
     encrypt_vnext.add_argument("--filelist", required=False, type=Path, dest="filelist")
+    encrypt_vnext.add_argument("--project-root", required=False, type=Path, dest="project_root")
     encrypt_vnext.add_argument("--source-root", required=False, type=Path, dest="source_root")
     encrypt_vnext.add_argument(
         "--include-dir", action="append", default=[], dest="include_dirs"

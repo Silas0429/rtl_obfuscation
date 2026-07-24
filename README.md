@@ -150,8 +150,8 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
 `rtl-obfuscation.metrics-vnext` report，stdout 提供固定的 `rtl-obfuscation.cli-vnext` summary。
 三个输出均原子发布、不得覆盖已有路径，也不包含绝对路径。
 
-`encrypt-vnext` 不接受 project-root，不改变旧 `encrypt`、`decrypt`、`encrypt-project` 或
-`decrypt-project` 分派。
+`encrypt-vnext` 的 single-file、显式 filelist 和 project-root 入口共用同一 vNext 流水线，不改变旧
+`encrypt`、`decrypt`、`encrypt-project` 或 `decrypt-project` 分派。
 
 ### 3.1.2 vNext `decrypt-vnext` 入口
 
@@ -170,7 +170,30 @@ conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-vnext \
 输入重叠的路径。命令只消费持久化 report、actual gate 和 source bytes，重建 vNext mapping/
 execution envelope，校验 manifest、ranges、metrics 后原子发布 byte-identical physical files。
 restore report 和 stdout summary 均为 portable JSON；失败时不会留下部分输出。该入口不接受
-project-root，也不改变旧 `decrypt` 或 `decrypt-project` 分派。
+`--project-root` 参数，但可以恢复 project-root 产生的 orchestration report，也不改变旧 `decrypt`
+或 `decrypt-project` 分派。
+
+### 3.1.3 vNext `project-root` 入口
+
+project-root 也可以接入同一条 vNext 流水线：
+
+```sh
+conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
+  --project-root tests/fixtures/refactor_symbol_graph_parameters \
+  --top parameter_top \
+  --category signals --category parameters --category genvars \
+  --abi-category parameters --encryption-rate 0.35 \
+  --name-length 16 \
+  --output-dir /tmp/rtl_vnext_project/gate \
+  --map /tmp/rtl_vnext_project/orchestration.json \
+  --metrics /tmp/rtl_vnext_project/metrics.json
+```
+
+该入口调用既有 `from_project_root()`，只将 top closure 的 canonical compile order 投影为
+vNext SourceSet；report 保留 `origin=project-root`、top closure、include dirs 和 defines。
+它与等价的 `closure.f` filelist 共用相同的 mapping、gate、metrics 和 restore 流程，closure
+外文件不会进入 actual gate。旧 `encrypt-project`、`decrypt-project` 和 project-root legacy
+行为保持不变。
 
 ### 3.2 Category 选择
 
