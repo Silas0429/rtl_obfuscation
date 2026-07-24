@@ -1,6 +1,6 @@
 # T052：single-file/filelist vNext orchestration service
 
-- 状态：READY
+- 状态：ACCEPTED
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 所属重构阶段：R3-I
@@ -253,26 +253,30 @@ rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T052_orchestration_vnext.md
 ## 10. 子 Agent执行记录
 
 ```text
-status: NOT_STARTED
-starting_head:
-start_time:
-starting_worktree:
-baseline_command:
-baseline_result:
-allowed_files:
-changed_files:
+status: READY_FOR_REVIEW
+starting_head: 973df1d16a0885e77ea391e918285b4c4ad8c339
+start_time: 2026-07-24T09:50:34+08:00
+starting_worktree: `git status --short --branch` -> `## main...origin/main [ahead 3]`; no other status entries
+baseline_command: `conda run -n rtl_obfuscation python -m unittest tests.test_orchestration_vnext -v`
+baseline_result: `ModuleNotFoundError: No module named 'tests.test_orchestration_vnext'`; Ran 1 test in 0.000s, FAILED, exit_code=1
+allowed_files: rtl_obfuscator/orchestration_vnext.py; tests/test_orchestration_vnext.py; docs/tasks/T052_orchestration_vnext.md
+changed_files: rtl_obfuscator/orchestration_vnext.py; tests/test_orchestration_vnext.py; docs/tasks/T052_orchestration_vnext.md
 commands:
-results:
-no_rate_summary:
-rate_summary:
-identity_result:
-restore_summary:
-formal_positive:
-formal_negative:
-formal_verification: PASS | FAIL | BLOCKED
-deviations_or_blockers:
-boundaries:
-review_request:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_orchestration_vnext -v`
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/orchestration_vnext.py tests/test_orchestration_vnext.py`
+  - `git diff --check HEAD`
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T052_orchestration_vnext.md`
+results: rerun unittest printed six named tests, `Ran 6 tests in 0.335s`, `OK`, exit_code=0; rerun py_compile produced no stdout/stderr, exit_code=0; rerun `git diff --check HEAD` produced no stdout/stderr, exit_code=0; final status guard matched `- 状态：READY_FOR_REVIEW`, exit_code=0
+no_rate_summary: actual full/top no-rate gate and restore produced 4 physical files, 20 mapping records, 41 modified tokens, strict compile 0/0, restored byte identity true; T047 state was restored and T048 state was verified with symbols 16/16/1.0, occurrences 41/41/1.0, plaintext leakage 0.0, effective coverage 1.0, and affected-line total equal to the effective-line denominator
+rate_summary: actual full/top `encryption_rate="0.35"` selected-gate path reused T049 selection, T050 one-pass execution, T051 restore/metrics adapter, and retained complete selected/unselected record semantics; strict compile 0/0, restored byte identity true, and the report was portable and deterministic
+identity_result: PASS; SourceSet identity was retained through SourceCatalog, SymbolGraph, RewritePolicy, MappingVNext, and the final report; no-rate effective mapping was the original MappingVNext; rate effective mapping was the T050 selected mapping; T047 MappingExecutionVNext and T048 MetricsVNext identities were retained, with T051 RateMetricsVNext retaining the rate association
+restore_summary: PASS; both paths used the established restore API, input/gate/restored manifests were audited by T047, all physical restored files were byte-identical, and failed restore/audit cases removed gate/restore artifacts
+formal_positive: PASS; unittest ran Formal on the actual selected gate using gold `design.f`, top `parameter_top`, seq `5`; JSON contained `formal_equivalence=pass`
+formal_negative: PASS; unittest copied only the actual selected gate, inserted one ASCII `~` after the unique `assign data_o = `, confirmed strict compile 0/0, and Formal exited non-zero with `unproven` and `equiv_status -assert`
+formal_verification: PASS; actual rewritten RTL was produced by this task and the required positive/negative Formal flow passed inside the target unittest
+deviations_or_blockers: previous review blocker corrected; verified contract/current task commit is `973df1d16a0885e77ea391e918285b4c4ad8c339`, and the starting worktree record is `## main...origin/main [ahead 3]` with no status entries. This correction pass changed no implementation files and did not expand scope.
+boundaries: no CLI, project-root, legacy rewrite/inventory/decrypt/rate helper, second semantic graph/mapping/rate/gate engine, fixture, README, planning-document, or Formal-script changes; single-file/filelist equality is checked on normalized reports because the required report retains origin
+review_request: READY_FOR_REVIEW; Main Agent may independently rerun the four commands in section 9
 ```
 
 ## 11. READY_FOR_REVIEW 条件
@@ -302,4 +306,28 @@ inputs: T039 SourceSet adapters + T040–T045 semantic/mapping core + T046–T05
 oracle: no-rate and rate actual gates; restore byte identity; T047/T048/T051 identity; normalized portable report; compact Formal +/-
 formal_verification: required because this task produces actual rewritten RTL
 forbidden: CLI argparse, project-root, legacy compatibility, new engines, fixture edits, T053 creation
+
+## 14. 主 Agent验收记录（2026-07-24）
+
+```text
+status: ACCEPTED
+reviewed_head: 973df1d16a0885e77ea391e918285b4c4ad8c339
+prerequisites: PASS; T047/T048/T049/T050/T051 已 ACCEPTED，T052 是唯一 READY_FOR_REVIEW 任务
+scope: PASS; 最终修改仅限 orchestration_vnext.py、test_orchestration_vnext.py 和本任务合同；修正基线记录阶段未修改实现文件
+acceptance_commands:
+  - `conda run -n rtl_obfuscation python -m unittest tests.test_orchestration_vnext -v` — 6 tests，OK，exit_code=0；实际执行 Formal 正负例
+  - `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/orchestration_vnext.py tests/test_orchestration_vnext.py` — exit_code=0
+  - `git diff --check HEAD` — exit_code=0
+  - `rg -x -- '- 状态：READY_FOR_REVIEW' docs/tasks/T052_orchestration_vnext.md` — 状态更新前匹配成功，exit_code=0
+no_rate: PASS; 4 physical files、20 mapping records、41 edits，strict compile 0/0，T047 restored，T048 verified，restore byte-identical
+rate: PASS; rate=0.35 复用 T049/T050/T051，selected mapping、rate metrics、restore 和 portable deterministic report 全部通过
+identity: PASS; SourceSet、MappingVNext、effective mapping、MappingExecutionVNext、MetricsVNext 和 RateMetricsVNext identity 保持
+normalized_report: PASS; single-file/filelist canonical report byte-identical，未包含绝对路径或受保护路径字段
+formal_positive: PASS; actual selected gate Formal JSON 为 `formal_equivalence=pass`，top=`parameter_top`，seq=5
+formal_negative: PASS; 单字节 `~` 负例 strict compile 0/0，Formal 非 0，输出包含 `unproven` 和 `equiv_status -assert`
+negative_cases: PASS; project-root、非法 rate/output/restore、manifest、rebuild 和 legacy 路径均 fail-closed
+formal_verification: PASS
+decision: ACCEPTED
+next_step: T052 可提交交付；下一任务为另行冻结的 T053 single/filelist CLI wiring，不在本任务中实现
+```
 ```
