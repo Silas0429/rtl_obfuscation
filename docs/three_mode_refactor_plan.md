@@ -3,7 +3,7 @@
 - 文档状态：`APPROVED_DESIGN`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053、R3-K/T054、R4/T055 已验收；R5-A/T056 已冻结为当前活动任务；本文不是活动任务合同
+- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053、R3-K/T054、R4/T055、R5-A/T056 已验收；R5-B/T057 已冻结为当前活动任务；本文不是活动任务合同
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
 - 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
@@ -23,7 +23,8 @@
 - 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
 - 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
 - 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
-- 当前实现任务：[`docs/tasks/T056_vnext_product_convergence.md`](tasks/T056_vnext_product_convergence.md)
+- 已验收产品收口任务：[`docs/tasks/T056_vnext_product_convergence.md`](tasks/T056_vnext_product_convergence.md)
+- 当前最终验收任务：[`docs/tasks/T057_risc_v_vector_release_acceptance.md`](tasks/T057_risc_v_vector_release_acceptance.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
