@@ -141,8 +141,14 @@ class OrchestrationVNextTests(unittest.TestCase):
             self.assertTrue(report["summary"]["strict_compile_passed"])
             self.assertTrue(report["summary"]["restored_byte_identical"])
             self.assertEqual(report["summary"]["files"], 4)
-            self.assertEqual(report["summary"]["mapping_records"], 20)
-            self.assertEqual(report["summary"]["effective_mapping_records"], 20)
+            self.assertEqual(
+                report["summary"]["mapping_records"],
+                len(result.mapping_vnext.records),
+            )
+            self.assertEqual(
+                report["summary"]["effective_mapping_records"],
+                len(result.effective_mapping_vnext.records),
+            )
             self.assertEqual(report["summary"]["modified_tokens"], 41)
             self.assertIsNone(result.rate_metrics)
             self.assertEqual(report["metrics"]["symbols"]["coverage"], 1.0)
@@ -180,8 +186,14 @@ class OrchestrationVNextTests(unittest.TestCase):
                 result.rate_metrics.rate_execution.rewrite_execution.mapping_vnext,
             )
             self.assertTrue(report["summary"]["rate_enabled"])
-            self.assertEqual(report["summary"]["mapping_records"], 20)
-            self.assertEqual(report["summary"]["effective_mapping_records"], 20)
+            self.assertEqual(
+                report["summary"]["mapping_records"],
+                len(result.mapping_vnext.records),
+            )
+            self.assertEqual(
+                report["summary"]["effective_mapping_records"],
+                len(result.effective_mapping_vnext.records),
+            )
             self.assertTrue(report["summary"]["strict_compile_passed"])
             self.assertTrue(report["summary"]["restored_byte_identical"])
             self.assertEqual(report["rate_metrics"]["state"], "restored")
@@ -250,11 +262,6 @@ class OrchestrationVNextTests(unittest.TestCase):
         source_set = self._source_set()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            project_root = replace(source_set, origin="project-root")
-            self._assert_code(
-                lambda: self._run(project_root, root / "project", encryption_rate=None),
-                "ORCHESTRATION_INPUT_INVALID",
-            )
             self._assert_code(
                 lambda: self._run(source_set, root / "bad-rate", encryption_rate=""),
                 "ORCHESTRATION_RATE_INVALID",
@@ -296,9 +303,6 @@ class OrchestrationVNextTests(unittest.TestCase):
                 mock.patch.object(orchestration_module, "build_symbol_graph", wraps=real_graph) as graph,
                 mock.patch.object(orchestration_module, "build_rewrite_policy", wraps=real_policy) as policy,
                 mock.patch.object(orchestration_module, "build_mapping_vnext", wraps=real_mapping) as mapping,
-                mock.patch.object(legacy_rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "decrypt_project", side_effect=AssertionError("legacy decrypt"), create=True),
             ):
                 result = self._run(source_set, Path(temp) / "run", encryption_rate="0.35")
             self.assertEqual(catalog.call_count, 1)

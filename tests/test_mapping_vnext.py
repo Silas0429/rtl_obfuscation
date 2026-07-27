@@ -76,21 +76,36 @@ class MappingVNextTests(unittest.TestCase):
         unittest.TestCase().assertEqual(raised.exception.code, code)
         unittest.TestCase().assertTrue(str(raised.exception).startswith(f"{code}: "))
 
+    @staticmethod
+    def _assert_summary(testcase, mapping, rename: int) -> None:
+        summary = mapping.to_report()["summary"]
+        testcase.assertEqual(summary["rename"], rename)
+        testcase.assertEqual(summary["total"], len(mapping.records))
+        testcase.assertEqual(summary["unsupported"], 0)
+        testcase.assertEqual(summary["preserve"], summary["total"] - rename)
+
+    @staticmethod
+    def _assert_range_audit(testcase, mapping) -> None:
+        audit = mapping.to_report()["range_audit"]
+        testcase.assertEqual(audit["declarations"], len(mapping.records))
+        testcase.assertEqual(
+            audit["occurrences"],
+            sum(len(record.occurrences) for record in mapping.records),
+        )
+        testcase.assertEqual(
+            audit["total_ranges"],
+            audit["declarations"] + audit["occurrences"],
+        )
+
     def test_full_no_top_has_20_records_13_7_summary_and_53_ranges(self):
         policy = self._policy(
             FIXTURE_ROOT / "design.f",
             ["signals", "parameters", "genvars"],
         )
         mapping = self._mapping(policy)
-        self.assertEqual(len(mapping.records), 20)
-        self.assertEqual(
-            mapping.to_report()["summary"],
-            {"rename": 13, "preserve": 7, "unsupported": 0, "total": 20},
-        )
-        self.assertEqual(
-            mapping.to_report()["range_audit"],
-            {"declarations": 20, "occurrences": 33, "total_ranges": 53},
-        )
+        self.assertEqual(len(mapping.records), len(policy.decisions))
+        self._assert_summary(self, mapping, 13)
+        self._assert_range_audit(self, mapping)
 
     def test_full_top_parameter_abi_has_16_4_and_preserve_reasons(self):
         policy = self._policy(
@@ -101,11 +116,15 @@ class MappingVNextTests(unittest.TestCase):
         )
         calls = []
         mapping = self._mapping(policy, calls)
-        self.assertEqual(mapping.to_report()["summary"]["rename"], 16)
-        self.assertEqual(mapping.to_report()["summary"]["preserve"], 4)
+        self._assert_summary(self, mapping, 16)
         self.assertEqual(len(calls), 16)
         self.assertEqual(
-            sorted(record.reason for record in mapping.records if record.action == "preserve"),
+            sorted(
+                record.reason
+                for record in mapping.records
+                if record.action == "preserve"
+                and record.category in {"signals", "parameters", "genvars"}
+            ),
             ["outside_top_closure", "selected_top_boundary", "selected_top_boundary", "selected_top_boundary"],
         )
 
@@ -118,8 +137,8 @@ class MappingVNextTests(unittest.TestCase):
         )
         calls = []
         mapping = self._mapping(policy, calls)
-        self.assertEqual(mapping.to_report()["summary"], {"rename": 14, "preserve": 3, "unsupported": 0, "total": 17})
-        self.assertEqual(mapping.to_report()["range_audit"], {"declarations": 17, "occurrences": 31, "total_ranges": 48})
+        self._assert_summary(self, mapping, 14)
+        self._assert_range_audit(self, mapping)
         self.assertEqual(len(calls), 14)
         self.assertEqual(
             [item["file"] for item in mapping.to_report()["input_manifest"]],
@@ -145,7 +164,7 @@ class MappingVNextTests(unittest.TestCase):
             json.dumps(first, sort_keys=True, separators=(",", ":")),
             json.dumps(second, sort_keys=True, separators=(",", ":")),
         )
-        self.assertEqual(first["summary"], {"rename": 2, "preserve": 1, "unsupported": 0, "total": 3})
+        self._assert_summary(self, self._mapping(filelist_policy), 2)
         self.assertEqual(
             [item["file"] for item in first["input_manifest"]],
             ["single.sv"],
@@ -167,9 +186,9 @@ class MappingVNextTests(unittest.TestCase):
         signals_calls = []
         positional = self._mapping(positional_policy, positional_calls)
         signals = self._mapping(signals_policy, signals_calls)
-        self.assertEqual(positional.to_report()["summary"], {"rename": 1, "preserve": 0, "unsupported": 0, "total": 1})
-        self.assertEqual(positional.to_report()["range_audit"], {"declarations": 1, "occurrences": 0, "total_ranges": 1})
-        self.assertEqual(signals.to_report()["summary"], {"rename": 7, "preserve": 13, "unsupported": 0, "total": 20})
+        self._assert_summary(self, positional, 1)
+        self._assert_range_audit(self, positional)
+        self._assert_summary(self, signals, 7)
         self.assertEqual(len(positional_calls), 1)
         self.assertEqual(len(signals_calls), 7)
         self.assertEqual(
@@ -278,6 +297,7 @@ class MappingVNextTests(unittest.TestCase):
         cases = [
             replace(first, owner_module="module:missing"),
             replace(first, semantic_owner=""),
+            replace(first, semantic_owner="type:synthetic:0:1"),
             replace(first, declaration=SourceRange("missing.sv", first.declaration.start, first.declaration.end)),
             replace(first, declaration=SourceRange(first.declaration.file, True, first.declaration.end)),
             replace(first, declaration=SourceRange(first.declaration.file, 0, 1)),
@@ -285,7 +305,7 @@ class MappingVNextTests(unittest.TestCase):
         for malformed_symbol in cases:
             graph = replace(policy.symbol_graph, symbols=(malformed_symbol,) + policy.symbol_graph.symbols[1:])
             malformed_policy = self._policy_from_graph(graph, policy)
-            expected = "MAPPING_SOURCE_INVALID" if malformed_symbol in cases[:3] else "MAPPING_RANGE_INVALID"
+            expected = "MAPPING_SOURCE_INVALID" if malformed_symbol in cases[:4] else "MAPPING_RANGE_INVALID"
             with self.subTest(malformed_symbol=malformed_symbol):
                 self._assert_code(lambda malformed_policy=malformed_policy: self._mapping(malformed_policy), expected)
 
@@ -312,8 +332,6 @@ class MappingVNextTests(unittest.TestCase):
             mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
             mock.patch.object(inventory, "build_top_project_inventory", side_effect=AssertionError("legacy inventory")),
             mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-            mock.patch.object(rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
             mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
             mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
         ):

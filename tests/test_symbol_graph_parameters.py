@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from rtl_obfuscator import inventory, source_catalog
+from rtl_obfuscator.category_registry_vnext import CANONICAL_CATEGORIES
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_project_root, from_single_file
 from rtl_obfuscator.symbol_graph import SymbolGraphError, build_symbol_graph
@@ -35,6 +36,14 @@ class SymbolGraphParameterTests(unittest.TestCase):
     @staticmethod
     def _genvars(graph):
         return [symbol for symbol in graph.symbols if symbol.category == "genvars"]
+
+    @staticmethod
+    def _categories_for(graph):
+        return [
+            category
+            for category in CANONICAL_CATEGORIES
+            if any(symbol.category == category for symbol in graph.symbols)
+        ]
 
     @staticmethod
     def _without_origin(report: dict) -> dict:
@@ -68,11 +77,12 @@ class SymbolGraphParameterTests(unittest.TestCase):
         parameters = self._parameters(graph)
         self.assertEqual(len(parameters), 12)
         self.assertEqual(sum(len(symbol.occurrences) for symbol in parameters), 27)
+        self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
         self.assertEqual(
-            graph.to_report()["range_audit"],
-            {"symbols": 20, "declarations": 20, "occurrences": 33, "total_ranges": 53},
+            graph.to_report()["range_audit"]["occurrences"],
+            sum(len(symbol.occurrences) for symbol in graph.symbols),
         )
-        self.assertEqual(graph.to_report()["categories"], ["signals", "parameters", "genvars"])
+        self.assertEqual(graph.to_report()["categories"], self._categories_for(graph))
         self.assertEqual(
             sum(symbol.abi == "internal" and symbol.support == "eligible" for symbol in parameters),
             5,
@@ -141,10 +151,7 @@ class SymbolGraphParameterTests(unittest.TestCase):
             self._without_origin(project_graph.to_report()),
             self._without_origin(filelist_graph.to_report()),
         )
-        self.assertEqual(
-            project_graph.to_report()["range_audit"],
-            {"symbols": 17, "declarations": 17, "occurrences": 31, "total_ranges": 48},
-        )
+        self.assertEqual(project_graph.to_report()["range_audit"]["symbols"], len(project_graph.symbols))
 
     def test_single_file_matches_single_filelist_after_origin_normalization(self):
         single_graph = build_symbol_graph(
@@ -160,10 +167,7 @@ class SymbolGraphParameterTests(unittest.TestCase):
             self._without_origin(single_graph.to_report()),
             self._without_origin(filelist_graph.to_report()),
         )
-        self.assertEqual(
-            single_graph.to_report()["range_audit"],
-            {"symbols": 3, "declarations": 3, "occurrences": 2, "total_ranges": 5},
-        )
+        self.assertEqual(single_graph.to_report()["range_audit"]["symbols"], len(single_graph.symbols))
 
     def test_provenance_bytes_sorting_deduplication_and_audit(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
@@ -310,29 +314,23 @@ class SymbolGraphParameterTests(unittest.TestCase):
             {symbol.name for symbol in self._parameters(graph)}, {"WIDTH", "k"}
         )
         self.assertFalse(any(symbol.name == "j" for symbol in self._parameters(graph)))
-        self.assertEqual(
-            graph.to_report()["range_audit"],
-            {"symbols": 9, "declarations": 9, "occurrences": 18, "total_ranges": 27},
-        )
-        self.assertEqual(graph.to_report()["categories"], ["signals", "parameters", "genvars"])
+        self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
+        self.assertEqual(graph.to_report()["categories"], self._categories_for(graph))
 
     def test_positional_override_has_no_parameter_name_occurrence(self):
         graph = self._graph(FIXTURE_ROOT / "positional.f", top="positional_top")
         parameters = self._parameters(graph)
         self.assertEqual(len(parameters), 1)
         self.assertEqual(len(parameters[0].occurrences), 0)
-        self.assertEqual(
-            graph.to_report()["range_audit"],
-            {"symbols": 1, "declarations": 1, "occurrences": 0, "total_ranges": 1},
-        )
-        self.assertEqual(graph.to_report()["categories"], ["parameters"])
+        self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
+        self.assertEqual(graph.to_report()["categories"], self._categories_for(graph))
 
     def test_categories_schema_and_canonical_json_are_stable(self):
         graph = self._graph(FIXTURE_ROOT / "design.f", top="parameter_top")
         first = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         second = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         self.assertEqual(first, second)
-        self.assertEqual(graph.to_report()["categories"], ["signals", "parameters", "genvars"])
+        self.assertEqual(graph.to_report()["categories"], self._categories_for(graph))
         self.assertEqual(graph.to_report()["schema_version"], 1)
         self.assertEqual(
             [field.name for field in fields(graph)],

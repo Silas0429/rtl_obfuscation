@@ -39,6 +39,7 @@ class SourceCatalog:
     top_compilation: object | None = field(repr=False, compare=False)
     top_root: object | None = field(repr=False, compare=False)
     top_source_manager: object | None = field(repr=False, compare=False)
+    semantic_owner_ids: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -237,6 +238,118 @@ def _module_definitions_for(
             ),
         )
     )
+
+
+def _semantic_name_range(
+    source_set: SourceSet,
+    manager: Any,
+    node: Any,
+    *,
+    name: str | None = None,
+) -> SourceRange:
+    value = str(name if name is not None else getattr(node, "name", ""))
+    if not value:
+        raise SourceCatalogError(
+            "CATALOG_OWNER_INVALID", "semantic owner has no source name"
+        )
+    location = getattr(node, "location", None)
+    if location is None:
+        raise SourceCatalogError(
+            "CATALOG_OWNER_INVALID", "semantic owner has no source location"
+        )
+    file = _relative_file(source_set, manager, location.buffer)
+    start = int(location.offset)
+    end = start + len(value.encode("utf-8"))
+    source = (source_set.source_root / file).read_bytes()
+    if start < 0 or start >= end or end > len(source):
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic owner range is outside source bytes",
+            file=file,
+            start=start,
+        )
+    if source[start:end] != value.encode("utf-8"):
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic owner range does not match source bytes",
+            file=file,
+            start=start,
+        )
+    return SourceRange(file=file, start=start, end=end)
+
+
+def _semantic_owner_ids(
+    source_set: SourceSet,
+    view: _CompiledView,
+    modules: tuple[ModuleOwner, ...],
+) -> tuple[str, ...]:
+    """Return the registry of semantic owners consumed by SymbolGraph.
+
+    The registry is derived from the already compiled PySlang tree.  It is
+    intentionally not part of the portable catalog report; it is an internal
+    identity boundary used to validate graph owners before mapping.
+    """
+
+    owners: set[str] = {"$unit"}
+    owners.update(module.owner_id for module in modules)
+    nodes: list[Any] = []
+    view.root.visit(nodes.append)
+    module_owner_by_range = {
+        (
+            module.declaration.file,
+            module.declaration.start,
+            module.declaration.end,
+        ): module.owner_id
+        for module in modules
+    }
+    for node in nodes:
+        node_type = type(node).__name__
+        if node_type == "InstanceBodySymbol":
+            definition = getattr(node, "definition", None)
+            syntax = getattr(node, "syntax", None)
+            if definition is None or syntax is None:
+                continue
+            declaration = _definition_range(source_set, view.source_manager, definition)
+            syntax_kind = str(getattr(syntax, "kind", ""))
+            if "ModuleDeclaration" in syntax_kind:
+                owner_id = module_owner_by_range.get(
+                    (declaration.file, declaration.start, declaration.end)
+                )
+                if owner_id is not None:
+                    owners.add(owner_id)
+            elif "InterfaceDeclaration" in syntax_kind:
+                owners.add(
+                    f"interface:{declaration.file}:{declaration.start}:{declaration.end}"
+                )
+        elif node_type == "TypeAliasType":
+            declaration = _semantic_name_range(source_set, view.source_manager, node)
+            owners.add(f"type:{declaration.file}:{declaration.start}:{declaration.end}")
+        elif node_type == "SubroutineSymbol":
+            declaration = _semantic_name_range(source_set, view.source_manager, node)
+            owners.add(
+                f"subroutine:{declaration.file}:{declaration.start}:{declaration.end}"
+            )
+        elif node_type == "GenerateBlockArraySymbol":
+            syntax = getattr(node, "syntax", None)
+            source_range = getattr(syntax, "sourceRange", None)
+            start = getattr(source_range, "start", None)
+            end = getattr(source_range, "end", None)
+            if start is None or end is None:
+                raise SourceCatalogError(
+                    "CATALOG_OWNER_INVALID",
+                    "generate block owner has no semantic source range",
+                )
+            start_range = _semantic_name_range(
+                source_set,
+                view.source_manager,
+                node,
+                name=str(getattr(node, "name", "")),
+            )
+            end_offset = int(end.offset)
+            owners.add(
+                f"generate:{start_range.file}:{int(start.offset)}:{end_offset}"
+            )
+    return tuple(sorted(owners))
 
 
 def _check_duplicate_syntax_modules(
@@ -442,4 +555,5 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         top_compilation=None if top_view is None else top_view.compilation,
         top_root=None if top_view is None else top_view.root,
         top_source_manager=None if top_view is None else top_view.source_manager,
+        semantic_owner_ids=_semantic_owner_ids(source_set, catalog_view, tuple(modules)),
     )

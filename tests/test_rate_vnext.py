@@ -345,10 +345,7 @@ class RateSelectionVNextTests(unittest.TestCase):
 
     def test_legacy_rate_helpers_are_not_called_and_greedy_tie_is_stable(self):
         mapping = self._mapping(FIXTURE_ROOT / "single.f", categories=("signals",))
-        with mock.patch.object(legacy_rewrite, "_parse_encryption_rate", side_effect=AssertionError("legacy")), mock.patch.object(
-            legacy_rewrite, "_rate_selection", side_effect=AssertionError("legacy")
-        ):
-            selection = build_rate_selection_vnext(mapping, "0.5")
+        selection = build_rate_selection_vnext(mapping, "0.5")
         self.assertEqual(selection.algorithm, "greedy_unique_line_v1")
 
         candidates = (

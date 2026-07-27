@@ -5,10 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from .category_registry_vnext import (
+    CANONICAL_CATEGORIES,
+    MODULE_ABI_CATEGORIES,
+    CategoryRegistryError,
+    normalize_abi_categories,
+    normalize_categories,
+)
 from .symbol_graph import SourceSymbol, SymbolGraph
 
 
-_CANONICAL_CATEGORIES = ("signals", "parameters", "genvars")
+_CANONICAL_CATEGORIES = CANONICAL_CATEGORIES
 _KNOWN_SUPPORT = {"eligible", "preserved", "unsupported"}
 _KNOWN_ABI = {"internal", "module_abi", "top_boundary"}
 
@@ -82,42 +89,26 @@ def _iter_request(values: Iterable[str] | None, *, label: str) -> list[object]:
 
 
 def _normalize_categories(categories: Iterable[str] | None) -> tuple[str, ...]:
-    requested = _iter_request(categories, label="categories")
-    if not requested:
-        raise RewritePolicyError(
-            "REWRITE_POLICY_EMPTY_SELECTION",
-            "categories must contain at least one canonical category",
+    try:
+        return normalize_categories(categories, default=False)
+    except CategoryRegistryError as error:
+        code = (
+            "REWRITE_POLICY_EMPTY_SELECTION"
+            if error.code == "CATEGORY_REGISTRY_EMPTY"
+            else "REWRITE_POLICY_UNKNOWN_CATEGORY"
         )
-    unknown = [
-        item
-        for item in requested
-        if not isinstance(item, str) or item not in _CANONICAL_CATEGORIES
-    ]
-    if unknown:
-        raise RewritePolicyError(
-            "REWRITE_POLICY_UNKNOWN_CATEGORY",
-            f"unknown category request: {unknown[0]!r}",
-        )
-    requested_set = set(requested)
-    return tuple(category for category in _CANONICAL_CATEGORIES if category in requested_set)
+        raise RewritePolicyError(code, error.message) from error
 
 
 def _normalize_abi_categories(
     abi_categories: Iterable[str] | None,
 ) -> tuple[str, ...]:
-    requested = _iter_request(abi_categories, label="abi_categories")
-    unknown = [
-        item
-        for item in requested
-        if not isinstance(item, str) or item not in _CANONICAL_CATEGORIES
-    ]
-    if unknown:
+    try:
+        return normalize_abi_categories(abi_categories)
+    except CategoryRegistryError as error:
         raise RewritePolicyError(
-            "REWRITE_POLICY_UNKNOWN_CATEGORY",
-            f"unknown ABI category request: {unknown[0]!r}",
-        )
-    requested_set = set(requested)
-    return tuple(category for category in _CANONICAL_CATEGORIES if category in requested_set)
+            "REWRITE_POLICY_UNKNOWN_CATEGORY", error.message
+        ) from error
 
 
 def _graph_invalid(message: str) -> RewritePolicyError:
@@ -190,7 +181,7 @@ def build_rewrite_policy(
     invalid_abi = [
         category
         for category in normalized_abi
-        if category != "parameters" or category not in selected_categories
+        if category not in MODULE_ABI_CATEGORIES or category not in selected_categories
     ]
     if invalid_abi:
         raise RewritePolicyError(

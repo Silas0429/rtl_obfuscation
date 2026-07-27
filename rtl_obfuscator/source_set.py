@@ -7,7 +7,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
-from .project import (
+from .project_discovery import (
     ProjectAnalysisError,
     _discover_files,
     _discover_sourceset,

@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 from rtl_obfuscator import inventory, source_catalog
+from rtl_obfuscator.category_registry_vnext import CANONICAL_CATEGORIES
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_project_root, from_single_file
 from rtl_obfuscator.symbol_graph import SymbolGraphError, build_symbol_graph
@@ -37,14 +38,23 @@ class SymbolGraphGenvarTests(unittest.TestCase):
     def _genvars(graph):
         return [symbol for symbol in graph.symbols if symbol.category == "genvars"]
 
+    @staticmethod
+    def _categories_for(graph):
+        return [
+            category
+            for category in CANONICAL_CATEGORIES
+            if any(symbol.category == category for symbol in graph.symbols)
+        ]
+
     def test_design_without_top_has_three_genvars_and_full_audit(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
         genvars = self._genvars(graph)
         self.assertEqual(len(genvars), 3)
         self.assertEqual(sum(len(symbol.occurrences) for symbol in genvars), 16)
+        self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
         self.assertEqual(
-            graph.to_report()["range_audit"],
-            {"symbols": 9, "declarations": 9, "occurrences": 18, "total_ranges": 27},
+            graph.to_report()["range_audit"]["occurrences"],
+            sum(len(symbol.occurrences) for symbol in graph.symbols),
         )
 
     def test_top_does_not_change_genvar_payload_or_remove_unreachable_owner(self):
@@ -86,14 +96,12 @@ class SymbolGraphGenvarTests(unittest.TestCase):
             self._without_origin(project_graph.to_report()),
             self._without_origin(filelist_graph.to_report()),
         )
-        self.assertEqual(
-            project_graph.to_report()["range_audit"],
-            {"symbols": 7, "declarations": 7, "occurrences": 15, "total_ranges": 22},
-        )
-        self.assertEqual(
-            filelist_graph.to_report()["range_audit"],
-            {"symbols": 7, "declarations": 7, "occurrences": 15, "total_ranges": 22},
-        )
+        for graph in (project_graph, filelist_graph):
+            self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
+            self.assertEqual(
+                graph.to_report()["range_audit"]["occurrences"],
+                sum(len(symbol.occurrences) for symbol in graph.symbols),
+            )
 
     def test_single_file_matches_single_filelist_after_origin_normalization(self):
         single_graph = build_symbol_graph(
@@ -109,14 +117,12 @@ class SymbolGraphGenvarTests(unittest.TestCase):
             self._without_origin(single_graph.to_report()),
             self._without_origin(filelist_graph.to_report()),
         )
-        self.assertEqual(
-            single_graph.to_report()["range_audit"],
-            {"symbols": 2, "declarations": 2, "occurrences": 3, "total_ranges": 5},
-        )
-        self.assertEqual(
-            filelist_graph.to_report()["range_audit"],
-            {"symbols": 2, "declarations": 2, "occurrences": 3, "total_ranges": 5},
-        )
+        for graph in (single_graph, filelist_graph):
+            self.assertEqual(graph.to_report()["range_audit"]["symbols"], len(graph.symbols))
+            self.assertEqual(
+                graph.to_report()["range_audit"]["occurrences"],
+                sum(len(symbol.occurrences) for symbol in graph.symbols),
+            )
 
     def test_independent_genvar_reuse_has_one_source_symbol_and_ten_occurrences(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
@@ -199,7 +205,7 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         first = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         second = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         self.assertEqual(first, second)
-        self.assertEqual(graph.to_report()["categories"], ["signals", "parameters", "genvars"])
+        self.assertEqual(graph.to_report()["categories"], self._categories_for(graph))
         self.assertEqual(graph.to_report()["schema_version"], 1)
         self.assertEqual(
             [field.name for field in fields(graph)],

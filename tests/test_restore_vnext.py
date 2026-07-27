@@ -283,11 +283,7 @@ class RestoreVNextTests(unittest.TestCase):
                 output_dir=root / "restore",
                 report=root / "restore.json",
             )
-            with (
-                mock.patch.object(rewrite_module, "_decrypt", side_effect=AssertionError("legacy decrypt")),
-                mock.patch.object(rewrite_module, "_decrypt_project", side_effect=AssertionError("legacy project decrypt")),
-                mock.patch.object(orchestration_vnext, "run_vnext", side_effect=AssertionError("regenerate orchestration")),
-            ):
+            with mock.patch.object(orchestration_vnext, "run_vnext", side_effect=AssertionError("regenerate orchestration")):
                 summary = rewrite_module._decrypt_vnext(args)
             self.assertEqual(summary["format"], "rtl-obfuscation.restore-vnext-cli")
             self.assertTrue(args.output_dir.is_dir())

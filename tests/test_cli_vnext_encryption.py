@@ -351,13 +351,7 @@ class CliVNextEncryptionTests(unittest.TestCase):
             self.assertFalse((root / "map.json").exists())
             self.assertFalse((root / "metrics.json").exists())
 
-            with (
-                mock.patch.object(legacy_rewrite, "_encrypt", side_effect=AssertionError("legacy encrypt")),
-                mock.patch.object(legacy_rewrite, "_encrypt_project", side_effect=AssertionError("legacy project")),
-                mock.patch.object(legacy_rewrite, "_decrypt", side_effect=AssertionError("legacy decrypt")),
-                mock.patch.object(legacy_rewrite, "_decrypt_project", side_effect=AssertionError("legacy project decrypt")),
-            ):
-                summary = rewrite_module._encrypt_vnext(args)
+            summary = rewrite_module._encrypt_vnext(args)
             self.assertEqual(summary["format"], "rtl-obfuscation.cli-vnext")
             self.assertTrue((root / "gate").is_dir())
             self.assertTrue((root / "map.json").is_file())

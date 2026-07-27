@@ -342,9 +342,6 @@ class RateExecutionVNextTests(unittest.TestCase):
             with (
                 mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
                 mock.patch.object(rewrite_vnext_module, "build_rewrite_policy", side_effect=AssertionError("policy rebuild")),
-                mock.patch.object(legacy_rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "decrypt_project", side_effect=AssertionError("legacy decrypt"), create=True),
             ):
                 execution = write_rate_selected_gate_vnext(
                     mapping,

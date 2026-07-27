@@ -1,5 +1,3 @@
-"""Formal positive/negative regression tests for T020 and existing fixtures."""
-
 from __future__ import annotations
 
 import json
@@ -10,89 +8,77 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
+from rtl_obfuscator.source_catalog import build_source_catalog
+from rtl_obfuscator.source_set import from_filelist
+
 
 class FormalEquivalenceRegressionTest(unittest.TestCase):
-    def _run(self, repository: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, "scripts/formal_equivalence.py", *args],
-            cwd=repository,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    def test_existing_single_file_positive_and_negative(self) -> None:
+    def test_actual_vnext_gate_positive_and_functional_negative(self) -> None:
         repository = Path(__file__).resolve().parents[1]
-        positive = self._run(repository, [
-            "--gold", "tests/formal/variable_rename/gold.sv",
-            "--gate", "tests/formal/variable_rename/gate.sv",
-            "--top", "formal_variable_rename",
-        ])
-        self.assertEqual(positive.returncode, 0, positive.stderr)
-        self.assertEqual(json.loads(positive.stdout)["formal_equivalence"], "pass")
-
-        negative = self._run(repository, [
-            "--gold", "tests/formal/variable_rename/gold.sv",
-            "--gate", "tests/formal/variable_rename/non_equivalent.sv",
-            "--top", "formal_variable_rename",
-        ])
-        self.assertNotEqual(negative.returncode, 0)
-
-    @unittest.skip(
-        "example_fifo now uses fifo_if.consumer ctrl; the repository's Icarus/Yosys formal path does not support interface module ports"
-    )
-    def test_fifo_positive_and_temporary_functional_negative(self) -> None:
-        repository = Path(__file__).resolve().parents[1]
-        source_root = repository / "rtl_samples" / "example_fifo"
-        with TemporaryDirectory() as tmp:
-            base = Path(tmp)
+        source_root = repository / "tests" / "fixtures" / "refactor_symbol_graph_parameters"
+        with TemporaryDirectory(prefix="t056-formal-") as temporary:
+            base = Path(temporary)
             gate = base / "gate"
             mapping = base / "mapping.json"
             metrics = base / "metrics.json"
             encrypt = subprocess.run(
                 [
-                    sys.executable, "-m", "rtl_obfuscator.rewrite", "encrypt-project",
+                    sys.executable, "-m", "rtl_obfuscator.rewrite", "encrypt-vnext",
                     "--filelist", str(source_root / "design.f"),
-                    "--source-root", str(source_root), "--output-dir", str(gate),
-                    "--map", str(mapping), "--metrics", str(metrics), "--top", "fifo_top",
-                    "--category", "all",
-                    "--name-length", "8",
+                    "--source-root", str(source_root), "--top", "parameter_top",
+                    "--category", "signals", "--category", "parameters", "--category", "genvars",
+                    "--abi-category", "parameters", "--encryption-rate", "0.35",
+                    "--name-length", "16", "--output-dir", str(gate),
+                    "--map", str(mapping), "--metrics", str(metrics),
                 ],
                 cwd=repository, capture_output=True, text=True, check=False,
             )
             self.assertEqual(encrypt.returncode, 0, encrypt.stderr)
-            self.assertEqual(json.loads(encrypt.stdout)["modified_tokens"], 168)
+            report = json.loads(mapping.read_text(encoding="utf-8"))
+            self.assertTrue(report["summary"]["strict_compile_passed"])
 
-            positive = self._run(repository, [
-                "--gold-filelist", str(source_root / "design.f"),
-                "--gold-root", str(source_root),
-                "--gate-filelist", str(gate / "design.f"),
-                "--gate-root", str(gate), "--top", "fifo_top",
-            ])
-            self.assertEqual(positive.returncode, 0, positive.stderr)
-            self.assertEqual(json.loads(positive.stdout)["formal_equivalence"], "pass")
+            formal_args = [
+                "--gold-filelist", "tests/fixtures/refactor_symbol_graph_parameters/design.f",
+                "--gold-root", "tests/fixtures/refactor_symbol_graph_parameters",
+                "--gate-filelist", str(gate / "design.f"), "--gate-root", str(gate),
+                "--top", "parameter_top", "--seq", "5",
+            ]
+            positive = subprocess.run(
+                [sys.executable, "scripts/formal_equivalence.py", *formal_args],
+                cwd=repository, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(positive.returncode, 0, positive.stdout + positive.stderr)
+            self.assertEqual(json.loads(positive.stdout.strip().splitlines()[-1])["formal_equivalence"], "pass")
 
             negative_gate = base / "negative"
             shutil.copytree(gate, negative_gate)
-            project_mapping = json.loads(mapping.read_text(encoding="utf-8"))
-            count_entry = next(
-                entry for entry in project_mapping["entries"]
-                if entry["category"] == "signals" and entry["original_name"] == "count"
+            child = negative_gate / "rtl/child.sv"
+            original = child.read_bytes()
+            needle = b"assign data_o = "
+            self.assertEqual(original.count(needle), 1)
+            position = original.index(needle) + len(needle)
+            child.write_bytes(original[:position] + b"~" + original[position:])
+            negative_set = from_filelist(
+                filelist=negative_gate / "design.f", source_root=negative_gate, top="parameter_top"
             )
-            count_name = count_entry["renamed_name"]
-            ctrl = negative_gate / "fifo_ctrl.sv"
-            text = ctrl.read_text(encoding="utf-8")
-            old = f"{count_name} <= {count_name} + 1'b1;"
-            self.assertIn(old, text)
-            ctrl.write_text(text.replace(old, f"{count_name} <= {count_name} + 2;", 1), encoding="utf-8")
-
-            negative = self._run(repository, [
-                "--gold-filelist", str(source_root / "design.f"),
-                "--gold-root", str(source_root),
-                "--gate-filelist", str(negative_gate / "design.f"),
-                "--gate-root", str(negative_gate), "--top", "fifo_top",
-            ])
+            self.assertEqual(build_source_catalog(negative_set).to_report()["compile"], {
+                "catalog": {"parse_errors": 0, "semantic_errors": 0},
+                "top_overlay": {"parse_errors": 0, "semantic_errors": 0},
+            })
+            negative = subprocess.run(
+                [
+                    sys.executable, "scripts/formal_equivalence.py",
+                    "--gold-filelist", "tests/fixtures/refactor_symbol_graph_parameters/design.f",
+                    "--gold-root", "tests/fixtures/refactor_symbol_graph_parameters",
+                    "--gate-filelist", str(negative_gate / "design.f"),
+                    "--gate-root", str(negative_gate), "--top", "parameter_top", "--seq", "5",
+                ],
+                cwd=repository, capture_output=True, text=True, check=False,
+            )
+            combined = (negative.stdout + negative.stderr).lower()
             self.assertNotEqual(negative.returncode, 0)
+            self.assertIn("unproven", combined)
+            self.assertIn("equiv_status -assert", combined)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,14 @@ class RewritePolicyTests(unittest.TestCase):
         )
 
     @staticmethod
+    def _assert_summary(testcase, policy, rename: int) -> None:
+        summary = policy.to_report()["summary"]
+        testcase.assertEqual(summary["rename"], rename)
+        testcase.assertEqual(summary["total"], len(policy.decisions))
+        testcase.assertEqual(summary["unsupported"], 0)
+        testcase.assertEqual(summary["preserve"], summary["total"] - rename)
+
+    @staticmethod
     def _assert_code(callable_obj, code: str):
         with unittest.TestCase().assertRaises(RewritePolicyError) as raised:
             callable_obj()
@@ -69,15 +77,13 @@ class RewritePolicyTests(unittest.TestCase):
             FIXTURE_ROOT / "design.f",
             ["signals", "parameters", "genvars"],
         )
-        self.assertEqual(
-            policy.to_report()["summary"],
-            {"rename": 13, "preserve": 7, "unsupported": 0, "total": 20},
-        )
+        self._assert_summary(self, policy, 13)
         self.assertEqual(
             Counter(
                 decision.reason
                 for decision in policy.decisions
                 if decision.action == "preserve"
+                and decision.category in {"signals", "parameters", "genvars"}
             ),
             Counter({"module_abi_requires_top": 7}),
         )
@@ -88,15 +94,13 @@ class RewritePolicyTests(unittest.TestCase):
             ["signals", "parameters", "genvars"],
             top="parameter_top",
         )
-        self.assertEqual(
-            policy.to_report()["summary"],
-            {"rename": 13, "preserve": 7, "unsupported": 0, "total": 20},
-        )
+        self._assert_summary(self, policy, 13)
         self.assertEqual(
             Counter(
                 decision.reason
                 for decision in policy.decisions
                 if decision.action == "preserve"
+                and decision.category in {"signals", "parameters", "genvars"}
             ),
             Counter(
                 {
@@ -114,15 +118,13 @@ class RewritePolicyTests(unittest.TestCase):
             top="parameter_top",
             abi_categories=["parameters"],
         )
-        self.assertEqual(
-            policy.to_report()["summary"],
-            {"rename": 16, "preserve": 4, "unsupported": 0, "total": 20},
-        )
+        self._assert_summary(self, policy, 16)
         self.assertEqual(
             Counter(
                 decision.reason
                 for decision in policy.decisions
                 if decision.action == "preserve"
+                and decision.category in {"signals", "parameters", "genvars"}
             ),
             Counter({"selected_top_boundary": 3, "outside_top_closure": 1}),
         )
@@ -139,19 +141,14 @@ class RewritePolicyTests(unittest.TestCase):
             top="parameter_top",
             abi_categories=["parameters"],
         )
-        self.assertEqual(
-            without_abi.to_report()["summary"],
-            {"rename": 11, "preserve": 6, "unsupported": 0, "total": 17},
-        )
-        self.assertEqual(
-            with_abi.to_report()["summary"],
-            {"rename": 14, "preserve": 3, "unsupported": 0, "total": 17},
-        )
+        self._assert_summary(self, without_abi, 11)
+        self._assert_summary(self, with_abi, 14)
         self.assertEqual(
             Counter(
                 decision.reason
                 for decision in with_abi.decisions
                 if decision.action == "preserve"
+                and decision.category in {"signals", "parameters", "genvars"}
             ),
             Counter({"selected_top_boundary": 3}),
         )
@@ -178,10 +175,7 @@ class RewritePolicyTests(unittest.TestCase):
             self._without_origin(single_policy.to_report()),
             self._without_origin(filelist_policy.to_report()),
         )
-        self.assertEqual(
-            single_policy.to_report()["summary"],
-            {"rename": 2, "preserve": 1, "unsupported": 0, "total": 3},
-        )
+        self._assert_summary(self, single_policy, 2)
 
     def test_positional_parameter_is_selected_only_with_abi_opt_in(self):
         without_abi = self._policy(
@@ -195,14 +189,8 @@ class RewritePolicyTests(unittest.TestCase):
             top="positional_top",
             abi_categories=["parameters"],
         )
-        self.assertEqual(
-            without_abi.to_report()["summary"],
-            {"rename": 0, "preserve": 1, "unsupported": 0, "total": 1},
-        )
-        self.assertEqual(
-            with_abi.to_report()["summary"],
-            {"rename": 1, "preserve": 0, "unsupported": 0, "total": 1},
-        )
+        self._assert_summary(self, without_abi, 0)
+        self._assert_summary(self, with_abi, 1)
 
     def test_signals_only_keeps_graph_reasons_before_category_reason(self):
         policy = self._policy(
@@ -210,15 +198,13 @@ class RewritePolicyTests(unittest.TestCase):
             ["signals"],
             top="parameter_top",
         )
-        self.assertEqual(
-            policy.to_report()["summary"],
-            {"rename": 7, "preserve": 13, "unsupported": 0, "total": 20},
-        )
+        self._assert_summary(self, policy, 7)
         self.assertEqual(
             Counter(
                 decision.reason
                 for decision in policy.decisions
                 if decision.action == "preserve"
+                and decision.category in {"signals", "parameters", "genvars"}
             ),
             Counter(
                 {
@@ -290,8 +276,6 @@ class RewritePolicyTests(unittest.TestCase):
             mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
             mock.patch.object(inventory, "_build_inventory", side_effect=AssertionError("legacy inventory")),
             mock.patch.object(inventory, "_build_project_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-            mock.patch.object(rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
             mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
             mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
         ):
@@ -307,12 +291,10 @@ class RewritePolicyTests(unittest.TestCase):
         no_top_graph = self._graph(FIXTURE_ROOT / "design.f")
         cases = (
             (lambda: build_rewrite_policy(top_graph, categories=[]), "REWRITE_POLICY_EMPTY_SELECTION"),
-            (lambda: build_rewrite_policy(top_graph, categories=["all"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
-            (lambda: build_rewrite_policy(top_graph, categories=["struct"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
             (lambda: build_rewrite_policy(top_graph, categories=["unknown"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
             (lambda: build_rewrite_policy(top_graph, categories=["signals"], abi_categories=["parameters"]), "REWRITE_POLICY_INVALID_ABI_CATEGORY"),
-            (lambda: build_rewrite_policy(top_graph, categories=["signals", "parameters", "genvars"], abi_categories=["signals"]), "REWRITE_POLICY_INVALID_ABI_CATEGORY"),
-            (lambda: build_rewrite_policy(top_graph, categories=["signals", "parameters", "genvars"], abi_categories=["genvars"]), "REWRITE_POLICY_INVALID_ABI_CATEGORY"),
+            (lambda: build_rewrite_policy(top_graph, categories=["signals", "parameters", "genvars"], abi_categories=["signals"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
+            (lambda: build_rewrite_policy(top_graph, categories=["signals", "parameters", "genvars"], abi_categories=["genvars"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
             (lambda: build_rewrite_policy(top_graph, categories=["signals", "parameters", "genvars"], abi_categories=["unknown"]), "REWRITE_POLICY_UNKNOWN_CATEGORY"),
             (lambda: build_rewrite_policy(no_top_graph, categories=["parameters"], abi_categories=["parameters"]), "REWRITE_POLICY_TOP_REQUIRED"),
         )

@@ -267,14 +267,25 @@ def _validate_owners(
         owners[owner_id] = module
         names.add(name)
 
+    semantic_owner_ids = getattr(catalog, "semantic_owner_ids", ())
+    if not isinstance(semantic_owner_ids, tuple) or not all(
+        isinstance(owner_id, str) and owner_id for owner_id in semantic_owner_ids
+    ):
+        _raise("MAPPING_SOURCE_INVALID", "SourceCatalog semantic owner registry is invalid")
+    registered = set(semantic_owner_ids)
+    if not registered or "$unit" not in registered:
+        _raise("MAPPING_SOURCE_INVALID", "SourceCatalog semantic owner registry is incomplete")
+    if any(owner_id not in registered for owner_id in owners):
+        _raise("MAPPING_SOURCE_INVALID", "module owner is absent from semantic owner registry")
+
     physical = set(physical_files)
     for symbol in graph.symbols:
         if not isinstance(symbol, SourceSymbol):
             _raise("MAPPING_SOURCE_INVALID", "graph contains a non-source symbol")
-        if symbol.owner_module not in owners:
+        if symbol.owner_module not in registered:
             _raise("MAPPING_SOURCE_INVALID", "symbol owner_module is not in SourceCatalog")
-        if not isinstance(symbol.semantic_owner, str) or not symbol.semantic_owner:
-            _raise("MAPPING_SOURCE_INVALID", "symbol semantic_owner is empty")
+        if symbol.semantic_owner not in registered:
+            _raise("MAPPING_SOURCE_INVALID", "symbol semantic_owner is not in SourceCatalog")
         for source_range in (
             symbol.declaration,
             *(occurrence.source_range for occurrence in symbol.occurrences),

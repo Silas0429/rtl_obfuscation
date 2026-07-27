@@ -283,11 +283,7 @@ class ProjectRootVNextTests(unittest.TestCase):
                     "metrics_file": root / "isolated-metrics.json",
                 },
             )()
-            with (
-                mock.patch.object(rewrite_module, "_encrypt_project", side_effect=AssertionError("legacy encrypt")),
-                mock.patch.object(rewrite_module, "_decrypt_project", side_effect=AssertionError("legacy decrypt")),
-                mock.patch.object(orchestration_vnext, "run_vnext", wraps=orchestration_vnext.run_vnext) as runner,
-            ):
+            with mock.patch.object(orchestration_vnext, "run_vnext", wraps=orchestration_vnext.run_vnext) as runner:
                 summary = rewrite_module._encrypt_vnext(project_args)
             self.assertEqual(summary["format"], "rtl-obfuscation.cli-vnext")
             self.assertTrue(runner.called)
@@ -304,8 +300,7 @@ class ProjectRootVNextTests(unittest.TestCase):
                     "report": root / "isolated-restore.json",
                 },
             )()
-            with mock.patch.object(rewrite_module, "_decrypt_project", side_effect=AssertionError("legacy decrypt")):
-                restored_summary = rewrite_module._decrypt_vnext(decrypt_args)
+            restored_summary = rewrite_module._decrypt_vnext(decrypt_args)
             self.assertEqual(restored_summary["format"], "rtl-obfuscation.restore-vnext-cli")
             self.assertTrue((root / "isolated-restore").is_dir())
 

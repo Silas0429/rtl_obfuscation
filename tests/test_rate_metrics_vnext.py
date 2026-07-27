@@ -302,10 +302,6 @@ class RateMetricsVNextTests(unittest.TestCase):
                 mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
                 mock.patch.object(mapping_vnext_module, "build_mapping_vnext", side_effect=AssertionError("mapping rebuild")),
                 mock.patch.object(rewrite_vnext_module, "build_rewrite_policy", side_effect=AssertionError("policy rebuild")),
-                mock.patch.object(legacy_rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(legacy_rewrite, "decrypt_project", side_effect=AssertionError("legacy decrypt"), create=True),
-                mock.patch.object(legacy_rewrite, "_rate_selection", side_effect=AssertionError("legacy rate"), create=True),
                 mock.patch.object(rate_vnext_module, "_greedy_select", side_effect=AssertionError("rate selector")),
             ):
                 result = build_rate_metrics_vnext(

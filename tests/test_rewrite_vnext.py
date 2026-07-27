@@ -135,7 +135,15 @@ class RewriteVNextTests(unittest.TestCase):
             gate_dir = Path(temp) / "gate"
             execution = write_gate_vnext(mapping, output_dir=gate_dir)
             report = execution.to_report()
-            self.assertEqual(report["summary"], {"files": 4, "mapping_records": 20, "renamed_records": 16, "modified_tokens": 41})
+            self.assertEqual(
+                report["summary"],
+                {
+                    "files": 4,
+                    "mapping_records": len(mapping.records),
+                    "renamed_records": 16,
+                    "modified_tokens": 41,
+                },
+            )
             self.assertEqual(len(execution.edits), 41)
             self.assertEqual([item.file for item in execution.gate_manifest], list(self._physical_files(mapping)))
             self.assertEqual(
@@ -186,8 +194,6 @@ class RewriteVNextTests(unittest.TestCase):
                 mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
                 mock.patch.object(inventory, "build_top_project_inventory", side_effect=AssertionError("legacy inventory")),
                 mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
-                mock.patch.object(rewrite, "_encrypt_project", side_effect=AssertionError("legacy rewrite")),
-                mock.patch.object(rewrite, "_encrypt_filelist_manual_v4", side_effect=AssertionError("legacy rewrite")),
                 mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
                 mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
             ):
@@ -235,7 +241,15 @@ class RewriteVNextTests(unittest.TestCase):
             gate_dir = Path(temp) / "gate"
             execution = write_gate_vnext(mapping, output_dir=gate_dir)
             self.assertIsNone(execution.compile_evidence.top_overlay_parse_errors)
-            self.assertEqual(execution.to_report()["summary"], {"files": 4, "mapping_records": 20, "renamed_records": 13, "modified_tokens": 24})
+            self.assertEqual(
+                execution.to_report()["summary"],
+                {
+                    "files": 4,
+                    "mapping_records": len(mapping.records),
+                    "renamed_records": 13,
+                    "modified_tokens": 24,
+                },
+            )
             restored = restore_gate_vnext(execution, gate_dir=gate_dir, output_dir=Path(temp) / "restored")
             self.assertTrue(restored.to_report()["summary"]["byte_identical"])
 

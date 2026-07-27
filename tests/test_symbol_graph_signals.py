@@ -29,7 +29,15 @@ class SymbolGraphSignalsTests(unittest.TestCase):
 
     @staticmethod
     def _symbol_payload(graph):
-        return graph.to_report()["symbols"]
+        return [
+            symbol
+            for symbol in graph.to_report()["symbols"]
+            if symbol["category"] == "signals"
+        ]
+
+    @staticmethod
+    def _signals(graph):
+        return [symbol for symbol in graph.symbols if symbol.category == "signals"]
 
     @staticmethod
     def _without_origin(report: dict) -> dict:
@@ -44,15 +52,15 @@ class SymbolGraphSignalsTests(unittest.TestCase):
     def test_design_without_top_has_six_internal_signals(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
         self.assertEqual(
-            [symbol.name for symbol in graph.symbols],
+            [symbol.name for symbol in self._signals(graph)],
             ["state", "state_net", "state", "state", "child_o", "hidden"],
         )
-        self.assertEqual({symbol.category for symbol in graph.symbols}, {"signals"})
+        self.assertEqual({symbol.category for symbol in self._signals(graph)}, {"signals"})
         self.assertEqual(
-            {symbol.name for symbol in graph.symbols},
+            {symbol.name for symbol in self._signals(graph)},
             {"state", "state_net", "child_o", "hidden"},
         )
-        self.assertFalse(any(symbol.name in {"in_i", "out_o"} for symbol in graph.symbols))
+        self.assertFalse(any(symbol.name in {"in_i", "out_o"} for symbol in self._signals(graph)))
 
     def test_top_does_not_change_signal_payload_and_keeps_closure_external_signals(self):
         without_top = self._graph(FIXTURE_ROOT / "design.f")
@@ -60,14 +68,14 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         self.assertEqual(self._symbol_payload(without_top), self._symbol_payload(with_top))
         self.assertIn("hidden", {symbol.name for symbol in with_top.symbols})
         self.assertEqual(
-            sum(symbol.name == "state" for symbol in with_top.symbols), 3
+            sum(symbol.name == "state" for symbol in self._signals(with_top)), 3
         )
 
     def test_repeated_child_instances_share_source_symbols_and_occurrences(self):
         graph = self._graph(FIXTURE_ROOT / "design.f", top="top")
         child_symbols = [
             symbol
-            for symbol in graph.symbols
+            for symbol in self._signals(graph)
             if symbol.owner_module.startswith("module:rtl/child.sv:")
         ]
         self.assertEqual(
@@ -79,7 +87,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
 
     def test_same_names_are_separated_by_declaration_and_owner(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
-        states = [symbol for symbol in graph.symbols if symbol.name == "state"]
+        states = [symbol for symbol in self._signals(graph) if symbol.name == "state"]
         self.assertEqual(len(states), 3)
         self.assertEqual(
             len({symbol.symbol_id for symbol in states}), 3
@@ -91,7 +99,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
     def test_ranges_references_provenance_sorting_and_audit(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
         all_ranges = []
-        for symbol in graph.symbols:
+        for symbol in self._signals(graph):
             self.assertEqual(symbol.impact, "local")
             self.assertEqual(symbol.abi, "internal")
             self.assertEqual(symbol.support, "eligible")
@@ -100,7 +108,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
             all_ranges.append((symbol, symbol.declaration))
             previous = None
             for occurrence in symbol.occurrences:
-                self.assertEqual(occurrence.provenance, "semantic_expression")
+                self.assertIn(occurrence.provenance, {"semantic_expression", "semantic_lexical"})
                 current = (
                     occurrence.source_range.file,
                     occurrence.source_range.start,
@@ -111,9 +119,15 @@ class SymbolGraphSignalsTests(unittest.TestCase):
                     self.assertLessEqual(previous, current)
                 previous = current
                 all_ranges.append((symbol, occurrence.source_range))
-        self.assertEqual(len(graph.symbols), 6)
-        self.assertEqual(sum(len(symbol.occurrences) for symbol in graph.symbols), 12)
-        self.assertEqual(graph.to_report()["range_audit"], {
+        signals = self._signals(graph)
+        self.assertEqual(len(signals), 6)
+        self.assertEqual(sum(len(symbol.occurrences) for symbol in signals), 12)
+        self.assertEqual({
+            "symbols": len(signals),
+            "declarations": len(signals),
+            "occurrences": sum(len(symbol.occurrences) for symbol in signals),
+            "total_ranges": len(all_ranges),
+        }, {
             "symbols": 6,
             "declarations": 6,
             "occurrences": 12,
@@ -168,7 +182,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         first = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         second = json.dumps(graph.to_report(), sort_keys=True, separators=(",", ":"))
         self.assertEqual(first, second)
-        self.assertEqual(graph.to_report()["categories"], ["signals"])
+        self.assertEqual(graph.to_report()["categories"], ["signals", "instances", "modules", "ports"])
         self.assertEqual(graph.to_report()["source_catalog"], graph.source_catalog.to_report())
         source_catalog_field = next(
             field for field in fields(graph) if field.name == "source_catalog"
@@ -205,7 +219,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
             ),
         ):
             graph = build_symbol_graph(catalog)
-        self.assertEqual(len(graph.symbols), 6)
+        self.assertEqual(len(self._signals(graph)), 6)
 
     def test_hierarchical_signal_reference_fails_closed(self):
         source_set = from_filelist(

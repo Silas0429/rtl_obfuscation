@@ -3,7 +3,7 @@
 - 文档状态：`APPROVED_DESIGN`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053、R3-K/T054、R4/T055 已验收；本文不是活动任务合同
+- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053、R3-K/T054、R4/T055 已验收；R5-A/T056 已冻结为当前活动任务；本文不是活动任务合同
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
 - 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
@@ -23,6 +23,7 @@
 - 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
 - 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
 - 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
+- 当前实现任务：[`docs/tasks/T056_vnext_product_convergence.md`](tasks/T056_vnext_product_convergence.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -279,11 +280,14 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 
 ### 阶段 R5：删除 legacy 路径与重建发布验收
 
-- 单一目标：删除旧 encrypt/inventory/mapping 分派和仅服务旧 oracle 的测试；
-- 更新 README、renaming table、formal 文档、future work 和演示脚本；
-- 将 formal-align 拆成无固定数量的通用引擎与场景级 acceptance oracle；
-- 运行专门 RISC-V-Vector 正负 Formal，重新冻结新架构的 normalized range digest、replacement
-  数量和 manifests；
+- R5 只分两张任务，不再插入中间任务；
+- R5-A/T056：先把重命名表授权的 19 类全部迁入唯一 vNext SymbolGraph，再删除旧产品 CLI、
+  v1/v2/v3/v4 分派和仅服务旧 oracle 的非 RISC 测试；更新当前产品文档和演示；RISC residual
+  acceptance stack 保持隔离，不能进入 product import/dispatch；
+- R5-B/T057：替换或删除 residual RISC acceptance stack，将 formal-align 拆成无固定数量的通用
+  引擎与场景级 oracle，运行专门 RISC-V-Vector 正负 Formal，并重新冻结新架构的 normalized
+  range digest、replacement 数量和 manifests；
+- T057 `ACCEPTED` 即为本轮重构交付完成，不规划 T058；
 - 旧 T029/T035/T037 数量只保留在历史任务单，不再控制产品代码。
 
 ## 7. 每阶段共同停止条件
@@ -306,3 +310,11 @@ module ABI 改写；同意丢弃过多兼容方案和旧测试方案，使用一
 主 Agent 确认该方向合理，并补充冻结：selected top 外部 boundary 默认保留；ABI 改写要求
 SourceSet closed-world；显式 filelist 顺序不得排序；后续采用 SourceSet、SymbolGraph、
 RewritePolicy 和单一 mapping/改写流水线。
+
+2026-07-24 计划对账：实际 T054 是在 T053 后插入的持久化 restore/decrypt 前置任务，实际 T055
+对应原计划的 project-root adapter；原计划的 legacy cleanup 与发布验收并未由实际 T055 完成，
+现由 T056、T057 收口，保留既有任务历史而不重写编号。
+
+同日 cleanup 前审计确认：当前 vNext 仅实现 `signals`、`parameters`、`genvars`，而重命名表仍授权
+19 个 canonical category。直接删除 legacy 会丢失 16 类能力，因此 T056 必须先完成 19 类
+replacement coverage，再移除旧产品路径；不得把能力缩减误称为 breaking change。

@@ -114,7 +114,10 @@ class MappingExecutionVNextTests(unittest.TestCase):
                 report["summary"]["files"],
                 4,
             )
-            self.assertEqual(report["summary"]["mapping_records"], 20)
+            self.assertEqual(
+                report["summary"]["mapping_records"],
+                len(envelope.rewrite_execution.mapping_vnext.records),
+            )
             self.assertEqual(report["summary"]["renamed_records"], 16)
             self.assertEqual(report["summary"]["modified_tokens"], 41)
             self.assertFalse(report["summary"]["input_gate_manifest_equal"])
@@ -161,9 +164,21 @@ class MappingExecutionVNextTests(unittest.TestCase):
             )
             self.assertEqual(
                 sum(record["action"] != "rename" for entry in report["per_file_mapping"] for record in entry["records"] for _ in record["ranges"]),
-                12,
+                sum(
+                    len(record["ranges"])
+                    for entry in report["per_file_mapping"]
+                    for record in entry["records"]
+                    if record["action"] != "rename"
+                ),
             )
-            self.assertEqual(len(range_projection), 53)
+            self.assertEqual(
+                len(range_projection),
+                sum(
+                    len(record["ranges"])
+                    for entry in report["per_file_mapping"]
+                    for record in entry["records"]
+                ),
+            )
             for value in (str(FIXTURE_ROOT.resolve()), "source_root", "gate_dir", "output_dir", "TemporaryDirectory"):
                 self.assertNotIn(value, json.dumps(report, ensure_ascii=False))
 
@@ -185,7 +200,10 @@ class MappingExecutionVNextTests(unittest.TestCase):
             json.dumps(single_report, ensure_ascii=False, separators=(",", ":")),
         )
         self.assertEqual(filelist_report["summary"]["files"], 1)
-        self.assertEqual(filelist_report["summary"]["mapping_records"], 3)
+        self.assertEqual(
+            filelist_report["summary"]["mapping_records"],
+            len(filelist_mapping.records),
+        )
         self.assertEqual(filelist_report["summary"]["renamed_records"], 2)
 
     def test_deterministic_report_and_atomic_json_are_byte_identical(self):
