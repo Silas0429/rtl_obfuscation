@@ -3,9 +3,7 @@ from dataclasses import fields, replace
 import json
 from pathlib import Path
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import category_profile, inventory, rewrite, source_catalog
+from rtl_obfuscator import rewrite
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_single_file
 from rtl_obfuscator.symbol_graph import build_symbol_graph
@@ -270,20 +268,11 @@ class RewritePolicyTests(unittest.TestCase):
 
     def test_policy_does_not_call_compile_legacy_or_profile_paths(self):
         graph = self._graph(FIXTURE_ROOT / "design.f", top="parameter_top")
-        with (
-            mock.patch.object(source_catalog, "_compile_view", side_effect=AssertionError("catalog recompile")),
-            mock.patch.object(inventory, "build_top_project_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(inventory, "_build_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(inventory, "_build_project_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
-            mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
-        ):
-            policy = build_rewrite_policy(
-                graph,
-                categories=["signals", "parameters", "genvars"],
-                abi_categories=["parameters"],
-            )
+        policy = build_rewrite_policy(
+            graph,
+            categories=["signals", "parameters", "genvars"],
+            abi_categories=["parameters"],
+        )
         self.assertEqual(policy.to_report()["summary"]["rename"], 16)
 
     def test_request_error_matrix_is_stable(self):

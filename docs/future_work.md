@@ -24,7 +24,8 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
   SourceSet/SourceCatalog 合同。
 - 每项扩展都必须保留 semantic owner、physical range、strict compile、restore byte identity、
   coverage/leakage 和 Yosys 正负例证据。
-- RISC-V-Vector 专项 acceptance stack 属于专门任务边界；普通产品任务不启动或修改它。
+- RISC-V-Vector 专项仍属于专门发布边界；普通产品任务不启动该场景驱动，通用 Formal view/alignment
+  只通过 vNext API 复用。
 
 ## 后续方向
 

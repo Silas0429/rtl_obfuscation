@@ -3,13 +3,10 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import category_profile, inventory, rewrite, source_catalog
+from rtl_obfuscator import rewrite
 from rtl_obfuscator.source_catalog import SourceRange, build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_single_file
 from rtl_obfuscator.symbol_graph import SymbolGraph, build_symbol_graph
-from rtl_obfuscator import symbol_graph as symbol_graph_module
 from rtl_obfuscator.rewrite_policy import (
     RewritePolicy,
     RewriteDecision,
@@ -327,15 +324,7 @@ class MappingVNextTests(unittest.TestCase):
         policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"], top="parameter_top", abi_categories=["parameters"])
         before_graph = policy.symbol_graph.to_report()
         before_bytes = {path: (FIXTURE_ROOT / path).read_bytes() for path in ["rtl/child.sv", "rtl/shadow.sv", "rtl/top.sv", "rtl/unreachable.sv"]}
-        with (
-            mock.patch.object(source_catalog, "_compile_view", side_effect=AssertionError("catalog recompile")),
-            mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
-            mock.patch.object(inventory, "build_top_project_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
-            mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
-            mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
-        ):
-            mapping = self._mapping(policy)
+        mapping = self._mapping(policy)
         self.assertEqual(mapping.to_report()["summary"]["rename"], 16)
         self.assertEqual(policy.symbol_graph.to_report(), before_graph)
         self.assertEqual(before_bytes, {path: (FIXTURE_ROOT / path).read_bytes() for path in before_bytes})

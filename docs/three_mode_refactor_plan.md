@@ -285,9 +285,9 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 - R5-A/T056：先把重命名表授权的 19 类全部迁入唯一 vNext SymbolGraph，再删除旧产品 CLI、
   v1/v2/v3/v4 分派和仅服务旧 oracle 的非 RISC 测试；更新当前产品文档和演示；RISC residual
   acceptance stack 保持隔离，不能进入 product import/dispatch；
-- R5-B/T057：替换或删除 residual RISC acceptance stack，将 formal-align 拆成无固定数量的通用
-  引擎与场景级 oracle，运行专门 RISC-V-Vector 正负 Formal，并重新冻结新架构的 normalized
-  range digest、replacement 数量和 manifests；
+- R5-B/T057：以 `rtl_obfuscator/formal_vnext.py` 提供无场景常量的通用 Formal view/alignment API，
+  由 `scripts/risc_v_vector_acceptance.py` 持有 RISC-V-Vector 场景 oracle，运行专门正负 Formal，
+  并冻结新架构的 normalized range digest、replacement 数量和 manifests；
 - T057 `ACCEPTED` 即为本轮重构交付完成，不规划 T058；
 - 旧 T029/T035/T037 数量只保留在历史任务单，不再控制产品代码。
 

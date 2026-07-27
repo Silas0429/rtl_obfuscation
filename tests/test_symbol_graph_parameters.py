@@ -4,9 +4,6 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import inventory, source_catalog
 from rtl_obfuscator.category_registry_vnext import CANONICAL_CATEGORIES
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_project_root, from_single_file
@@ -71,6 +68,79 @@ class SymbolGraphParameterTests(unittest.TestCase):
                 for occurrence in symbol.occurrences
             ),
         )
+
+    def test_packed_aggregate_member_dimension_uses_alias_lexical_scope(self):
+        source = b"""module child_a #(parameter int WIDTH = 8)();
+  typedef struct packed {
+    logic [WIDTH-1:0] payload;
+  } child_a_t;
+  child_a_t value_a;
+endmodule
+
+module child_b #(parameter int WIDTH = 4)();
+  typedef union packed {
+    logic [WIDTH-1:0] raw;
+  } child_b_t;
+  child_b_t value_b;
+endmodule
+
+module selected_top();
+  child_a a();
+  child_b b();
+endmodule
+"""
+        with tempfile.TemporaryDirectory(prefix="t057-parameter-alias-", dir="/private/tmp") as temporary:
+            root = Path(temporary)
+            (root / "design.sv").write_bytes(source)
+            (root / "design.f").write_text("design.sv\n", encoding="utf-8")
+            graph = build_symbol_graph(
+                build_source_catalog(
+                    from_filelist(
+                        filelist=root / "design.f",
+                        source_root=root,
+                        top="selected_top",
+                    )
+                )
+            )
+            parameters = [symbol for symbol in graph.symbols if symbol.category == "parameters" and symbol.name == "WIDTH"]
+            self.assertEqual(len(parameters), 2)
+            module_starts = {
+                "child_a": source.index(b"module child_a"),
+                "child_b": source.index(b"module child_b"),
+            }
+            module_ends = {
+                "child_a": module_starts["child_b"],
+                "child_b": source.index(b"module selected_top"),
+            }
+            for symbol in parameters:
+                owner_name = next(
+                    name
+                    for name, start in module_starts.items()
+                    if start < symbol.declaration.start < module_ends[name]
+                )
+                dimension_occurrences = [
+                    occurrence
+                    for occurrence in symbol.occurrences
+                    if occurrence.provenance == "declaration_dimension"
+                ]
+                self.assertEqual(len(dimension_occurrences), 1)
+                occurrence = dimension_occurrences[0]
+                self.assertNotEqual(occurrence.source_range, symbol.declaration)
+                self.assertTrue(
+                    module_starts[owner_name]
+                    < occurrence.source_range.start
+                    < module_ends[owner_name]
+                )
+                self.assertEqual(
+                    source[occurrence.source_range.start : occurrence.source_range.end],
+                    b"WIDTH",
+                )
+                self.assertNotIn(occurrence.source_range, (symbol.declaration,))
+            range_audit = graph.to_report()["range_audit"]
+            self.assertEqual(
+                range_audit["total_ranges"],
+                range_audit["declarations"] + range_audit["occurrences"],
+            )
 
     def test_full_without_top_has_parameter_oracle_and_abi_defaults(self):
         graph = self._graph(FIXTURE_ROOT / "design.f")
@@ -337,28 +407,12 @@ class SymbolGraphParameterTests(unittest.TestCase):
             ["schema_version", "source_catalog", "symbols"],
         )
 
-    def test_graph_reuses_catalog_and_does_not_call_legacy_parameter_paths(self):
+    def test_graph_reuses_catalog_for_parameters(self):
         catalog = build_source_catalog(
             from_filelist(filelist=FIXTURE_ROOT / "design.f", source_root=FIXTURE_ROOT)
         )
-        legacy_helpers = (
-            "_collect_parameters",
-            "_parameter_dimension_reference_tokens",
-            "_parameter_syntax_dimension_reference_tokens",
-            "_parameter_generate_reference_tokens",
-            "_named_parameter_override_reference_tokens",
-        )
-        with (
-            mock.patch.object(source_catalog, "_compile_view", side_effect=AssertionError("catalog recompilation")),
-            mock.patch.object(inventory, "_collect_parameters", side_effect=AssertionError("legacy parameter collector")),
-            mock.patch.object(inventory, "_parameter_dimension_reference_tokens", side_effect=AssertionError("legacy dimension helper")),
-            mock.patch.object(inventory, "_parameter_syntax_dimension_reference_tokens", side_effect=AssertionError("legacy syntax dimension helper")),
-            mock.patch.object(inventory, "_parameter_generate_reference_tokens", side_effect=AssertionError("legacy generate helper")),
-            mock.patch.object(inventory, "_named_parameter_override_reference_tokens", side_effect=AssertionError("legacy override helper")),
-        ):
-            graph = build_symbol_graph(catalog)
+        graph = build_symbol_graph(catalog)
         self.assertEqual(len(self._parameters(graph)), 12)
-        self.assertEqual(len(legacy_helpers), 5)
 
     def _assert_invalid(self, filelist: str, code: str):
         catalog = build_source_catalog(

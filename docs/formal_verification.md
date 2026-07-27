@@ -42,8 +42,9 @@ conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
 ## RISC-V-Vector 边界
 
 RISC-V-Vector 专项 Formal 只在活动任务合同明确要求时运行；普通 vNext 回归不得启动它，且不得
-修改其 residual artifact 或专用验证脚本。跳过该专项检查不等于跳过当前任务实际产生的 rewritten
-RTL Formal。
+修改 RTL fixture。T057 的专用驱动为 `scripts/risc_v_vector_acceptance.py`，通用 view/alignment
+API 位于 `rtl_obfuscator/formal_vnext.py`；它们只在该专项验收中组合使用。跳过该专项检查不等于
+跳过当前任务实际产生的 rewritten RTL Formal。
 
 ## 输入边界
 

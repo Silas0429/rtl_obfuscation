@@ -585,6 +585,257 @@ class RestoreVNext:
         return self.report
 
 
+@dataclass(frozen=True)
+class OrchestrationGateAuditVNext:
+    """The verified, portable part of an orchestration gate report."""
+
+    schema_version: int
+    source_set: SourceSet
+    effective_records: tuple[MappingRecord, ...]
+    input_manifest: tuple[InputFileDigest, ...]
+    gate_manifest: tuple[InputFileDigest, ...]
+
+
+def _unbound_occurrences(value: object) -> tuple[SymbolOccurrence, ...]:
+    if not isinstance(value, list):
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping occurrences are invalid")
+    result: list[SymbolOccurrence] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"source_range", "provenance"}:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping occurrence schema is invalid")
+        if not isinstance(item["provenance"], str) or not item["provenance"]:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping occurrence provenance is invalid")
+        result.append(
+            SymbolOccurrence(
+                source_range=_parse_range(item["source_range"], label="effective occurrence"),
+                provenance=item["provenance"],
+            )
+        )
+    return tuple(result)
+
+
+def _unbound_effective_records(value: object) -> tuple[MappingRecord, ...]:
+    if not isinstance(value, dict) or set(value) != {
+        "format", "schema_version", "state", "source_set", "selection",
+        "name_length", "input_manifest", "records", "summary", "range_audit",
+    }:
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping report schema is invalid")
+    if value.get("format") != "rtl-obfuscation.mapping-vnext" or value.get("schema_version") != 1 or value.get("state") != "planned":
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping report state is invalid")
+    raw_records = value.get("records")
+    if not isinstance(raw_records, list):
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping records are invalid")
+    result: list[MappingRecord] = []
+    expected_keys = {
+        "symbol_id", "category", "action", "reason", "original_name", "renamed_name",
+        "owner_module", "semantic_owner", "declaration", "occurrences", "impact", "abi",
+    }
+    for item in raw_records:
+        if not isinstance(item, dict) or set(item) != expected_keys:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping record schema is invalid")
+        if not all(isinstance(item[key], str) and item[key] for key in ("symbol_id", "category", "original_name", "owner_module", "semantic_owner")):
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping record identity is invalid")
+        action = item["action"]
+        if action not in {"rename", "preserve", "unsupported"}:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping action is invalid")
+        renamed = item["renamed_name"]
+        if action == "rename":
+            if not isinstance(renamed, str) or not renamed:
+                _fail("RESTORE_VNEXT_REPORT_INVALID", "effective rename name is invalid")
+        elif renamed is not None:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "non-rename record has a renamed name")
+        if item["reason"] is not None and not isinstance(item["reason"], str):
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping reason is invalid")
+        result.append(
+            MappingRecord(
+                symbol_id=item["symbol_id"],
+                category=item["category"],
+                action=action,
+                reason=item["reason"],
+                original_name=item["original_name"],
+                renamed_name=renamed,
+                owner_module=item["owner_module"],
+                semantic_owner=item["semantic_owner"],
+                declaration=_parse_range(item["declaration"], label="effective declaration"),
+                occurrences=_unbound_occurrences(item["occurrences"]),
+                impact=item["impact"],
+                abi=item["abi"],
+            )
+        )
+    return tuple(result)
+
+
+def _audit_gate_ranges(
+    execution: dict[str, object],
+    *,
+    records: tuple[MappingRecord, ...],
+    files: tuple[str, ...],
+    gate_data: dict[str, bytes],
+) -> None:
+    per_file = execution.get("per_file_mapping")
+    if not isinstance(per_file, list) or len(per_file) != len(files):
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping does not cover physical files")
+    expected: dict[tuple[str, str, SourceRange], SourceRange] = {}
+    for record in records:
+        expected[(record.symbol_id, "declaration", record.declaration)] = record.declaration
+        for occurrence in record.occurrences:
+            key = (record.symbol_id, occurrence.provenance, occurrence.source_range)
+            if key in expected:
+                _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping occurrence is duplicated")
+            expected[key] = occurrence.source_range
+    seen: set[tuple[str, str, SourceRange]] = set()
+    rename_ranges: dict[str, list[tuple[int, int, bytes]]] = {file: [] for file in files}
+    by_id = {record.symbol_id: record for record in records}
+    for item, file in zip(per_file, files):
+        if not isinstance(item, dict) or set(item) != {"file", "input_sha256", "gate_sha256", "records"} or item["file"] != file:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping order is invalid")
+        if not isinstance(item["input_sha256"], str) or not isinstance(item["gate_sha256"], str) or not _SHA256.fullmatch(item["input_sha256"]) or not _SHA256.fullmatch(item["gate_sha256"]):
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping hash is invalid")
+        projected = item["records"]
+        if not isinstance(projected, list):
+            _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping records are invalid")
+        for projected_record in projected:
+            if not isinstance(projected_record, dict) or set(projected_record) != {
+                "symbol_id", "category", "action", "reason", "original_name", "renamed_name",
+                "owner_module", "semantic_owner", "impact", "abi", "ranges",
+            }:
+                _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping record schema is invalid")
+            symbol_id = projected_record["symbol_id"]
+            record = by_id.get(symbol_id)
+            if record is None:
+                _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping references an unknown record")
+            for field in ("category", "action", "reason", "original_name", "renamed_name", "owner_module", "semantic_owner", "impact", "abi"):
+                if projected_record[field] != getattr(record, field):
+                    _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping record differs from effective mapping")
+            ranges = projected_record["ranges"]
+            if not isinstance(ranges, list):
+                _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping ranges are invalid")
+            for projected_range in ranges:
+                if not isinstance(projected_range, dict) or set(projected_range) != {"provenance", "source_range", "gate_range"}:
+                    _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping range schema is invalid")
+                provenance = projected_range["provenance"]
+                source_range = _parse_range(projected_range["source_range"], label="per-file source range")
+                gate_range = _parse_range(projected_range["gate_range"], label="per-file gate range")
+                key = (symbol_id, provenance, source_range)
+                if key in seen or key not in expected:
+                    _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping range coverage is invalid")
+                if source_range != expected[key] or source_range.file != file or gate_range.file != file:
+                    _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping range differs from effective mapping")
+                seen.add(key)
+                if record.action == "rename":
+                    renamed = record.renamed_name
+                    if not isinstance(renamed, str) or gate_range.end - gate_range.start != len(renamed.encode("utf-8")):
+                        _fail("RESTORE_VNEXT_REPORT_INVALID", "rename gate range length is invalid")
+                    content = gate_data[file]
+                    if gate_range.end > len(content) or content[gate_range.start:gate_range.end] != renamed.encode("utf-8"):
+                        _fail("RESTORE_VNEXT_GATE_INVALID", "gate bytes do not match effective rename range")
+                    if source_range.end - source_range.start != len(record.original_name.encode("utf-8")):
+                        _fail("RESTORE_VNEXT_REPORT_INVALID", "rename source range length is invalid")
+                    rename_ranges[file].append((gate_range.start, gate_range.end, record.original_name.encode("utf-8")))
+    if seen != set(expected):
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping does not cover all physical ranges")
+    for file, ranges in rename_ranges.items():
+        ranges.sort()
+        for previous, current in zip(ranges, ranges[1:]):
+            if current[0] < previous[1]:
+                _fail("RESTORE_VNEXT_GATE_INVALID", "effective rename gate ranges overlap")
+
+
+def audit_orchestration_gate_vnext(
+    report_file: Path,
+    *,
+    gate_dir: Path,
+) -> OrchestrationGateAuditVNext:
+    """Audit one persisted orchestration report against its actual gate bytes."""
+    report_path = _resolve(report_file, "RESTORE_VNEXT_INPUT_INVALID")
+    gate_path = _resolve(gate_dir, "RESTORE_VNEXT_GATE_INVALID")
+    if not report_path.is_file():
+        _fail("RESTORE_VNEXT_INPUT_INVALID", "orchestration report is not a regular file")
+    if not gate_path.is_dir():
+        _fail("RESTORE_VNEXT_GATE_INVALID", "gate-dir is not a directory")
+    report = _read_json(report_path)
+    expected_outer = {"format", "schema_version", "state", "source_set", "mapping", "mapping_execution", "metrics", "rate_metrics", "summary"}
+    if set(report) != expected_outer or report.get("format") != "rtl-obfuscation.orchestration-vnext" or report.get("schema_version") != 1 or report.get("state") != "restored":
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "orchestration report format, schema, or state is invalid")
+    source_set = _parse_source_set(report["source_set"], gate_path)
+    files = tuple(dict.fromkeys((*source_set.ordered_source_files, *source_set.included_files)))
+    if not files or tuple(source_set.compile_order) != files:
+        _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set physical order is invalid")
+    actual_files = {
+        path.relative_to(gate_path).as_posix()
+        for path in gate_path.rglob("*")
+        if path.is_file()
+    }
+    if actual_files != {*files, "design.f"}:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "actual gate file set is invalid")
+    try:
+        if (gate_path / "design.f").read_bytes() != "".join(f"{file}\n" for file in source_set.compile_order).encode("utf-8"):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "gate design.f differs from compile order")
+        gate_data = {file: (gate_path / file).read_bytes() for file in files}
+    except OSError as error:
+        _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
+    execution = report.get("mapping_execution")
+    if not isinstance(execution, dict) or execution.get("mapping") is None:
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "mapping execution report is invalid")
+    outer_input = _parse_manifest(report["mapping"].get("input_manifest") if isinstance(report["mapping"], dict) else None, files, label="outer mapping input_manifest")
+    effective_report = execution.get("mapping")
+    effective_records = _unbound_effective_records(effective_report)
+    effective_input = _parse_manifest(effective_report.get("input_manifest") if isinstance(effective_report, dict) else None, files, label="effective mapping input_manifest")
+    execution_input = _parse_manifest(execution.get("input_manifest"), files, label="execution input_manifest")
+    restored_input = _parse_manifest(execution.get("restored_manifest"), files, label="execution restored_manifest")
+    if not (outer_input == effective_input == execution_input == restored_input):
+        _fail("RESTORE_VNEXT_REPORT_INVALID", "input manifest chain differs")
+    gate_manifest = _parse_manifest(execution.get("gate_manifest"), files, label="execution gate_manifest")
+    actual_gate_manifest = tuple(InputFileDigest(file=file, sha256=hashlib.sha256(gate_data[file]).hexdigest()) for file in files)
+    if gate_manifest != actual_gate_manifest:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "gate manifest differs from actual gate bytes")
+    _audit_gate_ranges(execution, records=effective_records, files=files, gate_data=gate_data)
+    with tempfile.TemporaryDirectory(prefix=".restore-vnext-audit-", dir=str(gate_path.parent)) as temporary:
+        container = Path(temporary)
+        source_root = container / "source"
+        source_root.mkdir()
+        for file in files:
+            content = gate_data[file]
+            ranges: list[tuple[int, int, bytes]] = []
+            per_file = execution["per_file_mapping"]
+            for item in per_file:
+                if isinstance(item, dict) and item.get("file") == file:
+                    for projected_record in item.get("records", []):
+                        record = next((candidate for candidate in effective_records if candidate.symbol_id == projected_record.get("symbol_id")), None)
+                        if record is None or record.action != "rename":
+                            continue
+                        for projected_range in projected_record.get("ranges", []):
+                            gate_range = _parse_range(projected_range["gate_range"], label="per-file gate range")
+                            original = record.original_name.encode("utf-8")
+                            ranges.append((gate_range.start, gate_range.end, original))
+            for start, end, replacement in sorted(ranges, reverse=True):
+                content = content[:start] + replacement + content[end:]
+            destination = source_root / file
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+        audit_report = container / "orchestration.json"
+        audit_report.write_text(json.dumps(report, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        try:
+            hydrated = load_restore_vnext(
+                audit_report,
+                gate_dir=gate_path,
+                source_root=source_root,
+                output_dir=container / "restored",
+            )
+        except RestoreVNextError:
+            raise
+        except (OSError, RuntimeError, ValueError) as error:
+            _fail("RESTORE_VNEXT_REPORT_INVALID", str(error))
+    projected_source_set = replace(hydrated.source_set, source_root=gate_path)
+    return OrchestrationGateAuditVNext(
+        schema_version=1,
+        source_set=projected_source_set,
+        effective_records=hydrated.effective_mapping_vnext.records,
+        input_manifest=hydrated.mapping_vnext.input_manifest,
+        gate_manifest=hydrated.mapping_execution.rewrite_execution.gate_manifest,
+    )
+
+
 def load_restore_vnext(
     map_file: Path,
     *,

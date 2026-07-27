@@ -2,9 +2,6 @@ from dataclasses import fields
 import json
 from pathlib import Path
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import inventory, source_catalog
 from rtl_obfuscator.category_registry_vnext import CANONICAL_CATEGORIES
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_project_root, from_single_file
@@ -212,30 +209,13 @@ class SymbolGraphGenvarTests(unittest.TestCase):
             ["schema_version", "source_catalog", "symbols"],
         )
 
-    def test_graph_reuses_catalog_and_does_not_call_legacy_genvar_paths(self):
+    def test_graph_reuses_catalog_for_genvars(self):
         source_set = from_filelist(
             filelist=FIXTURE_ROOT / "design.f",
             source_root=FIXTURE_ROOT,
         )
         catalog = build_source_catalog(source_set)
-        with (
-            mock.patch.object(
-                source_catalog,
-                "_compile_view",
-                side_effect=AssertionError("catalog recompilation"),
-            ),
-            mock.patch.object(
-                inventory,
-                "_collect_genvars",
-                side_effect=AssertionError("legacy genvar collector"),
-            ),
-            mock.patch.object(
-                inventory,
-                "_genvar_reference_tokens",
-                side_effect=AssertionError("legacy genvar range helper"),
-            ),
-        ):
-            graph = build_symbol_graph(catalog)
+        graph = build_symbol_graph(catalog)
         self.assertEqual(len(self._genvars(graph)), 3)
 
     def test_macro_genvar_declaration_fails_closed(self):

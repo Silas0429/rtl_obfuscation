@@ -2,9 +2,6 @@ from dataclasses import fields, replace
 import json
 from pathlib import Path
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import inventory, project
 from rtl_obfuscator.source_catalog import (
     SourceCatalogError,
     build_source_catalog,
@@ -190,33 +187,15 @@ class SourceCatalogTests(unittest.TestCase):
             build_source_catalog(missing_top_source_set)
         self.assertEqual(raised.exception.code, "CATALOG_TOP_MISMATCH")
 
-    def test_catalog_does_not_call_legacy_inventory_paths(self):
+    def test_catalog_builds_only_from_the_source_set(self):
         source_set = from_filelist(
             filelist=FIXTURE_ROOT / "design.f",
             source_root=FIXTURE_ROOT,
             top="top",
         )
-        with (
-            mock.patch.object(
-                project, "analyze_project", side_effect=AssertionError("legacy path")
-            ),
-            mock.patch.object(
-                project,
-                "analyze_project_context",
-                side_effect=AssertionError("legacy path"),
-            ),
-            mock.patch.object(
-                project,
-                "analyze_filelist_context",
-                side_effect=AssertionError("legacy path"),
-            ),
-            mock.patch.object(
-                inventory,
-                "build_top_project_inventory",
-                side_effect=AssertionError("inventory path"),
-            ),
-        ):
-            build_source_catalog(source_set)
+        catalog = build_source_catalog(source_set)
+        self.assertIs(catalog.source_set, source_set)
+        self.assertEqual(catalog.source_set.top, "top")
 
 
 if __name__ == "__main__":

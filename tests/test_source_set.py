@@ -1,9 +1,6 @@
 import json
 from pathlib import Path
 import unittest
-from unittest import mock
-
-from rtl_obfuscator import inventory, project
 from rtl_obfuscator.source_set import (
     SourceSetError,
     from_filelist,
@@ -152,44 +149,22 @@ class SourceSetTests(unittest.TestCase):
         with self.assertRaises((AttributeError, TypeError)):
             result.top = "other"
 
-    def test_adapters_do_not_call_complete_inventory_analysis(self):
+    def test_adapters_use_project_discovery_source_of_truth(self):
         options = self._options()
-        with (
-            mock.patch.object(
-                project, "analyze_project", side_effect=AssertionError("legacy path")
-            ),
-            mock.patch.object(
-                project,
-                "analyze_project_context",
-                side_effect=AssertionError("legacy path"),
-            ),
-            mock.patch.object(
-                project,
-                "analyze_filelist_context",
-                side_effect=AssertionError("legacy path"),
-            ),
-            mock.patch.object(
-                project, "inspect_project", side_effect=AssertionError("legacy path")
-            ),
-            mock.patch.object(
-                inventory,
-                "build_top_project_inventory",
-                side_effect=AssertionError("inventory path"),
-            ),
-        ):
-            from_single_file(
-                source_file=FIXTURE_ROOT / "rtl" / "standalone.sv",
-                source_root=FIXTURE_ROOT,
-                **options,
-            )
-            from_filelist(
-                filelist=FIXTURE_ROOT / "design.f",
-                source_root=FIXTURE_ROOT,
-                **options,
-            )
-            from_project_root(
-                project_root=FIXTURE_ROOT, top="top", **options
-            )
+        single = from_single_file(
+            source_file=FIXTURE_ROOT / "rtl" / "standalone.sv",
+            source_root=FIXTURE_ROOT,
+            **options,
+        )
+        filelist = from_filelist(
+            filelist=FIXTURE_ROOT / "design.f",
+            source_root=FIXTURE_ROOT,
+            **options,
+        )
+        project = from_project_root(project_root=FIXTURE_ROOT, top="top", **options)
+        self.assertTrue(single.compile_order)
+        self.assertTrue(filelist.compile_order)
+        self.assertEqual(project.origin, "project-root")
 
 
 if __name__ == "__main__":

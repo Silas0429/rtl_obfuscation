@@ -740,10 +740,10 @@ def _discover_sourceset(
 
     if top is None:
         for edge in context.include_edges:
-            if not edge.provider.endswith(".svh"):
+            if not edge.provider.endswith((".sv", ".svh")):
                 raise ProjectAnalysisError(
                     "UNSUPPORTED_INCLUDE",
-                    f"include dependency is not a .svh header: {edge.provider}",
+                    f"include dependency is not a .sv or .svh provider: {edge.provider}",
                     file=edge.consumer,
                 )
         included_files = {
@@ -795,10 +795,10 @@ def _discover_sourceset(
         )
 
     for edge in context.include_edges:
-        if not edge.provider.endswith(".svh"):
+        if not edge.provider.endswith((".sv", ".svh")):
             raise ProjectAnalysisError(
                 "UNSUPPORTED_INCLUDE",
-                f"include dependency is not a .svh header: {edge.provider}",
+                f"include dependency is not a .sv or .svh provider: {edge.provider}",
                 file=edge.consumer,
             )
     included_files = {

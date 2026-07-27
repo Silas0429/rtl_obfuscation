@@ -93,3 +93,13 @@ conda run -n rtl_obfuscation python encrypt.py --work-dir /tmp/rtl-vnext-fifo
 ## 验证
 
 项目使用 Conda 环境 `rtl_obfuscation`。常规测试显式列出非 RISC 模块；RISC-V-Vector 专项验证不属于普通 vNext 产品流程。Formal 等价验证只在产生 rewritten RTL 的专门验收任务中按 `docs/formal_verification.md` 执行。
+
+RISC-V-Vector 发布验收由独立场景驱动执行；它不改变产品 CLI：
+
+```sh
+conda run -n rtl_obfuscation python scripts/risc_v_vector_acceptance.py \
+  --work-dir /private/tmp/rtl-obfuscation-t057-release
+```
+
+该驱动使用通用 `formal_vnext.py` view/alignment API，并在 actual selected gate 上完成唯一一次
+正例与功能负例 Formal。

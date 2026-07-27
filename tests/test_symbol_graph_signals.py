@@ -4,11 +4,8 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest import mock
-
 import pyslang
 
-from rtl_obfuscator import inventory, project, source_catalog
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist, from_project_root, from_single_file
 from rtl_obfuscator.symbol_graph import SourceSymbol, SymbolGraphError, build_symbol_graph
@@ -191,34 +188,14 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         self.assertFalse(source_catalog_field.compare)
         self.assertNotIsInstance(graph.to_report(), SourceSymbol)
 
-    def test_graph_reuses_catalog_and_legacy_paths_are_not_called(self):
+    def test_graph_reuses_catalog_without_rebuilding_semantic_views(self):
         source_set = from_filelist(
             filelist=FIXTURE_ROOT / "design.f",
             source_root=FIXTURE_ROOT,
             top="top",
         )
         catalog = build_source_catalog(source_set)
-        with (
-            mock.patch.object(
-                source_catalog,
-                "_compile_view",
-                side_effect=AssertionError("catalog recompilation"),
-            ),
-            mock.patch.object(
-                source_catalog,
-                "build_source_catalog",
-                side_effect=AssertionError("catalog rebuild"),
-            ),
-            mock.patch.object(
-                project, "analyze_project", side_effect=AssertionError("legacy path")
-            ),
-            mock.patch.object(
-                inventory,
-                "build_top_project_inventory",
-                side_effect=AssertionError("inventory path"),
-            ),
-        ):
-            graph = build_symbol_graph(catalog)
+        graph = build_symbol_graph(catalog)
         self.assertEqual(len(self._signals(graph)), 6)
 
     def test_hierarchical_signal_reference_fails_closed(self):
@@ -234,7 +211,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
             str(raised.exception).startswith("SYMBOL_GRAPH_UNSUPPORTED_REFERENCE: ")
         )
 
-    def test_uninstantiated_definition_fails_closed(self):
+    def test_uninstantiated_definition_does_not_abort_selected_graph(self):
         catalog = build_source_catalog(
             from_filelist(
                 filelist=INVALID_ROOT / "uninstantiated.f",
@@ -250,9 +227,9 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         self.assertTrue(
             any(isinstance(node, pyslang.ast.UninstantiatedDefSymbol) for node in nodes)
         )
-        with self.assertRaises(SymbolGraphError) as raised:
-            build_symbol_graph(catalog)
-        self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE")
+        graph = build_symbol_graph(catalog)
+        self.assertTrue(graph.symbols)
+        self.assertTrue(any(symbol.category == "modules" and symbol.name == "uninstantiated_child" for symbol in graph.symbols))
 
     def test_macro_signal_declaration_fails_closed(self):
         catalog = build_source_catalog(

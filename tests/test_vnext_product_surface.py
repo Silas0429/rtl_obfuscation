@@ -55,12 +55,12 @@ class VNextProductSurfaceTests(unittest.TestCase):
 
     def test_discovery_has_one_source_of_truth(self):
         code = (
-            "import inspect; import rtl_obfuscator.project as p; "
+            "import inspect; import rtl_obfuscator.source_set as s; "
             "import rtl_obfuscator.project_discovery as d; "
-            "assert p._discover_files is d._discover_files; "
-            "assert p._discover_sourceset is d._discover_sourceset; "
-            "assert 'def _discover_files' not in inspect.getsource(p); "
-            "assert 'def _discover_sourceset' not in inspect.getsource(p); "
+            "assert s._discover_files is d._discover_files; "
+            "assert s._discover_sourceset is d._discover_sourceset; "
+            "assert 'def _discover_files' not in inspect.getsource(s); "
+            "assert 'def _discover_sourceset' not in inspect.getsource(s); "
             "print('unique')"
         )
         result = subprocess.run(

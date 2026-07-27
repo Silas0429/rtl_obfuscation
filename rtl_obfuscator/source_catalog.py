@@ -339,15 +339,18 @@ def _semantic_owner_ids(
                     "CATALOG_OWNER_INVALID",
                     "generate block owner has no semantic source range",
                 )
-            start_range = _semantic_name_range(
-                source_set,
-                view.source_manager,
-                node,
-                name=str(getattr(node, "name", "")),
-            )
+            file = _relative_file(source_set, view.source_manager, start.buffer)
+            end_file = _relative_file(source_set, view.source_manager, end.buffer)
             end_offset = int(end.offset)
+            if file != end_file or int(start.offset) >= end_offset:
+                raise SourceCatalogError(
+                    "CATALOG_RANGE_INVALID",
+                    "generate block source range is invalid",
+                    file=file,
+                    start=int(start.offset),
+                )
             owners.add(
-                f"generate:{start_range.file}:{int(start.offset)}:{end_offset}"
+                f"generate:{file}:{int(start.offset)}:{end_offset}"
             )
     return tuple(sorted(owners))
 

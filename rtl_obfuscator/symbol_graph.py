@@ -277,12 +277,43 @@ def _expression_range(
     source_catalog: SourceCatalog, expression: Any, name: str
 ) -> SourceRange:
     syntax = getattr(expression, "syntax", None)
-    token = getattr(syntax, "identifier", None)
+    token = _direct_expression_identifier(syntax)
     if token is None or not token.rawText:
-        raise SymbolGraphError(
-            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
-            "semantic expression has no direct source identifier token",
+        # Some elaborated NamedValueExpression nodes retain the semantic
+        # binding and an exact source span but lose the convenience
+        # IdentifierNameSyntax token.  Accept only that span when it is a
+        # physical, non-macro range whose bytes are exactly the bound name.
+        # The expression itself is the already-bound semantic target; no
+        # syntax-subtree search is permitted here.
+        source_range = (
+            getattr(syntax, "sourceRange", None)
+            if syntax is not None
+            else getattr(expression, "sourceRange", None)
         )
+        start = getattr(source_range, "start", None)
+        end = getattr(source_range, "end", None)
+        if start is None or end is None or start.buffer != end.buffer:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic expression has no direct source identifier token",
+            )
+        _reject_macro_location(source_catalog, start)
+        file, start_offset = _location_start(source_catalog, start)
+        if file is None or start_offset is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic expression source range is outside the SourceSet",
+            )
+        end_offset = int(end.offset)
+        source = (source_catalog.source_set.source_root / file).read_bytes()
+        if end_offset <= start_offset or source[start_offset:end_offset] != name.encode("utf-8"):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic expression source range does not match bound name",
+                file=file,
+                start=start_offset,
+            )
+        return SourceRange(file=file, start=start_offset, end=end_offset)
     if token.rawText != name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
@@ -332,28 +363,145 @@ def _syntax_identifier_tokens(syntax_node: Any) -> list[Any]:
     ]
 
 
-def _syntax_source_identifier_tokens(syntax_node: Any) -> list[Any]:
-    """Return byte-backed identifiers from a bounded syntax subtree."""
+def _direct_expression_identifier(syntax: Any) -> Any | None:
+    """Return an identifier through a syntax-kind-specific direct path.
 
-    nodes: list[Any] = []
-    if syntax_node is None:
-        return []
-    syntax_node.visit(nodes.append)
-    identifier_types = tuple(
-        item
-        for item in (
-            getattr(pyslang.syntax, "IdentifierNameSyntax", None),
-            getattr(pyslang.syntax, "IdentifierSelectNameSyntax", None),
+    This intentionally handles only fields whose meaning is fixed by the
+    expression syntax. It must not walk a subtree or select a token by name.
+    """
+
+    if syntax is None:
+        return None
+    identifier = getattr(syntax, "identifier", None)
+    if identifier is not None and getattr(identifier, "rawText", ""):
+        return identifier
+    if type(syntax).__name__ == "ParenthesizedExpressionSyntax":
+        expression = getattr(syntax, "expression", None)
+        identifier = getattr(expression, "identifier", None)
+        if identifier is not None and getattr(identifier, "rawText", ""):
+            return identifier
+    return None
+
+
+def _direct_member_identifier(syntax: Any) -> Any | None:
+    """Return a member token through fixed scoped/parenthesized fields only."""
+
+    if syntax is None:
+        return None
+    right = getattr(syntax, "right", None)
+    identifier = getattr(right, "identifier", None)
+    if identifier is not None and getattr(identifier, "rawText", ""):
+        return identifier
+    if type(syntax).__name__ == "ParenthesizedExpressionSyntax":
+        return _direct_member_identifier(getattr(syntax, "expression", None))
+    return None
+
+
+def _declared_dimension_identifier_tokens(syntax: Any) -> tuple[Any, ...]:
+    """Return only fixed-field identifiers in a declared type dimension.
+
+    PySlang does not expose every ANSI-port/data-declaration dimension as a
+    bound expression node.  The declaration owner is still semantic, so the
+    missing source token can be recovered through the typed syntax fields of
+    ``NamedTypeSyntax -> IdentifierSelectNameSyntax -> ElementSelectSyntax``.
+    This helper deliberately follows those fields; it never walks a syntax
+    subtree or chooses a token by spelling.
+    """
+
+    parent = getattr(syntax, "parent", None)
+    header = getattr(parent, "header", None)
+    data_type = getattr(header, "dataType", None)
+    if data_type is None:
+        data_type = getattr(parent, "type", None)
+    if type(data_type).__name__ != "NamedTypeSyntax":
+        return ()
+    name = getattr(data_type, "name", None)
+    if type(name).__name__ != "IdentifierSelectNameSyntax":
+        return ()
+    tokens: list[Any] = []
+    for selector in getattr(name, "selectors", ()):
+        if type(selector).__name__ != "ElementSelectSyntax":
+            continue
+        range_select = getattr(selector, "selector", None)
+        if type(range_select).__name__ != "RangeSelectSyntax":
+            continue
+        for expression in (
+            getattr(range_select, "left", None),
+            getattr(range_select, "right", None),
+        ):
+            if type(expression).__name__ == "IdentifierNameSyntax":
+                token = getattr(expression, "identifier", None)
+                if token is not None:
+                    tokens.append(token)
+                continue
+            if type(expression).__name__ != "BinaryExpressionSyntax":
+                continue
+            for operand in (
+                getattr(expression, "left", None),
+                getattr(expression, "right", None),
+            ):
+                if type(operand).__name__ != "IdentifierNameSyntax":
+                    continue
+                token = getattr(operand, "identifier", None)
+                if token is not None:
+                    tokens.append(token)
+    return tuple(tokens)
+
+
+def _packed_aggregate_member_dimension_identifier_tokens(alias: Any) -> tuple[Any, ...]:
+    """Return identifiers from one alias member's bounded declared dimensions."""
+
+    canonical = getattr(alias, "canonicalType", None)
+    syntax = getattr(canonical, "syntax", None)
+    if type(syntax).__name__ != "StructUnionTypeSyntax":
+        return ()
+    tokens: list[Any] = []
+    for member in getattr(syntax, "members", ()):
+        member_type = getattr(member, "type", None)
+        for dimension in getattr(member_type, "dimensions", ()):
+            if type(dimension).__name__ != "VariableDimensionSyntax":
+                continue
+            specifier = getattr(dimension, "specifier", None)
+            if type(specifier).__name__ != "RangeDimensionSpecifierSyntax":
+                continue
+            selector = getattr(specifier, "selector", None)
+            if type(selector).__name__ != "RangeSelectSyntax":
+                continue
+            for expression in (
+                getattr(selector, "left", None),
+                getattr(selector, "right", None),
+            ):
+                if type(expression).__name__ == "IdentifierNameSyntax":
+                    token = getattr(expression, "identifier", None)
+                    if token is not None:
+                        tokens.append(token)
+                    continue
+                if type(expression).__name__ != "BinaryExpressionSyntax":
+                    continue
+                for operand in (
+                    getattr(expression, "left", None),
+                    getattr(expression, "right", None),
+                ):
+                    if type(operand).__name__ != "IdentifierNameSyntax":
+                        continue
+                    token = getattr(operand, "identifier", None)
+                    if token is not None:
+                        tokens.append(token)
+    return tuple(tokens)
+
+
+def _scope_lookup_target(scope: Any, token: Any) -> Any:
+    """Resolve a fixed-field token in its already-known semantic scope."""
+
+    name = str(getattr(token, "rawText", ""))
+    lookup_name = getattr(scope, "lookupName", None)
+    target = lookup_name(name) if lookup_name is not None and name else None
+    if target is None:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+            "scope-bound identifier has no semantic target",
         )
-        if item is not None
-    )
-    return [
-        node.identifier
-        for node in nodes
-        if identifier_types
-        and isinstance(node, identifier_types)
-        and getattr(node, "identifier", None) is not None
-    ]
+    return target
 
 
 def _token_range(
@@ -614,12 +762,37 @@ def _expression_identifier_range(
     name: str,
 ) -> SourceRange:
     syntax = getattr(expression, "syntax", None)
-    identifier = getattr(syntax, "identifier", None)
+    identifier = _direct_expression_identifier(syntax)
     if identifier is None or not getattr(identifier, "rawText", ""):
-        raise SymbolGraphError(
-            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
-            "semantic parameter expression has no direct source identifier token",
+        source_range = (
+            getattr(syntax, "sourceRange", None)
+            if syntax is not None
+            else getattr(expression, "sourceRange", None)
         )
+        start = getattr(source_range, "start", None)
+        end = getattr(source_range, "end", None)
+        if start is None or end is None or start.buffer != end.buffer:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic parameter expression has no direct source identifier token",
+            )
+        _reject_macro_location(source_catalog, start)
+        file, start_offset = _location_start(source_catalog, start)
+        if file is None or start_offset is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic parameter expression source range is outside the SourceSet",
+            )
+        end_offset = int(end.offset)
+        source = (source_catalog.source_set.source_root / file).read_bytes()
+        if end_offset <= start_offset or source[start_offset:end_offset] != name.encode("utf-8"):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic parameter expression source range does not match bound name",
+                file=file,
+                start=start_offset,
+            )
+        return SourceRange(file=file, start=start_offset, end=end_offset)
     if identifier.rawText != name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
@@ -672,6 +845,12 @@ def _append_bound_parameter_references(
         source_range = _expression_identifier_range(
             source_catalog, node, record.name
         )
+        if (
+            source_range.file,
+            source_range.start,
+            source_range.end,
+        ) in genvar_keys:
+            continue
         occurrence = SymbolOccurrence(source_range, provenance)
         occurrence_key = (
             source_range.file,
@@ -753,12 +932,12 @@ def _collect_parameter_symbols(
 ) -> list[SourceSymbol]:
     _reject_parameter_unsupported_nodes(source_catalog, nodes, owners)
     genvar_keys = {
-        (
-            symbol.declaration.file,
-            symbol.declaration.start,
-            symbol.declaration.end,
-        )
+        (source_range.file, source_range.start, source_range.end)
         for symbol in genvar_symbols
+        for source_range in (
+            symbol.declaration,
+            *(occurrence.source_range for occurrence in symbol.occurrences),
+        )
     }
     parameter_kind = pyslang.ast.SymbolKind.Parameter
     records: dict[tuple[str, int, int], _ParameterRecord] = {}
@@ -852,55 +1031,84 @@ def _collect_parameter_symbols(
                     special_ranges,
                 )
 
-    records_by_owner_name: dict[tuple[str, str], list[tuple[str, int, int]]] = {}
-    for key, record in records.items():
-        records_by_owner_name.setdefault(
-            (record.owner.owner_id, record.name), []
-        ).append(key)
+    # Some declared type dimensions (notably packed ANSI-port dimensions)
+    # have no corresponding resolved expression node in PySlang.  Recover
+    # those bytes only from a known semantic declaration owner and its fixed
+    # typed syntax path.  The scope lookup is the binding proof; a matching
+    # spelling without the exact parameter declaration is never accepted.
     for node in nodes:
-        if type(node).__name__ != "TypeAliasType":
+        if getattr(node, "kind", None) not in (
+            pyslang.ast.SymbolKind.Variable,
+            pyslang.ast.SymbolKind.Net,
+        ) and type(node).__name__ not in {"PortSymbol", "InterfacePortSymbol"}:
             continue
-        owner = _owner_for_module_symbol(
-            source_catalog, node, owners, label="type alias"
-        )
-        if owner is None:
+        scope = getattr(node, "parentScope", None)
+        lookup_name = getattr(scope, "lookupName", None)
+        if lookup_name is None:
             continue
-        syntax = getattr(getattr(node, "canonicalType", None), "syntax", None)
-        for member in getattr(syntax, "members", ()) if syntax is not None else ():
-            member_type = getattr(member, "type", None)
-            for token in _syntax_source_identifier_tokens(member_type):
-                candidate_keys = records_by_owner_name.get(
-                    (owner.owner_id, str(getattr(token, "rawText", ""))), []
-                )
-                if len(candidate_keys) > 1:
-                    file, start = _location_start(
-                        source_catalog, token.location
-                    )
-                    raise SymbolGraphError(
-                        "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
-                        "aggregate dimension parameter owner is ambiguous",
-                        file=file,
-                        start=start,
-                    )
-                if not candidate_keys:
-                    continue
-                _reject_macro_location(source_catalog, token.location)
-                target_key = candidate_keys[0]
-                source_range = _range_from_location(
-                    source_catalog,
-                    token.location,
-                    str(token.rawText),
-                )
-                occurrence = SymbolOccurrence(
-                    source_range, "declaration_dimension"
-                )
-                occurrence_key = (
-                    source_range.file,
-                    source_range.start,
-                    source_range.end,
-                    occurrence.provenance,
-                )
-                occurrences[target_key][occurrence_key] = occurrence
+        syntax = getattr(node, "syntax", None)
+        for token in _declared_dimension_identifier_tokens(syntax):
+            name = str(getattr(token, "rawText", ""))
+            if not name:
+                continue
+            target = _scope_lookup_target(scope, token)
+            target_key = _parameter_source_key(source_catalog, target)
+            if target_key is None or target_key in genvar_keys:
+                continue
+            record = records.get(target_key)
+            if record is None:
+                continue
+            source_range = _range_from_location(source_catalog, token.location, name)
+            if source_range == record.declaration:
+                continue
+            occurrence = SymbolOccurrence(source_range, "declaration_dimension")
+            occurrence_key = (
+                source_range.file,
+                source_range.start,
+                source_range.end,
+                occurrence.provenance,
+            )
+            occurrences[target_key][occurrence_key] = occurrence
+
+    # Packed aggregate member dimensions are owned by their TypeAliasType.
+    # Resolve each bounded syntax token in that alias's lexical parent scope;
+    # never infer a parameter record from spelling or owner text.
+    for alias in nodes:
+        if type(alias).__name__ != "TypeAliasType":
+            continue
+        scope = getattr(alias, "parentScope", None)
+        for token in _packed_aggregate_member_dimension_identifier_tokens(alias):
+            name = str(getattr(token, "rawText", ""))
+            if not name:
+                continue
+            target = _scope_lookup_target(scope, token)
+            target_key = _parameter_source_key(source_catalog, target)
+            if target_key is None or target_key in genvar_keys:
+                continue
+            record = records.get(target_key)
+            if record is None:
+                continue
+            _reject_macro_location(source_catalog, token.location)
+            source_range = _range_from_location(source_catalog, token.location, name)
+            if source_range == record.declaration:
+                continue
+            if any(
+                occurrence.source_range == source_range
+                for occurrence in occurrences[target_key].values()
+            ):
+                continue
+            occurrence = SymbolOccurrence(source_range, "declaration_dimension")
+            occurrence_key = (
+                source_range.file,
+                source_range.start,
+                source_range.end,
+                occurrence.provenance,
+            )
+            occurrences[target_key][occurrence_key] = occurrence
+
+    # Dimensions whose semantic expressions are not exposed by PySlang have
+    # no bound target evidence. Do not recover them through syntax scanning or
+    # owner/name lookup; they remain fail-closed and uncollected.
 
     generate_block_kind = getattr(pyslang.ast.SymbolKind, "GenerateBlock", None)
     generate_array_kind = getattr(
@@ -980,6 +1188,12 @@ def _collect_parameter_symbols(
             source_range = _range_from_location(
                 source_catalog, name_token.location, name_token.rawText
             )
+            if (
+                source_range.file,
+                source_range.start,
+                source_range.end,
+            ) in genvar_keys:
+                continue
             occurrence = SymbolOccurrence(source_range, "named_override")
             occurrence_key = (
                 source_range.file,
@@ -1240,7 +1454,7 @@ def _token_source_range(
     if token is None or getattr(token, "rawText", "") != name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_SOURCE_INVALID",
-            "semantic token does not match bound symbol",
+            f"semantic token does not match bound symbol: token={getattr(token, 'rawText', None)!r} name={name!r} offset={getattr(getattr(token, 'location', None), 'offset', None)}",
         )
     _reject_macro_location(source_catalog, token.location)
     return _range_from_location(source_catalog, token.location, name)
@@ -1287,7 +1501,7 @@ def _collect_extended_symbols(
             if key in occupied:
                 raise SymbolGraphError(
                     "SYMBOL_GRAPH_RANGE_CONFLICT",
-                    "existing semantic symbols have a repeated physical range",
+                    f"existing semantic symbols have a repeated physical range: {symbol.symbol_id} conflicts with {occupied[key]}",
                     file=source_range.file,
                     start=source_range.start,
                 )
@@ -1295,15 +1509,15 @@ def _collect_extended_symbols(
 
     records: list[dict[str, Any]] = []
     declaration_records: dict[tuple[str, int, int], dict[str, Any]] = {}
-    target_records: dict[int, dict[str, Any]] = {}
+    target_records: dict[tuple[str, int, int], dict[str, Any]] = {}
     module_records: dict[str, dict[str, Any]] = {}
     interface_records: dict[str, dict[str, Any]] = {}
     modport_records: dict[tuple[str, str], dict[str, Any]] = {}
     port_records: dict[tuple[str, str], dict[str, Any]] = {}
-    field_records_by_alias: dict[tuple[int, str], dict[str, Any]] = {}
+    field_records_by_alias: dict[tuple[str, int, int, str], dict[str, Any]] = {}
     field_records_by_owner: dict[tuple[str, str], dict[str, Any]] = {}
     alias_records: list[tuple[Any, dict[str, Any]]] = []
-    alias_contexts: dict[int, _SemanticScope | None] = {}
+    alias_contexts: dict[tuple[str, int, int], _SemanticScope | None] = {}
     existing_by_declaration = {
         (symbol.declaration.file, symbol.declaration.start, symbol.declaration.end): symbol
         for symbol in existing
@@ -1345,7 +1559,7 @@ def _collect_extended_symbols(
         declaration: SourceRange,
         owner: str,
         context: _SemanticScope | None,
-        field_scope: int | None = None,
+        field_scope: object | None = None,
     ) -> dict[str, Any]:
         key = (declaration.file, declaration.start, declaration.end)
         previous = declaration_records.get(key)
@@ -1365,7 +1579,7 @@ def _collect_extended_symbols(
         if key in occupied:
             raise SymbolGraphError(
                 "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "semantic declarations have an exact duplicate or multiple owners",
+                    "semantic declarations have an exact duplicate or multiple owners",
                 file=declaration.file,
                 start=declaration.start,
             )
@@ -1428,21 +1642,17 @@ def _collect_extended_symbols(
             )
         previous = record["occurrence_ranges"].get(key)
         if previous is not None:
-            if previous.provenance == provenance:
-                # PySlang may expose the same semantic token through more than
-                # one elaborated path; it remains one owner/range occurrence.
-                return
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "semantic occurrence has multiple provenance owners",
-                file=source_range.file,
-                start=source_range.start,
-            )
+            # Repeated elaboration may expose one source identity through
+            # different semantic paths.  The record already proves the same
+            # owner and physical range, so retain the first stable provenance
+            # instead of manufacturing a duplicate occurrence.  A different
+            # record is still rejected by the occupied-range audit below.
+            return
         owner = occupied.get(key)
         if owner is not None:
             raise SymbolGraphError(
                 "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "semantic occurrence overlaps another symbol range",
+                f"semantic occurrence overlaps another symbol range {key}: {record['category']}:{record['name']} conflicts with {owner!r}",
                 file=source_range.file,
                 start=source_range.start,
             )
@@ -1466,14 +1676,25 @@ def _collect_extended_symbols(
         record["ranges"].add(key)
         occupied[key] = record
 
+    def target_key(target: Any) -> tuple[str, int, int] | None:
+        if target is None:
+            return None
+        try:
+            declaration = _record_range(source_catalog, target)
+        except (AttributeError, SymbolGraphError):
+            return None
+        return declaration.file, declaration.start, declaration.end
+
     def add_target(target: Any, record: dict[str, Any]) -> None:
-        if target is not None:
-            target_records[id(target)] = record
+        key = target_key(target)
+        if key is not None:
+            target_records[key] = record
 
     def record_for_target(target: Any) -> dict[str, Any] | None:
         if target is None:
             return None
-        record = target_records.get(id(target))
+        key = target_key(target)
+        record = target_records.get(key) if key is not None else None
         if record is not None:
             return record
         try:
@@ -1561,7 +1782,12 @@ def _collect_extended_symbols(
             context=context,
         )
         alias_records.append((node, record))
-        alias_contexts[id(record)] = context
+        alias_key = (
+            record["declaration"].file,
+            record["declaration"].start,
+            record["declaration"].end,
+        )
+        alias_contexts[alias_key] = context
         add_target(node, record)
         add_target(getattr(node, "targetType", None), record)
         canonical = getattr(node, "canonicalType", None)
@@ -1569,7 +1795,7 @@ def _collect_extended_symbols(
         if syntax is None or not hasattr(syntax, "members"):
             continue
         field_category = "union_fields" if getattr(node, "isPackedUnion", False) else "struct_fields"
-        field_scope = id(getattr(canonical, "parentScope", None))
+        field_scope = True
         for member in getattr(syntax, "members", ()):
             for declarator in getattr(member, "declarators", ()):
                 token = getattr(declarator, "name", None)
@@ -1588,7 +1814,7 @@ def _collect_extended_symbols(
                     context=context,
                     field_scope=field_scope,
                 )
-                field_records_by_alias[(id(record), name)] = field_record
+                field_records_by_alias[(*alias_key, name)] = field_record
 
     aliases_by_name: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
     for alias_node, alias_record in alias_records:
@@ -1607,15 +1833,33 @@ def _collect_extended_symbols(
             scoped = [
                 record
                 for alias_node, record in candidates
-                if alias_contexts.get(id(record)) is not None
-                and alias_contexts[id(record)].owner == context.owner
+                if alias_contexts.get(
+                    (
+                        record["declaration"].file,
+                        record["declaration"].start,
+                        record["declaration"].end,
+                    )
+                ) is not None
+                and alias_contexts[
+                    (
+                        record["declaration"].file,
+                        record["declaration"].start,
+                        record["declaration"].end,
+                    )
+                ].owner == context.owner
             ]
             if len(scoped) == 1:
                 return scoped[0]
         unit = [
             record
             for alias_node, record in candidates
-            if alias_contexts.get(id(record)) is None
+            if alias_contexts.get(
+                (
+                    record["declaration"].file,
+                    record["declaration"].start,
+                    record["declaration"].end,
+                )
+            ) is None
         ]
         if len(unit) == 1:
             return unit[0]
@@ -1644,7 +1888,47 @@ def _collect_extended_symbols(
             provenance,
         )
 
+    # Casts retain their semantic TypeAliasType. Only the direct type field
+    # is accepted as source evidence; a missing field is fail-closed.
+    for node in nodes:
+        if type(node).__name__ != "ConversionExpression":
+            continue
+        semantic_type = getattr(node, "type", None)
+        if type(semantic_type).__name__ != "TypeAliasType":
+            continue
+        alias_name = str(getattr(semantic_type, "name", "")).rsplit(".", 1)[-1]
+        syntax = getattr(node, "syntax", None)
+        token = _direct_expression_identifier(getattr(syntax, "left", None))
+        if token is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "semantic cast has no direct type identifier token",
+                file=_syntax_start(source_catalog, node)[0],
+                start=_syntax_start(source_catalog, node)[1],
+            )
+        if getattr(token, "rawText", "") != alias_name:
+            file, offset = _location_start(source_catalog, token.location)
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_SOURCE_INVALID",
+                "semantic cast type token does not match its bound alias",
+                file=file,
+                start=offset,
+            )
+        add_type_reference(token, "semantic_cast_type")
+
     def alias_record_for_declared(declared: Any) -> dict[str, Any] | None:
+        if declared is not None:
+            try:
+                declared_range = _record_range(source_catalog, declared)
+            except (AttributeError, SymbolGraphError):
+                declared_range = None
+            if declared_range is not None:
+                for alias_node, record in alias_records:
+                    try:
+                        if _record_range(source_catalog, alias_node) == declared_range:
+                            return record
+                    except (AttributeError, SymbolGraphError):
+                        continue
         return next(
             (
                 record
@@ -1732,10 +2016,23 @@ def _collect_extended_symbols(
             syntax = getattr(node, "syntax", None)
             file, start, end = _syntax_span(source_catalog, syntax)
             owner = f"generate:{file}:{start}:{end}"
+            name = str(node.name)
+            try:
+                declaration = _record_range(source_catalog, node)
+            except SymbolGraphError as error:
+                if (
+                    error.code == "SYMBOL_GRAPH_RANGE_INVALID"
+                    and name.startswith("genblk")
+                ):
+                    # PySlang's generated genblkN has no declaration token.
+                    # Keep its syntax span as semantic owner evidence, but do
+                    # not create a fabricated rename record.
+                    continue
+                raise
             record = add_record(
                 category="generate_blocks",
-                name=str(node.name),
-                declaration=_record_range(source_catalog, node),
+                name=name,
+                declaration=declaration,
                 owner=owner,
                 context=context,
             )
@@ -1803,6 +2100,8 @@ def _collect_extended_symbols(
                     _token_source_range(source_catalog, token, data_interface_record["name"]),
                     "semantic_type",
                 )
+            if token is not None:
+                add_type_reference(token, "semantic_port_type")
             continue
         if node_type in {"VariableSymbol", "NetSymbol"} and context is not None and context.kind == "interface":
             record = add_record(
@@ -1811,7 +2110,7 @@ def _collect_extended_symbols(
                 declaration=_record_range(source_catalog, node),
                 owner=context.owner,
                 context=context,
-                field_scope=id(getattr(node, "parentScope", None)),
+                field_scope=True,
             )
             add_target(node, record)
             continue
@@ -1838,7 +2137,7 @@ def _collect_extended_symbols(
                     "modport port has no enclosing interface owner",
                 )
             target = getattr(node, "internalSymbol", None)
-            target_record = target_records.get(id(target))
+            target_record = record_for_target(target)
             if target_record is None:
                 target_record = field_records_by_owner.get(
                     (str(context.owner), str(node.name))
@@ -1912,11 +2211,18 @@ def _collect_extended_symbols(
             "type",
             None,
         )
+        if declared is None:
+            declared = getattr(base_value, "type", None)
         alias_record = alias_record_for_declared(
-            getattr(getattr(base_value, "type", None), "declaredType", None)
+            getattr(base_value, "type", None)
         )
         field_record = field_records_by_alias.get(
-            (id(alias_record), getattr(token, "rawText", ""))
+            (
+                alias_record["declaration"].file,
+                alias_record["declaration"].start,
+                alias_record["declaration"].end,
+                getattr(token, "rawText", ""),
+            )
         ) if alias_record is not None else None
         if field_record is not None and token is not None:
             add_occurrence(
@@ -1964,9 +2270,25 @@ def _collect_extended_symbols(
         if node_type == "NamedValueExpression" and target_record is not None:
             token = getattr(getattr(node, "syntax", None), "identifier", None)
             if token is not None:
+                if getattr(token, "rawText", "") != target_record["name"]:
+                    file, offset = _location_start(source_catalog, token.location)
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_SOURCE_INVALID",
+                        f"named value target/token mismatch: target={getattr(target, 'name', None)!r} record={target_record['name']!r} token={getattr(token, 'rawText', None)!r}",
+                        file=file,
+                        start=offset,
+                    )
+                source_range = _token_source_range(
+                    source_catalog, token, target_record["name"]
+                )
+            else:
+                source_range = _expression_range(
+                    source_catalog, node, target_record["name"]
+                )
+            if source_range != target_record["declaration"]:
                 add_occurrence(
                     target_record,
-                    _token_source_range(source_catalog, token, target_record["name"]),
+                    source_range,
                     "semantic_reference",
                 )
         if node_type == "CallExpression":
@@ -1998,9 +2320,16 @@ def _collect_extended_symbols(
                 declared_base = getattr(
                     getattr(base_value, "type", None), "declaredType", None
                 )
+            if declared_base is None:
+                declared_base = getattr(base_value, "type", None)
             alias_record = alias_record_for_declared(declared_base)
             field_record = field_records_by_alias.get(
-                (id(alias_record), member_name)
+                (
+                    alias_record["declaration"].file,
+                    alias_record["declaration"].start,
+                    alias_record["declaration"].end,
+                    member_name,
+                )
             ) if alias_record is not None else None
             if field_record is None:
                 field_record = member_record
@@ -2042,8 +2371,7 @@ def _collect_extended_symbols(
                         ),
                         "semantic_member_base",
                     )
-            right = getattr(getattr(node, "syntax", None), "right", None)
-            token = getattr(right, "identifier", None)
+            token = _direct_member_identifier(getattr(node, "syntax", None))
             if (
                 field_record is not None
                 and token is not None
@@ -2108,6 +2436,60 @@ def _collect_extended_symbols(
                         "semantic_named_connection",
                     )
 
+    # A select expression can own a semantic MemberAccessExpression as its
+    # value without exposing that nested expression as a separately visited
+    # catalog node. Resolve the nested member through its semantic field and
+    # alias source identities, then use only direct scoped-name fields.
+    for node in nodes:
+        if type(node).__name__ not in {"ElementSelectExpression", "RangeSelectExpression"}:
+            continue
+        access = getattr(node, "value", None)
+        if type(access).__name__ != "MemberAccessExpression":
+            continue
+        member = getattr(access, "member", None)
+        member_name = str(getattr(member, "name", ""))
+        if not member_name:
+            continue
+        base_value = getattr(access, "value", None)
+        base = getattr(base_value, "symbol", None)
+        declared_base = getattr(getattr(base, "type", None), "declaredType", None)
+        if declared_base is None:
+            declared_base = getattr(getattr(base_value, "type", None), "declaredType", None)
+        if declared_base is None:
+            declared_base = getattr(base_value, "type", None)
+        alias_record = alias_record_for_declared(declared_base)
+        field_record = (
+            field_records_by_alias.get(
+                (
+                    alias_record["declaration"].file,
+                    alias_record["declaration"].start,
+                    alias_record["declaration"].end,
+                    member_name,
+                )
+            )
+            if alias_record is not None
+            else None
+        )
+        if field_record is None:
+            field_record = record_for_target(member)
+        if field_record is None:
+            continue
+        token = _direct_member_identifier(
+            getattr(access, "syntax", None) or getattr(node, "syntax", None)
+        )
+        if token is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "selected member has no direct field identifier token",
+                file=_syntax_start(source_catalog, node)[0],
+                start=_syntax_start(source_catalog, node)[1],
+            )
+        add_occurrence(
+            field_record,
+            _token_source_range(source_catalog, token, field_record["name"]),
+            "semantic_member",
+        )
+
     result: list[SourceSymbol] = []
     for record in records:
         occurrences = tuple(
@@ -2160,7 +2542,9 @@ def _augment_signal_member_occurrences(
         for symbol in symbols
         if symbol.category == "signals"
     }
-    additions: dict[int, list[SymbolOccurrence]] = {id(symbol): list(symbol.occurrences) for symbol in symbols}
+    additions: dict[str, list[SymbolOccurrence]] = {
+        symbol.symbol_id: list(symbol.occurrences) for symbol in symbols
+    }
     for node in nodes:
         if type(node).__name__ != "MemberAccessExpression":
             continue
@@ -2185,23 +2569,16 @@ def _augment_signal_member_occurrences(
         left = getattr(getattr(node, "syntax", None), "left", None)
         token = getattr(left, "identifier", None)
         if token is None and left is not None:
-            token = next(
-                (
-                    candidate
-                    for candidate in _syntax_source_identifier_tokens(left)
-                    if getattr(candidate, "rawText", "") == symbol.name
-                ),
-                None,
-            )
+            token = _direct_expression_identifier(left)
         if token is None:
             continue
         source_range = _token_source_range(source_catalog, token, symbol.name)
         if any(
             occurrence.source_range == source_range
-            for occurrence in additions[id(symbol)]
+            for occurrence in additions[symbol.symbol_id]
         ):
             continue
-        additions[id(symbol)].append(
+        additions[symbol.symbol_id].append(
             SymbolOccurrence(source_range, "semantic_member_base")
         )
     return [
@@ -2209,7 +2586,120 @@ def _augment_signal_member_occurrences(
             symbol,
             occurrences=tuple(
                 sorted(
-                    additions[id(symbol)],
+                    additions[symbol.symbol_id],
+                    key=lambda occurrence: (
+                        occurrence.source_range.file,
+                        occurrence.source_range.start,
+                        occurrence.source_range.end,
+                        occurrence.provenance,
+                    ),
+                )
+            ),
+        )
+        for symbol in symbols
+    ]
+
+
+def _augment_signal_generate_connection_occurrences(
+    source_catalog: SourceCatalog,
+    symbols: list[SourceSymbol],
+) -> list[SourceSymbol]:
+    """Recover named-port signal references owned by a generate scope."""
+
+    nodes: list[Any] = []
+    source_catalog.catalog_root.visit(nodes.append)
+    by_declaration = {
+        (
+            symbol.declaration.file,
+            symbol.declaration.start,
+            symbol.declaration.end,
+        ): symbol
+        for symbol in symbols
+        if symbol.category == "signals"
+    }
+    signal_nodes: list[tuple[tuple[str, int, int], Any]] = []
+    for node in nodes:
+        if getattr(node, "kind", None) not in (
+            pyslang.ast.SymbolKind.Variable,
+            pyslang.ast.SymbolKind.Net,
+        ):
+            continue
+        try:
+            key = _signal_range_key(source_catalog, node)
+        except SymbolGraphError:
+            continue
+        if key in by_declaration:
+            signal_nodes.append((key, node))
+
+    additions: dict[str, list[SymbolOccurrence]] = {
+        symbol.symbol_id: list(symbol.occurrences) for symbol in symbols
+    }
+    for generate in nodes:
+        if type(generate).__name__ != "GenerateBlockSymbol":
+            continue
+        syntax = getattr(generate, "syntax", None)
+        if syntax is None:
+            continue
+        source_span = getattr(syntax, "sourceRange", None)
+        span_start = getattr(getattr(source_span, "start", None), "offset", None)
+        span_end = getattr(getattr(source_span, "end", None), "offset", None)
+        if span_start is None or span_end is None:
+            continue
+        file, _ = _syntax_node_start(source_catalog, syntax)
+        if file is None:
+            continue
+        scoped_signals = [
+            (key, node)
+            for key, node in signal_nodes
+            if key[0] == file and span_start <= key[1] < span_end
+        ]
+        if not scoped_signals:
+            continue
+        for member in getattr(syntax, "members", ()):
+            if type(member).__name__ != "HierarchyInstantiationSyntax":
+                continue
+            for instance in getattr(member, "instances", ()):
+                for connection in getattr(instance, "connections", ()):
+                    if type(connection).__name__ != "NamedPortConnectionSyntax":
+                        continue
+                    expression = getattr(connection, "expr", None)
+                    sequence = getattr(expression, "expr", None)
+                    identifier_name = getattr(sequence, "expr", None)
+                    token = getattr(identifier_name, "identifier", None)
+                    if token is None or not getattr(token, "rawText", ""):
+                        continue
+                    scope = getattr(scoped_signals[0][1], "parentScope", None)
+                    target = _scope_lookup_target(scope, token)
+                    try:
+                        target_key = _signal_range_key(source_catalog, target)
+                    except (AttributeError, SymbolGraphError):
+                        continue
+                    scoped_keys = {key for key, _ in scoped_signals}
+                    if target_key not in scoped_keys:
+                        continue
+                    symbol = by_declaration[target_key]
+                    source_range = _token_source_range(
+                        source_catalog, token, symbol.name
+                    )
+                    if source_range == symbol.declaration:
+                        continue
+                    if any(
+                        occurrence.source_range == source_range
+                        for occurrence in additions[symbol.symbol_id]
+                    ):
+                        continue
+                    additions[symbol.symbol_id].append(
+                        SymbolOccurrence(
+                            source_range, "semantic_generate_syntax"
+                        )
+                    )
+
+    return [
+        replace(
+            symbol,
+            occurrences=tuple(
+                sorted(
+                    additions[symbol.symbol_id],
                     key=lambda occurrence: (
                         occurrence.source_range.file,
                         occurrence.source_range.start,
@@ -2228,33 +2718,54 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
 
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
-    for node in nodes:
-        if isinstance(node, pyslang.ast.UninstantiatedDefSymbol):
-            file, start = _location_start(
-                source_catalog, getattr(node, "location", None)
-            )
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
-                "uninstantiated definition is outside T041 scope",
-                file=file,
-                start=start,
-            )
+    # Uninstantiated definitions are semantic placeholders without a
+    # byte-backed source identifier.  They are not source symbols and must
+    # not make an otherwise closed selected-top graph fail globally.  All
+    # source-backed nodes continue through the normal owner/range checks
+    # below; the placeholder itself is intentionally ignored.
     owners = _module_owner_map(source_catalog)
     variable_kind = pyslang.ast.SymbolKind.Variable
     net_kind = pyslang.ast.SymbolKind.Net
 
-    excluded_ids: set[int] = set()
+    def semantic_range_key(node: Any) -> tuple[str, int, int] | None:
+        source_range = getattr(node, "sourceRange", None)
+        start = getattr(source_range, "start", None)
+        end = getattr(source_range, "end", None)
+        if start is None or end is None:
+            name = str(getattr(node, "name", ""))
+            location = getattr(node, "location", None)
+            if not name or location is None:
+                return None
+            try:
+                declaration = _range_from_location(source_catalog, location, name)
+            except SymbolGraphError:
+                return None
+            return declaration.file, declaration.start, declaration.end
+        if start.buffer != end.buffer:
+            return None
+        if source_catalog.catalog_source_manager.isMacroLoc(start):
+            return None
+        try:
+            absolute = Path(
+                source_catalog.catalog_source_manager.getFullPath(start.buffer)
+            ).resolve()
+            file = absolute.relative_to(source_catalog.source_set.source_root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return file, int(start.offset), int(end.offset)
+
+    excluded_ranges: set[tuple[str, int, int]] = set()
     for node in nodes:
         for attribute in ("internalSymbol", "returnValVar"):
             excluded = getattr(node, attribute, None)
             if excluded is not None:
-                excluded_ids.add(id(excluded))
+                key = semantic_range_key(excluded)
+                if key is not None:
+                    excluded_ranges.add(key)
 
     declarations: dict[tuple[str, int, int], tuple[str, SourceRange, ModuleOwner]] = {}
     for node in nodes:
         if getattr(node, "kind", None) not in (variable_kind, net_kind):
-            continue
-        if id(node) in excluded_ids:
             continue
         name = str(getattr(node, "name", ""))
         if not name or name.startswith("$"):
@@ -2267,6 +2778,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             source_catalog, node.location, name
         )
         key = (declaration.file, declaration.start, declaration.end)
+        if key in excluded_ranges:
+            continue
         existing = declarations.get(key)
         if existing is not None:
             if existing[0] != name or existing[2].owner_id != owner.owner_id:
@@ -2284,12 +2797,12 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
     }
     element_select_kind = getattr(pyslang.ast.ExpressionKind, "ElementSelect", None)
     range_select_kind = getattr(pyslang.ast.ExpressionKind, "RangeSelect", None)
-    element_value_ids = {
-        id(getattr(node, "value", None))
+    element_value_ranges = {
+        semantic_range_key(getattr(node, "value", None))
         for node in nodes
         if getattr(node, "kind", None) in (element_select_kind, range_select_kind)
         and getattr(node, "value", None) is not None
-    }
+    } - {None}
     for node in nodes:
         node_kind = getattr(node, "kind", None)
         if node_kind == pyslang.ast.ExpressionKind.HierarchicalValue:
@@ -2329,14 +2842,15 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                     if token is None:
                         token = getattr(getattr(node, "syntax", None), "identifier", None)
                     if token is None:
-                        # Elaborated array expressions can retain a semantic
-                        # target without retaining source syntax.  The
-                        # source-backed sibling node is the only valid range
-                        # evidence for this reference.
+                        source_range = _expression_range(
+                            source_catalog, value, declaration[0]
+                        )
+                    else:
+                        source_range = _token_source_range(
+                            source_catalog, token, declaration[0]
+                        )
+                    if source_range == declaration[1]:
                         continue
-                    source_range = _token_source_range(
-                        source_catalog, token, declaration[0]
-                    )
                     occurrence = SymbolOccurrence(source_range, "semantic_expression")
                     occurrence_key = (
                         source_range.file,
@@ -2348,7 +2862,7 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             continue
         elif node_kind == pyslang.ast.ExpressionKind.NamedValue:
             target = getattr(node, "symbol", None)
-            if target is None and id(node) not in element_value_ids:
+            if target is None and semantic_range_key(node) not in element_value_ranges:
                 if getattr(node, "syntax", None) is None:
                     continue
                 file, start = _syntax_start(source_catalog, node)
@@ -2364,20 +2878,29 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             continue
         if not _is_signal_target(target):
             continue
-        if getattr(node, "syntax", None) is None:
-            if id(node) in element_value_ids:
-                continue
-            # PySlang exposes a few aggregate/member expression symbols without
-            # a direct token.  They are intentionally left out here; the
-            # extended product collector below records byte-backed member
-            # ranges where a stable source token exists.
-            continue
         target_key = _signal_range_key(source_catalog, target)
         declaration = declarations.get(target_key)
         if declaration is None:
             continue
+        if getattr(node, "syntax", None) is None:
+            if semantic_range_key(node) in element_value_ranges:
+                continue
+            source_range = _expression_range(source_catalog, node, declaration[0])
+            if source_range == declaration[1]:
+                continue
+            occurrence = SymbolOccurrence(source_range, "semantic_expression")
+            occurrence_key = (
+                source_range.file,
+                source_range.start,
+                source_range.end,
+                occurrence.provenance,
+            )
+            occurrences[target_key][occurrence_key] = occurrence
+            continue
         name = declaration[0]
         source_range = _expression_range(source_catalog, node, name)
+        if source_range == declaration[1]:
+            continue
         occurrence = SymbolOccurrence(source_range, "semantic_expression")
         occurrence_key = (
             source_range.file,
@@ -2387,59 +2910,7 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         )
         occurrences[target_key][occurrence_key] = occurrence
 
-    # Some elaborated generate expressions keep a semantic target but drop
-    # their direct syntax node.  Use only the semantic generate scope's
-    # syntax tree as a bounded, byte-checked fallback for those references.
-    scopes = _semantic_scopes(source_catalog, nodes)
-    signal_keys_by_owner_name = {
-        (owner.owner_id, name): key
-        for key, (name, _declaration, owner) in declarations.items()
-    }
-    for node in nodes:
-        if type(node).__name__ not in {"GenerateBlockArraySymbol", "GenerateBlockSymbol"}:
-            continue
-        syntax = getattr(node, "syntax", None)
-        if syntax is None:
-            continue
-        file, _start, _end = _syntax_span(source_catalog, syntax)
-        syntax_nodes = [syntax, getattr(syntax, "block", None)]
-        tokens = []
-        seen_token_ranges: set[tuple[str, int, int]] = set()
-        for syntax_node in syntax_nodes:
-            for token in _syntax_source_identifier_tokens(syntax_node):
-                token_file, token_start = _location_start(source_catalog, token.location)
-                key = (token_file or "", token_start or -1, len(str(token.rawText)))
-                if key in seen_token_ranges:
-                    continue
-                seen_token_ranges.add(key)
-                tokens.append(token)
-        for token in tokens:
-            name = str(getattr(token, "rawText", ""))
-            token_file, token_start = _location_start(source_catalog, token.location)
-            scope = _scope_at(scopes, token_file, token_start)
-            if scope is None or token_file != file:
-                continue
-            target_key = signal_keys_by_owner_name.get((scope.owner, name))
-            if target_key is None:
-                continue
-            source_range = _token_source_range(source_catalog, token, name)
-            if source_range == declarations[target_key][1]:
-                continue
-            if any(
-                occurrence.source_range == source_range
-                for occurrence in occurrences[target_key].values()
-            ):
-                continue
-            occurrence = SymbolOccurrence(source_range, "semantic_generate_syntax")
-            occurrences[target_key][
-                (
-                    source_range.file,
-                    source_range.start,
-                    source_range.end,
-                    occurrence.provenance,
-                )
-            ] = occurrence
-
+    genvar_symbols = _collect_genvar_symbols(source_catalog, nodes, owners)
     symbols_list: list[SourceSymbol] = []
     for key, (name, declaration, owner) in declarations.items():
         ordered_occurrences = tuple(
@@ -2472,12 +2943,14 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             )
         )
 
-    genvar_symbols = _collect_genvar_symbols(source_catalog, nodes, owners)
     symbols_list.extend(
         _collect_parameter_symbols(source_catalog, nodes, owners, genvar_symbols)
     )
     symbols_list.extend(genvar_symbols)
     symbols_list = _augment_signal_member_occurrences(source_catalog, symbols_list)
+    symbols_list = _augment_signal_generate_connection_occurrences(
+        source_catalog, symbols_list
+    )
     symbols_list.extend(_collect_extended_symbols(source_catalog, symbols_list))
 
     symbols = tuple(

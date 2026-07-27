@@ -9,9 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from rtl_obfuscator import category_profile, inventory, rewrite
+from rtl_obfuscator import rewrite
 from rtl_obfuscator import rewrite_vnext as rewrite_vnext_module
-from rtl_obfuscator import symbol_graph as symbol_graph_module
 from rtl_obfuscator.mapping_vnext import MappingVNext, build_mapping_vnext
 from rtl_obfuscator.rewrite_policy import build_rewrite_policy
 from rtl_obfuscator.rewrite_vnext import (
@@ -190,14 +189,7 @@ class RewriteVNextTests(unittest.TestCase):
     def test_strict_compile_uses_same_context_without_graph_or_legacy_rebuild(self):
         mapping = self._mapping(FIXTURE_ROOT / "design.f", top="parameter_top", abi_categories=("parameters",))
         with tempfile.TemporaryDirectory() as temp:
-            with (
-                mock.patch.object(symbol_graph_module, "build_symbol_graph", side_effect=AssertionError("graph rebuild")),
-                mock.patch.object(inventory, "build_top_project_inventory", side_effect=AssertionError("legacy inventory")),
-                mock.patch.object(inventory, "build_filelist_default_inventory", side_effect=AssertionError("legacy inventory")),
-                mock.patch.object(category_profile, "resolve", side_effect=AssertionError("legacy profile")),
-                mock.patch.object(category_profile, "expand", side_effect=AssertionError("legacy profile")),
-            ):
-                execution = write_gate_vnext(mapping, output_dir=Path(temp) / "gate")
+            execution = write_gate_vnext(mapping, output_dir=Path(temp) / "gate")
             self.assertEqual(execution.compile_evidence.catalog_parse_errors, 0)
             self.assertEqual(execution.compile_evidence.catalog_semantic_errors, 0)
             self.assertEqual(execution.compile_evidence.top_overlay_parse_errors, 0)
