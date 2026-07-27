@@ -1,9 +1,10 @@
 # 单文件、filelist 与 project-root 统一重构计划
 
-- 文档状态：`APPROVED_DESIGN`
+- 文档状态：`IMPLEMENTED`
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
-- 实现状态：R1、R2、R3-A、R3-B、R3-C/T046、R3-D/T047、R3-E/T048、R3-F/T049、R3-G/T050、R3-H/T051、R3-I/T052、R3-J/T053、R3-K/T054、R4/T055、R5-A/T056 已验收；R5-B/T057 已冻结为当前活动任务；本文不是活动任务合同
+- 实现状态：R0–R5 已全部完成；最终发布验收 T057 已 `ACCEPTED`；本文仅保留历史设计决策，
+  当前代码结构见 [`docs/project_structure.md`](project_structure.md)
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
 - 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
 - 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
@@ -24,7 +25,7 @@
 - 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
 - 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
 - 已验收产品收口任务：[`docs/tasks/T056_vnext_product_convergence.md`](tasks/T056_vnext_product_convergence.md)
-- 当前最终验收任务：[`docs/tasks/T057_risc_v_vector_release_acceptance.md`](tasks/T057_risc_v_vector_release_acceptance.md)
+- 已验收最终发布任务：[`docs/tasks/T057_risc_v_vector_release_acceptance.md`](tasks/T057_risc_v_vector_release_acceptance.md)
 - 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
@@ -288,7 +289,7 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 - R5-B/T057：以 `rtl_obfuscator/formal_vnext.py` 提供无场景常量的通用 Formal view/alignment API，
   由 `scripts/risc_v_vector_acceptance.py` 持有 RISC-V-Vector 场景 oracle，运行专门正负 Formal，
   并冻结新架构的 normalized range digest、replacement 数量和 manifests；
-- T057 `ACCEPTED` 即为本轮重构交付完成，不规划 T058；
+- T057 `ACCEPTED` 即为本轮 R0–R5 重构交付完成；后续文档维护不属于该实现阶段；
 - 旧 T029/T035/T037 数量只保留在历史任务单，不再控制产品代码。
 
 ## 7. 每阶段共同停止条件

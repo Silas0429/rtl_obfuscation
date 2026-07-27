@@ -1,8 +1,15 @@
 # 子 Agent 任务单流程
 
 本目录中的已验收任务单保留当时的合同、命令和验收证据，历史路径或数量不代表当前用户接口。
-当前使用说明以根目录 `README.md`、`docs/systemverilog_renaming_table.md`、
-`docs/formal_verification.md` 和 `docs/future_work.md` 为准。
+当前文档入口为：
+
+- 普通用户操作：[`README.md`](../../README.md)；
+- 可加密类型：[`docs/systemverilog_renaming_table.md`](../systemverilog_renaming_table.md)；
+- 开发者结构：[`docs/project_structure.md`](../project_structure.md)。
+
+Formal 和已知边界分别以
+[`docs/formal_verification.md`](../formal_verification.md) 和
+[`docs/future_work.md`](../future_work.md) 为准。
 
 统一重构 R0–R5 还必须遵守
 [`docs/refactor_subagent_protocol.md`](../refactor_subagent_protocol.md)。该规范按任务类型选择一组
@@ -72,7 +79,8 @@
 - 不顺手实现下一任务。
 - 不通过放宽测试、忽略诊断或修改 fixture 来制造通过结果。
 - PySlang API 与文档不一致时，记录实际 API 和最小复现，随后停止等待主 Agent。
-- 所有 Python、EDA 和测试命令都使用 `conda run -n rtl_obfuscation`。
+- 所有内部 Python、测试和 EDA 验收命令都使用
+  `conda run -n rtl_obfuscation`；面向用户的三份主文档仍只展示 `python`。
 - 重构任务不得使用 blanket `unittest discover`；只运行活动任务冻结的目标模块和验收矩阵。
 - 重构任务的格式检查使用 `git diff --check HEAD`，以同时检查 staged 和 unstaged 变更；活动任务
   还必须提供精确的 `READY_FOR_REVIEW` 状态守卫，阻止子 Agent 自行设置 `ACCEPTED`。

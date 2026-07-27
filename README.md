@@ -1,105 +1,110 @@
-# RTL Obfuscation vNext
+# RTL Obfuscation
 
-本项目使用 PySlang 对 SystemVerilog 建立唯一的
-`SourceSet -> SourceCatalog -> SymbolGraph -> RewritePolicy -> MappingVNext`
-语义链路，并通过 actual gate、restore、metrics 和 portable report 完成可审计的标识符改写。
+在仓库根目录使用已安装 `pyslang` 的 Python 运行以下命令。
 
-当前用户入口只有：
+`encrypt-vnext` 是当前唯一的加密子命令。`vNext` 只是这套统一实现沿用的内部名称，不是
+另一种加密算法，也不是需要用户选择的运行模式。
+
+## 单文件加密
+
+`--input` 使用相对于 `--source-root` 的路径：
+
+```sh
+mkdir -p /tmp/rtl-obfuscation-single
+python -m rtl_obfuscator.rewrite encrypt-vnext \
+  --input 11_supported_obfuscation.sv \
+  --source-root rtl_samples \
+  --output-dir /tmp/rtl-obfuscation-single/gate \
+  --map /tmp/rtl-obfuscation-single/mapping.json \
+  --metrics /tmp/rtl-obfuscation-single/metrics.json
+```
+
+## 多文件加密
+
+先准备一个 `.f` 文件，每行写一个相对于 source root 的 SystemVerilog 文件。例如：
 
 ```text
-encrypt-vnext
-decrypt-vnext
+rtl/alu.sv
+rtl/top.sv
 ```
 
-旧 mapping、旧 profile 和旧命令不提供兼容层；未知 operation 会 fail-closed。
-
-## 输入与输出
-
-`encrypt-vnext` 三选一：
+仓库中的 `rtl_samples/filelist.f` 可以直接用于示例：
 
 ```sh
-conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
-  --input tests/fixtures/refactor_symbol_graph_parameters/single.sv \
-  --source-root tests/fixtures/refactor_symbol_graph_parameters \
-  --output-dir /tmp/rtl-vnext/gate \
-  --map /tmp/rtl-vnext/orchestration.json \
-  --metrics /tmp/rtl-vnext/metrics.json
+mkdir -p /tmp/rtl-obfuscation-filelist
+python -m rtl_obfuscator.rewrite encrypt-vnext \
+  --filelist filelist.f \
+  --source-root rtl_samples \
+  --output-dir /tmp/rtl-obfuscation-filelist/gate \
+  --map /tmp/rtl-obfuscation-filelist/mapping.json \
+  --metrics /tmp/rtl-obfuscation-filelist/metrics.json
 ```
+
+`--filelist` 和文件清单中的路径都应相对于 `--source-root`。
+
+filelist 可以选择性地增加 `--top 顶层模块名`。此时，清单中的所有文件仍会按
+`--category` 加密普通名称；只有 `--top` 依赖闭包内的跨模块名称，才能在同时得到
+`--category` 和 `--abi-category` 明确授权后加密。清单中位于该闭包之外的跨模块名称不会
+加密，`--top` 自身对外边界也始终保持不变。
+
+例如，完整选择默认 13 类和其余 6 类时，使用：
 
 ```sh
-conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
-  --filelist tests/fixtures/refactor_symbol_graph_parameters/design.f \
-  --source-root tests/fixtures/refactor_symbol_graph_parameters \
-  --top parameter_top --category all --category interface \
-  --category modules --category ports --encryption-rate 0.35 \
-  --output-dir /tmp/rtl-vnext/gate \
-  --map /tmp/rtl-vnext/orchestration.json \
-  --metrics /tmp/rtl-vnext/metrics.json
+--top your_top \
+--category all --category modules --category ports --category interface
 ```
+
+如果还要加密 top 闭包内允许变化的跨模块名称，需要再按照
+[可加密类型表](docs/systemverilog_renaming_table.md)逐项添加对应的 `--abi-category`。
+
+## Project-root 加密
+
+project-root 模式会自动查找 `--top` 的依赖文件，因此必须提供顶层模块名：
 
 ```sh
-conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite encrypt-vnext \
-  --project-root rtl_samples/example_fifo --top fifo_top \
-  --category all --category interface --category modules --category ports \
-  --output-dir /tmp/rtl-vnext/fifo-gate \
-  --map /tmp/rtl-vnext/fifo-orchestration.json \
-  --metrics /tmp/rtl-vnext/fifo-metrics.json
+mkdir -p /tmp/rtl-obfuscation-project
+python -m rtl_obfuscator.rewrite encrypt-vnext \
+  --project-root rtl_samples/example_fifo \
+  --top fifo_top \
+  --output-dir /tmp/rtl-obfuscation-project/gate \
+  --map /tmp/rtl-obfuscation-project/mapping.json \
+  --metrics /tmp/rtl-obfuscation-project/metrics.json
 ```
 
-`--output-dir` 是 actual gate；`--map` 是
-`rtl-obfuscation.orchestration-vnext`；`--metrics` 是
-`rtl-obfuscation.metrics-vnext`。三个输出均原子发布、不得覆盖已有路径，并且 report 不含绝对路径。
-single-file、filelist 和 project-root 共享同一流水线；project-root report 保留 top closure、compile order、include dirs 和 defines。
+## 输出
 
-恢复只消费持久化 orchestration report、actual gate 和原始 source bytes：
+- `--output-dir`：加密后的 SystemVerilog 文件目录。
+- `--map`：本次加密的映射和执行报告。
+- `--metrics`：本次加密的覆盖率报告。
+
+这三个输出参数都必须提供，而且各自的目标路径必须尚不存在。重复运行时，请换用新路径，
+或先自行处理旧输出。
+
+可选择的加密对象见
+[SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。开发和维护信息见
+[项目结构](docs/project_structure.md)。
+
+## 加密指令选项
+
+完整帮助可以直接查看：
 
 ```sh
-conda run -n rtl_obfuscation python -m rtl_obfuscator.rewrite decrypt-vnext \
-  --map /tmp/rtl-vnext/orchestration.json \
-  --gate-dir /tmp/rtl-vnext/gate \
-  --source-root tests/fixtures/refactor_symbol_graph_parameters \
-  --output-dir /tmp/rtl-vnext/restored \
-  --report /tmp/rtl-vnext/restore.json
+python -m rtl_obfuscator.rewrite encrypt-vnext --help
 ```
 
-失败时不留下部分 gate、restore、JSON 或临时文件；恢复后的 physical files 与输入 bytes 一致。
-
-## 19 类 registry
-
-canonical 顺序固定为：
-
-```text
-signals parameters enum_values genvars functions tasks arguments instances
-generate_blocks typedefs struct_types struct_fields union_fields modules ports
-interfaces interface_instances interface_ports modports
-```
-
-`all` 默认展开前 13 类；`struct` 展开为 `struct_types, struct_fields`；
-`interface` 展开为 `interfaces, interface_instances, interface_ports, modports`。
-ABI category 只能从 `parameters typedefs struct_types struct_fields union_fields modules ports interfaces interface_instances interface_ports modports` 中选择，且必须同时出现在 normalized category、top closure 和完整 binding 中。
-
-SymbolGraph 使用统一 `SourceSymbol`，每个 declaration/reference range 都经过 source-byte、owner、重复和重叠审计。top boundary、未解析 owner、外部消费者和不完整 interface/type binding 默认保留或 fail-closed。
-
-## FIFO demo
-
-`encrypt.py` 只演示非 RISC 的 FIFO vNext project-root 流程：
-
-```sh
-conda run -n rtl_obfuscation python encrypt.py --work-dir /tmp/rtl-vnext-fifo
-```
-
-它会运行 actual gate、portable orchestration/metrics report 和独立 restore，并检查四个 physical files 的 byte identity。
-
-## 验证
-
-项目使用 Conda 环境 `rtl_obfuscation`。常规测试显式列出非 RISC 模块；RISC-V-Vector 专项验证不属于普通 vNext 产品流程。Formal 等价验证只在产生 rewritten RTL 的专门验收任务中按 `docs/formal_verification.md` 执行。
-
-RISC-V-Vector 发布验收由独立场景驱动执行；它不改变产品 CLI：
-
-```sh
-conda run -n rtl_obfuscation python scripts/risc_v_vector_acceptance.py \
-  --work-dir /private/tmp/rtl-obfuscation-t057-release
-```
-
-该驱动使用通用 `formal_vnext.py` view/alignment API，并在 actual selected gate 上完成唯一一次
-正例与功能负例 Formal。
+| 选项 | 是否必需 | 用法 |
+| --- | --- | --- |
+| `--input PATH` | 三选一 | 加密一个 `.sv` 文件；路径相对于 `--source-root`，也可使用绝对路径。 |
+| `--filelist PATH` | 三选一 | 加密 `.f` 文件列出的多个文件；路径相对于 `--source-root`，也可使用绝对路径。 |
+| `--project-root PATH` | 三选一 | 自动发现项目文件；使用时必须同时提供 `--top`，且不提供 `--source-root`。 |
+| `--source-root PATH` | single/filelist 必需 | 单文件或 filelist 的源文件根目录。 |
+| `--top NAME` | project-root 必需，single/filelist 可选 | 顶层模块名；filelist 提供后仍加密全部清单文件的普通名称，只把 ABI 授权限制在 top 闭包内，并保留 top 自身边界。 |
+| `--include-dir PATH` | 可选，可重复 | 添加 include 目录。相对路径以 source root 为基准。 |
+| `--define NAME[=VALUE]` | 可选，可重复 | 添加预处理宏，例如 `--define SYNTHESIS` 或 `--define WIDTH=32`。 |
+| `--category NAME` | 可选，可重复 | 选择加密类型。未提供时使用默认类型；合法值见可加密类型表。 |
+| `--abi-category NAME` | 可选，可重复 | 允许加密指定的跨模块名称；需要 `--top`，且该类型也必须出现在 `--category` 中。 |
+| `--encryption-rate RATE` | 可选 | 加密比例，范围为大于 `0` 且不大于 `1`。 |
+| `--name-length N` | 可选 | 新名称长度，最小为 `4`，默认值为 `20`。 |
+| `--output-dir PATH` | 必需 | 加密文件输出目录；目标必须不存在，父目录必须存在。 |
+| `--map PATH` | 必需 | 映射报告文件；目标必须不存在，父目录必须存在。 |
+| `--metrics PATH` | 必需 | 覆盖率报告文件；目标必须不存在，父目录必须存在。 |

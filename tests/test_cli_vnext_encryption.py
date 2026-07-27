@@ -96,7 +96,7 @@ class CliVNextEncryptionTests(unittest.TestCase):
             metrics_file = root / "metrics.json"
             result = self._run_cli(
                 "--input",
-                str(FIXTURE_ROOT / "single.sv"),
+                "single.sv",
                 "--source-root",
                 str(FIXTURE_ROOT),
                 "--name-length",
@@ -218,12 +218,12 @@ class CliVNextEncryptionTests(unittest.TestCase):
                 arguments = (
                     (
                         "--input",
-                        str(FIXTURE_ROOT / "single.sv"),
+                        "single.sv",
                     )
                     if mode == "single"
                     else (
                         "--filelist",
-                        str(FIXTURE_ROOT / "single.f"),
+                        "single.f",
                     )
                 )
                 result = self._run_cli(

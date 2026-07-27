@@ -1,71 +1,49 @@
-# SystemVerilog 重命名表
+# SystemVerilog 可加密类型表
 
-本表描述当前 vNext 产品支持的 canonical category。所有 entry 必须来自 PySlang semantic
-object，并通过唯一 SourceCatalog owner registry、source-byte range audit 和 actual gate 验证。
+使用一个或多个 `--category` 选择要加密的名称类型。
 
-## Canonical registry
+| 选项值 | 加密对象 | 默认选择 | 跨模块名称要求 |
+| --- | --- | --- | --- |
+| `signals` | 模块内的变量和连线 | 是 | 不适用 |
+| `parameters` | parameter、localparam 和 generate 迭代参数 | 是 | 跨模块参数需要 `--top`，并同时使用 `--category parameters --abi-category parameters` |
+| `enum_values` | 枚举值 | 是 | 不适用 |
+| `genvars` | generate-for 的 genvar | 是 | 不适用 |
+| `functions` | function 名称 | 是 | 不适用 |
+| `tasks` | task 名称 | 是 | 不适用 |
+| `arguments` | function 和 task 的参数 | 是 | 不适用 |
+| `instances` | 模块实例名称 | 是 | 不适用 |
+| `generate_blocks` | 命名 generate block | 是 | 不适用 |
+| `typedefs` | 非 struct/union 的 typedef 名称 | 是 | 跨模块使用的类型需要 `--top`，并同时使用 `--category typedefs --abi-category typedefs` |
+| `struct_types` | struct/union 类型名称 | 是 | 跨模块使用的类型需要 `--top`，并同时使用 `--category struct_types --abi-category struct_types` |
+| `struct_fields` | struct 成员名称 | 是 | 跨模块使用的成员需要 `--top`，并同时使用 `--category struct_fields --abi-category struct_fields` |
+| `union_fields` | union 成员名称 | 是 | 跨模块使用的成员需要 `--top`，并同时使用 `--category union_fields --abi-category union_fields` |
+| `modules` | 模块名称 | 否 | 需要 `--top`，并同时使用 `--category modules --abi-category modules` |
+| `ports` | 普通模块端口名称 | 否 | 需要 `--top`，并同时使用 `--category ports --abi-category ports` |
+| `interfaces` | interface 名称 | 否 | 需要 `--top`，并同时使用 `--category interfaces --abi-category interfaces` |
+| `interface_instances` | interface 实例名称 | 否 | 需要 `--top`，并同时使用 `--category interface_instances --abi-category interface_instances` |
+| `interface_ports` | interface 端口或成员名称 | 否 | 需要 `--top`，并同时使用 `--category interface_ports --abi-category interface_ports` |
+| `modports` | modport 名称 | 否 | 需要 `--top`，并同时使用 `--category modports --abi-category modports` |
 
-固定顺序为：
+## 默认选择和快捷值
 
-```text
-signals parameters enum_values genvars functions tasks arguments instances
-generate_blocks typedefs struct_types struct_fields union_fields modules ports
-interfaces interface_instances interface_ports modports
+不提供 `--category` 时，默认选择表中的前 13 类。快捷值 `all` 也只展开这 13 类，不包含
+`modules`、`ports` 或 interface 相关类型。
+
+- `--category struct` 等同于
+  `--category struct_types --category struct_fields`。
+- `--category interface` 等同于
+  `--category interfaces --category interface_instances --category interface_ports --category modports`。
+
+一旦显式提供任意 `--category`，默认类型不会自动追加。例如，同时选择默认 13 类、模块名和端口名：
+
+```sh
+--top top_module \
+--category all --category modules --category ports \
+--abi-category modules --abi-category ports
 ```
 
-默认选择和 `all` 展开前 13 类：`signals`、`parameters`、`enum_values`、`genvars`、
-`functions`、`tasks`、`arguments`、`instances`、`generate_blocks`、`typedefs`、
-`struct_types`、`struct_fields`、`union_fields`。alias `struct` 展开为
-`struct_types + struct_fields`，alias `interface` 展开为
-`interfaces + interface_instances + interface_ports + modports`。
+跨模块名称必须满足三项要求：
 
-## Category 语义
-
-| Category | semantic object | 必须同步修改 |
-| --- | --- | --- |
-| `signals` | module variable/net | declaration、semantic expression、select 和 member base |
-| `parameters` | value parameter、localparam、generate iteration parameter | declaration、dimension、expression、generate 和 named override |
-| `enum_values` | semantic enum value | declaration 和 bound expression |
-| `genvars` | generate-for genvar | declaration、condition、iteration 和 body |
-| `functions` | subroutine/function | declaration、bound return variable 和 call/reference |
-| `tasks` | task subroutine | declaration 和 bound reference |
-| `arguments` | function/task formal argument | declaration 和 subroutine body |
-| `instances` | named module instance | instance declaration |
-| `generate_blocks` | named generate block | semantic generate declaration |
-| `typedefs` | non-aggregate type alias | declaration 和 semantic type use |
-| `struct_types` | struct/union aggregate type alias | declaration 和 semantic type use |
-| `struct_fields` | struct field | declaration 和 semantic member access |
-| `union_fields` | union field | declaration 和 semantic member access |
-| `modules` | module definition | declaration 和 semantic hierarchy type |
-| `ports` | ordinary module port | declaration、semantic body use 和 named connection |
-| `interfaces` | interface definition | declaration、instance type 和 interface-port type |
-| `interface_instances` | named interface instance | instance declaration |
-| `interface_ports` | interface port/member | declaration、member use、connection 和 modport member |
-| `modports` | modport declaration | declaration and bound interface use |
-
-`module`、`interface`、type、subroutine、generate 和 `$unit` owners 都必须在同一个 semantic
-owner registry 中实际存在。一个 physical range 只能归属一个 symbol；精确重复、部分重叠、
-multiple owner 或缺少 source-byte evidence 必须 fail-closed。
-
-## ABI 与 top boundary
-
-可成为 `module_abi` 的类别固定为：
-
-```text
-parameters typedefs struct_types struct_fields union_fields modules ports
-interfaces interface_instances interface_ports modports
-```
-
-有 top 时，只有显式 ABI opt-in、位于 top closure 且 declaration/reference 完整绑定的对象可
-改写；selected top ABI 保持 preserved，closure 外对象保持 preserved。无 top 时 ABI 对象不进入
-rename。`all` 不隐式启用 ABI category。
-
-同名文本不等于同一语义对象。不同 module/type/subroutine owner、aggregate field、named
-connection、generate/genvar 和 iteration parameter 必须保持独立 identity；无法证明时不得用
-全文件拼写搜索补齐 mapping。
-
-## 输入与外部边界
-
-三种输入入口共享同一 vNext semantic path。testbench、SDC、Tcl、软件模型、外部层次路径、
-package/class/DPI/bind/clocking/virtual-interface 语义不会被隐式改写；超出 semantic coverage
-的输入应以稳定错误 fail-closed。
+1. 提供 `--top`；
+2. 用 `--category` 选择该类型；
+3. 用 `--abi-category` 再次明确允许该类型。

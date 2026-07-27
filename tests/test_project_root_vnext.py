@@ -9,12 +9,17 @@ from unittest import mock
 
 from rtl_obfuscator import orchestration_vnext
 from rtl_obfuscator import rewrite as rewrite_module
+from rtl_obfuscator.category_registry_vnext import (
+    CANONICAL_CATEGORIES,
+    MODULE_ABI_CATEGORIES,
+)
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "refactor_symbol_graph_parameters"
+FIFO_ROOT = ROOT / "rtl_samples" / "example_fifo"
 
 
 class ProjectRootVNextTests(unittest.TestCase):
@@ -125,6 +130,196 @@ class ProjectRootVNextTests(unittest.TestCase):
         source_set = report["source_set"]
         assert isinstance(source_set, dict)
         return tuple(dict.fromkeys((*source_set["ordered_source_files"], *source_set["included_files"])))
+
+    @staticmethod
+    def _full_encryption_selection_args() -> tuple[str, ...]:
+        arguments = [
+            "--category", "all",
+            "--category", "modules",
+            "--category", "ports",
+            "--category", "interface",
+        ]
+        for category in MODULE_ABI_CATEGORIES:
+            arguments.extend(("--abi-category", category))
+        return tuple(arguments)
+
+    def _assert_cli_restore_identity(
+        self,
+        *,
+        root: Path,
+        gate: Path,
+        mapping_path: Path,
+        source_root: Path,
+        physical_files: tuple[str, ...],
+    ) -> None:
+        restored = root / "restored"
+        restore_report_path = root / "restore.json"
+        decrypted = self._run(
+            "decrypt-vnext",
+            "--map", str(mapping_path),
+            "--gate-dir", str(gate),
+            "--source-root", str(source_root),
+            "--output-dir", str(restored),
+            "--report", str(restore_report_path),
+        )
+        self.assertEqual(decrypted.returncode, 0, decrypted.stderr)
+        restore_report = json.loads(restore_report_path.read_text(encoding="utf-8"))
+        self.assertTrue(restore_report["summary"]["restored_byte_identical"])
+        for relative_file in physical_files:
+            self.assertTrue((restored / relative_file).is_file(), relative_file)
+            self.assertEqual(
+                (restored / relative_file).read_bytes(),
+                (source_root / relative_file).read_bytes(),
+            )
+
+    def test_fifo_project_root_cli_strict_gate_and_four_file_restore_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gate = root / "gate"
+            mapping_path = root / "orchestration.json"
+            metrics_path = root / "metrics.json"
+            arguments = [
+                "--project-root", str(FIFO_ROOT),
+                "--top", "fifo_top",
+                *self._full_encryption_selection_args(),
+            ]
+            arguments.extend(
+                (
+                    "--name-length", "20",
+                    "--output-dir", str(gate),
+                    "--map", str(mapping_path),
+                    "--metrics", str(metrics_path),
+                )
+            )
+
+            encrypted = self._run("encrypt-vnext", *arguments)
+            self.assertEqual(encrypted.returncode, 0, encrypted.stderr)
+            report = json.loads(mapping_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["source_set"]["origin"], "project-root")
+            self.assertEqual(
+                report["mapping"]["selection"]["selected_categories"],
+                list(CANONICAL_CATEGORIES),
+            )
+            self.assertEqual(
+                report["mapping"]["selection"]["abi_categories"],
+                list(MODULE_ABI_CATEGORIES),
+            )
+            self.assertTrue(report["summary"]["strict_compile_passed"])
+            self.assertTrue(report["summary"]["restored_byte_identical"])
+            physical_files = self._physical_files(report)
+            self.assertEqual(len(physical_files), 4)
+            self._assert_cli_restore_identity(
+                root=root,
+                gate=gate,
+                mapping_path=mapping_path,
+                source_root=FIFO_ROOT,
+                physical_files=physical_files,
+            )
+
+    def test_filelist_top_full_encryption_preserves_abi_boundaries_and_restores_all_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gate = root / "gate"
+            mapping_path = root / "orchestration.json"
+            metrics_path = root / "metrics.json"
+            encrypted = self._run(
+                "encrypt-vnext",
+                "--filelist", "design.f",
+                "--source-root", str(FIXTURE_ROOT),
+                "--top", "parameter_top",
+                *self._full_encryption_selection_args(),
+                "--name-length", "20",
+                "--output-dir", str(gate),
+                "--map", str(mapping_path),
+                "--metrics", str(metrics_path),
+            )
+            self.assertEqual(encrypted.returncode, 0, encrypted.stderr)
+
+            report = json.loads(mapping_path.read_text(encoding="utf-8"))
+            source_set = report["source_set"]
+            mapping = report["mapping"]
+            records = mapping["records"]
+            physical_files = self._physical_files(report)
+            closure_files = set(source_set["top_closure_files"])
+            outside_file = "rtl/unreachable.sv"
+
+            self.assertEqual(source_set["origin"], "filelist")
+            self.assertEqual(source_set["top"], "parameter_top")
+            self.assertEqual(
+                physical_files,
+                (
+                    "rtl/child.sv",
+                    "rtl/shadow.sv",
+                    "rtl/top.sv",
+                    outside_file,
+                ),
+            )
+            self.assertNotIn(outside_file, closure_files)
+            self.assertEqual(
+                mapping["selection"]["selected_categories"],
+                list(CANONICAL_CATEGORIES),
+            )
+            self.assertEqual(
+                mapping["selection"]["abi_categories"],
+                list(MODULE_ABI_CATEGORIES),
+            )
+            self.assertTrue(report["summary"]["strict_compile_passed"])
+            self.assertTrue(report["summary"]["restored_byte_identical"])
+
+            gate_manifest_files = {
+                item["file"]
+                for item in report["mapping_execution"]["gate_manifest"]
+            }
+            self.assertEqual(gate_manifest_files, set(physical_files))
+            for relative_file in physical_files:
+                self.assertTrue((gate / relative_file).is_file(), relative_file)
+
+            self.assertTrue(
+                any(
+                    record["declaration"]["file"] == outside_file
+                    and record["abi"] == "internal"
+                    and record["action"] == "rename"
+                    for record in records
+                ),
+                "an eligible non-ABI symbol outside the top closure must be renamed",
+            )
+            self.assertTrue(
+                any(
+                    record["declaration"]["file"] == outside_file
+                    and record["category"] in MODULE_ABI_CATEGORIES
+                    and record["action"] == "preserve"
+                    and record["reason"] == "outside_top_closure"
+                    for record in records
+                ),
+                "ABI symbols outside the top closure must be preserved",
+            )
+            self.assertTrue(
+                any(
+                    record["declaration"]["file"] in closure_files
+                    and record["category"] in MODULE_ABI_CATEGORIES
+                    and record["abi"] == "module_abi"
+                    and record["action"] == "rename"
+                    for record in records
+                ),
+                "authorized ABI symbols inside the top closure must be renamed",
+            )
+            self.assertTrue(
+                any(
+                    record["declaration"]["file"] in closure_files
+                    and record["abi"] == "top_boundary"
+                    and record["action"] == "preserve"
+                    and record["reason"] == "selected_top_boundary"
+                    for record in records
+                ),
+                "the selected top ABI boundary must be preserved",
+            )
+            self._assert_cli_restore_identity(
+                root=root,
+                gate=gate,
+                mapping_path=mapping_path,
+                source_root=FIXTURE_ROOT,
+                physical_files=physical_files,
+            )
 
     def test_project_root_no_rate_matches_equivalent_filelist(self):
         with tempfile.TemporaryDirectory() as temp:

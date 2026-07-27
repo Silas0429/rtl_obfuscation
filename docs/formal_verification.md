@@ -25,7 +25,7 @@ Formal 非零，并包含 `unproven` 与 `equiv_status -assert`。不得删除�
 恢复入口是 `decrypt-vnext`，从 report hydration 后调用既有 restore engine：
 
 ```sh
-conda run -n rtl_obfuscation python scripts/formal_equivalence.py \
+python scripts/formal_equivalence.py \
   --gold-filelist tests/fixtures/refactor_symbol_graph_parameters/design.f \
   --gold-root tests/fixtures/refactor_symbol_graph_parameters \
   --gate-filelist <actual-gate>/design.f \

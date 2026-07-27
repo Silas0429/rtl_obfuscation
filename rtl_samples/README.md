@@ -26,9 +26,9 @@ arguments, instances, generate block labels, typedefs, struct types, struct
 fields, and union fields. A one-pass `--category all` run on sample 11 produces
 33 mapping entries and 90 modified tokens.
 
-`project-root + top` does not accept `all`; it uses five default concept groups
-and a separate explicit group selection, as documented in the repository
-[README workflow section](../README.md).
+当前加密命令见仓库根目录的[最简使用示例](../README.md)，可选名称类型见
+[SystemVerilog 可加密类型表](../docs/systemverilog_renaming_table.md)，代码布局见
+[项目结构](../docs/project_structure.md)。
 
 ## File list
 
@@ -45,7 +45,7 @@ PySlang is the primary frontend. Run this check from the sample directory in a
 Python environment where `pyslang` is installed:
 
 ```sh
-conda run -n rtl_obfuscation python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(bool(tree.diagnostics))'
+python -c 'from pathlib import Path; import pyslang; files=[str(path) for path in sorted(Path(".").glob("*.sv"))]; tree=pyslang.syntax.SyntaxTree.fromFiles(files); print(f"PySlang parsed {len(files)} files; diagnostics={len(tree.diagnostics)}"); raise SystemExit(bool(tree.diagnostics))'
 ```
 
 Verible and Icarus Verilog can be installed for additional syntax checks, but

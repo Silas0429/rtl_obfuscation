@@ -2,22 +2,25 @@
 
 ## Tool environment
 
-- The project toolchain is provided by the Conda environment named `rtl_obfuscation`.
-- Run all Python, parser, HDL, lint, compile, and test commands through this environment.
-- For non-interactive commands, prefer `conda run -n rtl_obfuscation <command>` so the selected environment is explicit and reproducible.
-- Do not use packages or EDA binaries from the Conda `base` environment or the system installation when a project command is available in `rtl_obfuscation`.
-- The environment currently provides Pyverilog, Verible, Icarus Verilog, PySlang, and Yosys.
+- The project development and acceptance toolchain is provided by the Conda environment named
+  `rtl_obfuscation`.
+- Run all internal Python, parser, compile, test, and EDA commands through this environment.
+- Prefer `conda run -n rtl_obfuscation <command>` so the selected environment is explicit and
+  reproducible.
+- User-facing documentation deliberately shows plain `python` commands and assumes the user's
+  Python environment already provides PySlang. Do not copy internal Conda prefixes into user
+  instructions.
 
 Examples:
 
 ```sh
-conda run -n rtl_obfuscation python -m unittest tests.test_variable_rewrite -v
+conda run -n rtl_obfuscation python -m unittest tests.test_source_set -v
 conda run -n rtl_obfuscation iverilog -g2012 -t null design.sv
 conda run -n rtl_obfuscation verible-verilog-syntax design.sv
 conda run -n rtl_obfuscation yosys -V
 ```
 
-- The current environment does not provide `pytest`; the repository test suite uses Python's built-in `unittest` runner shown above.
+- The repository test suite uses Python's built-in `unittest` runner shown above.
 
 ## RTL language scope
 
@@ -34,7 +37,8 @@ conda run -n rtl_obfuscation yosys -V
 ## Renaming implementation sources of truth
 
 - `docs/systemverilog_renaming_table.md` defines the only renaming categories in scope.
-- `README.md` defines the current user workflow, implementation overview, and delivered capability boundaries.
+- `README.md` defines the current user encryption workflow and CLI options.
+- `docs/project_structure.md` defines the current product structure and module responsibilities.
 - `docs/formal_verification.md` defines the mandatory Yosys equivalence flow for rewritten RTL.
 - `docs/future_work.md` records unsupported behavior and possible future expansion; it does not authorize implementation.
 - `docs/tasks/README.md` defines the mandatory task status workflow.
