@@ -154,11 +154,13 @@ class CliVNextEncryptionTests(unittest.TestCase):
             self.assertEqual(
                 (gate / "encryption_summary.txt").read_text(encoding="utf-8").splitlines(),
                 [
-                    "加密率：1.0",
+                    f"加密率：{metrics['affected_lines']['rate']}",
+                    f"实际加密行数：{metrics['affected_lines']['changed']}",
                     f"总代码行数：{metrics['effective_lines']['total']}",
-                    f"替换行数：{metrics['affected_lines']['changed']}",
-                    f"总替换名称数：{len(mapping_rows)}",
-                    f"替换类型数：{len(renamed_categories)}",
+                    f"实际加密名称数：{metrics['symbols']['renamed']}",
+                    f"可加密名称数：{metrics['symbols']['eligible']}",
+                    f"加密覆盖率：{metrics['effective_coverage']}",
+                    f"加密类型数：{len(renamed_categories)}",
                     f"加密类型：{', '.join(renamed_categories)}",
                 ],
             )

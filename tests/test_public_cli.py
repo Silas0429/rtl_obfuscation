@@ -506,7 +506,7 @@ class PublicCliTests(unittest.TestCase):
                 ]
                 if rate:
                     arguments.extend(("--encryption-rate", "0.35"))
-                gate, mapping, _metrics, report = self._encrypt(
+                gate, mapping, metrics, report = self._encrypt(
                     root / name,
                     *arguments,
                     map_location=map_location,
@@ -528,9 +528,32 @@ class PublicCliTests(unittest.TestCase):
                     .read_text(encoding="utf-8")
                     .splitlines()
                 )
+                metrics_report = json.loads(metrics.read_text(encoding="utf-8"))
                 self.assertEqual(
                     summary_lines[0],
-                    "加密率：0.35" if rate else "加密率：1.0",
+                    f"加密率：{metrics_report['affected_lines']['rate']}",
+                )
+                renamed_categories = [
+                    category
+                    for category in CANONICAL_CATEGORIES
+                    if any(
+                        record["action"] == "rename"
+                        and record["category"] == category
+                        for record in report["mapping"]["records"]
+                    )
+                ]
+                self.assertEqual(
+                    summary_lines,
+                    [
+                        f"加密率：{metrics_report['affected_lines']['rate']}",
+                        f"实际加密行数：{metrics_report['affected_lines']['changed']}",
+                        f"总代码行数：{metrics_report['effective_lines']['total']}",
+                        f"实际加密名称数：{metrics_report['symbols']['renamed']}",
+                        f"可加密名称数：{metrics_report['symbols']['eligible']}",
+                        f"加密覆盖率：{metrics_report['effective_coverage']}",
+                        f"加密类型数：{len(renamed_categories)}",
+                        f"加密类型：{', '.join(renamed_categories)}",
+                    ]
                 )
                 for relative in self._physical_files(report):
                     self.assertEqual(

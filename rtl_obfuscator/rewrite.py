@@ -560,12 +560,21 @@ def _cli_vnext_encryption_summary(
     records = mapping.get("records") if isinstance(mapping, dict) else None
     effective_lines = metrics_report.get("effective_lines")
     affected_lines = metrics_report.get("affected_lines")
+    symbols = metrics_report.get("symbols")
+    effective_coverage = metrics_report.get("effective_coverage")
     if (
         not isinstance(records, list)
         or not isinstance(effective_lines, dict)
         or not isinstance(affected_lines, dict)
+        or not isinstance(symbols, dict)
         or type(effective_lines.get("total")) is not int
         or type(affected_lines.get("changed")) is not int
+        or isinstance(affected_lines.get("rate"), bool)
+        or not isinstance(affected_lines.get("rate"), (int, float))
+        or type(symbols.get("renamed")) is not int
+        or type(symbols.get("eligible")) is not int
+        or isinstance(effective_coverage, bool)
+        or not isinstance(effective_coverage, (int, float))
     ):
         _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
     renamed_records = []
@@ -582,22 +591,15 @@ def _cli_vnext_encryption_summary(
     categories = tuple(
         category for category in CANONICAL_CATEGORIES if category in category_set
     )
-    rate_report = report.get("rate_metrics")
-    if rate_report is None:
-        encryption_rate = "1.0"
-    else:
-        selection = rate_report.get("rate_selection") if isinstance(rate_report, dict) else None
-        target = selection.get("target") if isinstance(selection, dict) else None
-        if isinstance(target, bool) or not isinstance(target, (int, float)):
-            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-        encryption_rate = str(target)
     return "\n".join(
         (
-            f"加密率：{encryption_rate}",
+            f"加密率：{affected_lines['rate']}",
+            f"实际加密行数：{affected_lines['changed']}",
             f"总代码行数：{effective_lines['total']}",
-            f"替换行数：{affected_lines['changed']}",
-            f"总替换名称数：{len(renamed_records)}",
-            f"替换类型数：{len(categories)}",
+            f"实际加密名称数：{symbols['renamed']}",
+            f"可加密名称数：{symbols['eligible']}",
+            f"加密覆盖率：{effective_coverage}",
+            f"加密类型数：{len(categories)}",
             f"加密类型：{', '.join(categories)}",
         )
     ) + "\n"

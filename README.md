@@ -54,7 +54,8 @@ project-root 必须提供 `--top`。工具会自动找到该 top 使用的源码
 - `mapping.json`：用于恢复原始名称，同时记录本次加密结果。
 - `metrics.json`：记录实际加密覆盖率。
 - `mapping_table.csv`：用表格列出每个实际替换的文件名、模块名、作用域、加密类型、原名和替换后名。
-- `encryption_summary.txt`：用文字列出加密率、代码行数、替换行数、替换名称数和实际加密类型。
+- `encryption_summary.txt`：用文字列出实际加密率、加密行数、总代码行数、实际/可加密名称数、
+  加密覆盖率和实际加密类型。
 
 CSV 中的作用域会使用简短形式，例如 `type:pair_t`、`task:select_value` 和
 `generate:line 42`；不会写入完整的 generate 语句。
