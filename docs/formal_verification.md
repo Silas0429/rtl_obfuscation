@@ -19,10 +19,11 @@ restore manifest 和 byte identity 是同一交付门禁的一部分。
 Formal 非零，并包含 `unproven` 与 `equiv_status -assert`。不得删除或绕过
 `equiv_status -assert`。
 
-## 当前 vNext 流程
+## 当前产品流程
 
-产品入口是 `encrypt-vnext`；它发布 actual gate、orchestration report 和 metrics report。
-恢复入口是 `decrypt-vnext`，从 report hydration 后调用既有 restore engine：
+公共入口 `python rtl_encrypt.py` 发布 actual gate、orchestration report 和 metrics report。
+公共恢复入口 `python rtl_decrypt.py` 从 report hydration 后调用既有 restore engine。
+持久化 report 和 schema 继续沿用现有 vNext 名称，本次公共命令变化不迁移数据格式：
 
 ```sh
 python scripts/formal_equivalence.py \
@@ -37,7 +38,7 @@ python scripts/formal_equivalence.py \
 `equiv_status -assert` 的证明强度。gold 和 gate 必须使用同一 top、端口形状和 compile context。
 
 恢复时必须校验 report、mapping、gate manifest、range、metrics 和 restored manifest；失败不得
-留下部分输出。`--project-root`、显式 filelist 和 single-file 入口都复用同一 vNext pipeline。
+留下部分输出。`--project-root`、显式 filelist 和 single-file 入口都复用同一执行 pipeline。
 
 ## RISC-V-Vector 边界
 

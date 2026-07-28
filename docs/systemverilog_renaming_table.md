@@ -1,6 +1,6 @@
 # SystemVerilog 可加密类型表
 
-使用一个或多个 `--category` 选择要加密的名称类型。
+在 `python rtl_encrypt.py` 命令中使用一个或多个 `--category` 选择要加密的名称类型。
 
 | 选项值 | 加密对象 | 默认选择 | 跨模块名称要求 |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@
 | `modules` | 模块名称 | 否 | 需要 `--top`，并同时使用 `--category modules --abi-category modules` |
 | `ports` | 普通模块端口名称 | 否 | 需要 `--top`，并同时使用 `--category ports --abi-category ports` |
 | `interfaces` | interface 名称 | 否 | 需要 `--top`，并同时使用 `--category interfaces --abi-category interfaces` |
-| `interface_instances` | interface 实例名称 | 否 | 需要 `--top`，并同时使用 `--category interface_instances --abi-category interface_instances` |
+| `interface_instances` | interface 实例名称 | 否 | 闭包内符合条件的对象需要 `--top`，并同时使用 `--category interface_instances --abi-category interface_instances`；但 selected top 内声明的实例当前按 `selected_top_boundary` 保留 |
 | `interface_ports` | interface 端口或成员名称 | 否 | 需要 `--top`，并同时使用 `--category interface_ports --abi-category interface_ports` |
 | `modports` | modport 名称 | 否 | 需要 `--top`，并同时使用 `--category modports --abi-category modports` |
 
@@ -47,3 +47,7 @@
 1. 提供 `--top`；
 2. 用 `--category` 选择该类型；
 3. 用 `--abi-category` 再次明确允许该类型。
+
+`interface_instances` 还有一个当前边界：双重授权只允许处理 top closure 内其他符合条件的
+interface instance。selected top 内声明的实例仍按 `selected_top_boundary` 保留；例如 FIFO
+示例中的 `fifo_bus`，即使同时选择 category 和 ABI category 也仍会保留。

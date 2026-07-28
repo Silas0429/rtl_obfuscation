@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from rtl_obfuscator import rewrite
 
@@ -20,6 +21,67 @@ class VNextProductSurfaceTests(unittest.TestCase):
         actions = [action for action in parser._actions if action.dest == "operation"]
         self.assertEqual(len(actions), 1)
         self.assertEqual(set(actions[0].choices), {"encrypt-vnext", "decrypt-vnext"})
+
+    def test_public_entrypoints_share_registered_arguments_and_execution_functions(self):
+        internal = rewrite._create_argument_parser()
+        internal_action = next(
+            action for action in internal._actions if action.dest == "operation"
+        )
+        public_encrypt = rewrite._create_encrypt_argument_parser()
+        public_decrypt = rewrite._create_decrypt_argument_parser()
+
+        def option_destinations(parser):
+            return {
+                option: action.dest
+                for action in parser._actions
+                for option in action.option_strings
+                if option != "--help"
+            }
+
+        self.assertEqual(
+            option_destinations(public_encrypt),
+            option_destinations(internal_action.choices["encrypt-vnext"]),
+        )
+        self.assertEqual(
+            option_destinations(public_decrypt),
+            option_destinations(internal_action.choices["decrypt-vnext"]),
+        )
+        public_report = next(
+            action for action in public_decrypt._actions if action.dest == "report"
+        )
+        internal_report = next(
+            action
+            for action in internal_action.choices["decrypt-vnext"]._actions
+            if action.dest == "report"
+        )
+        self.assertTrue(public_report.required)
+        self.assertFalse(internal_report.required)
+
+        with mock.patch.object(
+            rewrite,
+            "_encrypt_vnext",
+            return_value={"summary": "shared"},
+        ) as encrypt:
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "rtl_encrypt",
+                    "--input",
+                    "single.sv",
+                    "--source-root",
+                    ".",
+                    "--output-dir",
+                    "gate",
+                    "--map",
+                    "map.json",
+                    "--metrics",
+                    "metrics.json",
+                ],
+            ):
+                with mock.patch("builtins.print"):
+                    self.assertEqual(rewrite.rtl_encrypt_main(), 0)
+        self.assertEqual(encrypt.call_count, 1)
 
     def test_legacy_operations_fail_without_traceback_or_fallback_output(self):
         for operation in (

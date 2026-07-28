@@ -6,8 +6,12 @@
 
 ## 产品入口
 
-`rtl_obfuscator/rewrite.py` 是唯一产品 CLI，提供 `encrypt-vnext` 加密入口和持久化恢复入口。
-仓库根目录没有额外的演示 wrapper 或兼容 CLI。
+普通用户从仓库根目录运行 `python rtl_encrypt.py` 加密，运行 `python rtl_decrypt.py`
+恢复；无需安装本项目。两个根目录脚本只负责调用共享 Python 函数。
+
+`rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
+中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`
+operation 暂时只为历史测试和兼容保留，不是当前用户接口。
 
 ## 核心模块
 
@@ -33,8 +37,11 @@
 当前数据流：
 
 ```text
-CLI -> SourceSet -> SourceCatalog -> SymbolGraph -> RewritePolicy
+python rtl_encrypt.py -> SourceSet -> SourceCatalog -> SymbolGraph -> RewritePolicy
     -> MappingVNext -> optional rate -> gate/restore -> metrics/report
+
+python rtl_decrypt.py -> persisted report + gate + original source
+    -> validation -> byte-identical restore
 ```
 
 ## 测试、脚本和样例

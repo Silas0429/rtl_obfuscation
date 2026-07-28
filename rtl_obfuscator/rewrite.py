@@ -378,45 +378,71 @@ def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
 
 
 
+def _register_encrypt_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--input", dest="input_file", type=Path)
+    parser.add_argument("--filelist", type=Path)
+    parser.add_argument("--project-root", type=Path)
+    parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--top")
+    parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[])
+    parser.add_argument("--define", dest="defines", action="append", default=[])
+    parser.add_argument("--category", action="append", default=None)
+    parser.add_argument("--abi-category", action="append", default=None)
+    parser.add_argument("--encryption-rate")
+    parser.add_argument("--name-length", default=20)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--map", dest="map_file", required=True, type=Path)
+    parser.add_argument("--metrics", dest="metrics_file", required=True, type=Path)
+
+
+def _register_decrypt_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    report_required: bool,
+) -> None:
+    parser.add_argument("--map", dest="map_file", required=True, type=Path)
+    parser.add_argument("--gate-dir", required=True, type=Path)
+    parser.add_argument("--source-root", required=True, type=Path)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--report", required=report_required, type=Path)
+
+
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="vNext SystemVerilog encryption and restore")
     subparsers = parser.add_subparsers(dest="operation", required=True)
-
-    encrypt = subparsers.add_parser("encrypt-vnext")
-    encrypt.add_argument("--input", dest="input_file", type=Path)
-    encrypt.add_argument("--filelist", type=Path)
-    encrypt.add_argument("--project-root", type=Path)
-    encrypt.add_argument("--source-root", type=Path)
-    encrypt.add_argument("--top")
-    encrypt.add_argument("--include-dir", dest="include_dirs", action="append", default=[])
-    encrypt.add_argument("--define", dest="defines", action="append", default=[])
-    encrypt.add_argument("--category", action="append", default=None)
-    encrypt.add_argument("--abi-category", action="append", default=None)
-    encrypt.add_argument("--encryption-rate")
-    encrypt.add_argument("--name-length", default=20)
-    encrypt.add_argument("--output-dir", required=True, type=Path)
-    encrypt.add_argument("--map", dest="map_file", required=True, type=Path)
-    encrypt.add_argument("--metrics", dest="metrics_file", required=True, type=Path)
-
-    decrypt = subparsers.add_parser("decrypt-vnext")
-    decrypt.add_argument("--map", dest="map_file", required=True, type=Path)
-    decrypt.add_argument("--gate-dir", required=True, type=Path)
-    decrypt.add_argument("--source-root", required=True, type=Path)
-    decrypt.add_argument("--output-dir", required=True, type=Path)
-    decrypt.add_argument("--report", type=Path)
+    _register_encrypt_arguments(subparsers.add_parser("encrypt-vnext"))
+    _register_decrypt_arguments(
+        subparsers.add_parser("decrypt-vnext"),
+        report_required=False,
+    )
     return parser
 
 
-def main() -> int:
-    parser = _create_argument_parser()
-    args = parser.parse_args()
+def _create_encrypt_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="rtl_encrypt",
+        description="Encrypt selected SystemVerilog identifiers.",
+    )
+    _register_encrypt_arguments(parser)
+    return parser
+
+
+def _create_decrypt_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="rtl_decrypt",
+        description="Restore SystemVerilog sources from an encryption report.",
+    )
+    _register_decrypt_arguments(parser, report_required=True)
+    return parser
+
+
+def _run_cli_operation(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    operation: Any,
+) -> int:
     try:
-        if args.operation == "encrypt-vnext":
-            summary = _encrypt_vnext(args)
-        elif args.operation == "decrypt-vnext":
-            summary = _decrypt_vnext(args)
-        else:
-            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        summary = operation(args)
     except _CliVNextError as error:
         parser.exit(1, f"error: {error.code}\n")
     except restore_vnext.RestoreVNextError as error:
@@ -425,6 +451,28 @@ def main() -> int:
         parser.exit(1, "error: CLI_VNEXT_INPUT_INVALID\n")
     print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
     return 0
+
+
+def rtl_encrypt_main() -> int:
+    parser = _create_encrypt_argument_parser()
+    return _run_cli_operation(parser, parser.parse_args(), _encrypt_vnext)
+
+
+def rtl_decrypt_main() -> int:
+    parser = _create_decrypt_argument_parser()
+    return _run_cli_operation(parser, parser.parse_args(), _decrypt_vnext)
+
+
+def main() -> int:
+    parser = _create_argument_parser()
+    args = parser.parse_args()
+    if args.operation == "encrypt-vnext":
+        operation = _encrypt_vnext
+    elif args.operation == "decrypt-vnext":
+        operation = _decrypt_vnext
+    else:
+        operation = lambda _args: _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    return _run_cli_operation(parser, args, operation)
 
 
 if __name__ == "__main__":
