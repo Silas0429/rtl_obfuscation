@@ -164,6 +164,57 @@ class RestoreVNextTests(unittest.TestCase):
                 self.assertEqual((output / file).read_bytes(), (FIXTURE_ROOT / file).read_bytes())
             self._assert_portable(restored)
 
+    def test_direct_restore_api_reuses_gate_audit_without_original_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gate, mapping = self._encrypt(
+                root / "encrypt",
+                filelist=True,
+                rate=True,
+            )
+            output = root / "direct-restore"
+            with mock.patch.object(
+                orchestration_vnext,
+                "run_vnext",
+                side_effect=AssertionError("regenerate orchestration"),
+            ):
+                restored = restore_vnext.load_direct_restore_vnext(
+                    mapping,
+                    gate_dir=gate,
+                    output_dir=output,
+                )
+            self.assertTrue(restored.rate_enabled)
+            self.assertEqual(
+                restored.restore_result.restored_manifest,
+                restored.mapping_vnext.input_manifest,
+            )
+            persisted = json.loads(mapping.read_text(encoding="utf-8"))
+            for file in self._physical_files(persisted):
+                self.assertEqual(
+                    (output / file).read_bytes(),
+                    (FIXTURE_ROOT / file).read_bytes(),
+                )
+            self.assertFalse((output / "design.f").exists())
+
+            public_args = argparse.Namespace(
+                public_cli=True,
+                map_file=mapping,
+                gate_dir=gate,
+                output_dir=root / "public-restore",
+                report=root / "public-restore.json",
+            )
+            with mock.patch.object(
+                restore_vnext,
+                "write_restore_report_vnext",
+                side_effect=restore_vnext.RestoreVNextError(
+                    "RESTORE_VNEXT_IO_ERROR"
+                ),
+            ):
+                with self.assertRaises(restore_vnext.RestoreVNextError):
+                    rewrite_module._decrypt_vnext(public_args)
+            self.assertFalse(public_args.output_dir.exists())
+            self.assertFalse(public_args.report.exists())
+
     def test_report_gate_source_and_malformed_inputs_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

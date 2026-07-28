@@ -7,7 +7,8 @@
 ## 产品入口
 
 普通用户从仓库根目录运行 `python rtl_encrypt.py` 加密，运行 `python rtl_decrypt.py`
-恢复；无需安装本项目。两个根目录脚本只负责调用共享 Python 函数。
+恢复；无需安装本项目。项目模式也使用 `--source-root`，由缺少 input/filelist 且提供 top
+来推断。两个根目录脚本只负责调用共享 Python 函数。
 
 `rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
 中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`
@@ -40,8 +41,9 @@ operation 暂时只为历史测试和兼容保留，不是当前用户接口。
 python rtl_encrypt.py -> SourceSet -> SourceCatalog -> SymbolGraph -> RewritePolicy
     -> MappingVNext -> optional rate -> gate/restore -> metrics/report
 
-python rtl_decrypt.py -> persisted report + gate + original source
-    -> validation -> byte-identical restore
+python rtl_decrypt.py -> persisted report + actual gate
+    -> gate/range/manifest audit -> direct restore -> hydration validation
+    -> byte-identical source files
 ```
 
 ## 测试、脚本和样例

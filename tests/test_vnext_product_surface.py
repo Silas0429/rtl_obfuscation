@@ -46,11 +46,24 @@ class VNextProductSurfaceTests(unittest.TestCase):
             {
                 option: destination
                 for option, destination in internal_encrypt.items()
-                if option != "--abi-category"
+                if option not in {"--abi-category", "--project-root"}
             },
         )
         self.assertEqual(
             option_destinations(public_decrypt),
+            {
+                option: destination
+                for option, destination in option_destinations(
+                    internal_action.choices["decrypt-vnext"]
+                ).items()
+                if option != "--source-root"
+            },
+        )
+        self.assertNotIn("--project-root", option_destinations(public_encrypt))
+        self.assertNotIn("--source-root", option_destinations(public_decrypt))
+        self.assertIn("--project-root", internal_encrypt)
+        self.assertIn(
+            "--source-root",
             option_destinations(internal_action.choices["decrypt-vnext"]),
         )
         public_map = next(
@@ -83,7 +96,7 @@ class VNextProductSurfaceTests(unittest.TestCase):
             for action in internal_action.choices["decrypt-vnext"]._actions
             if action.dest == "report"
         )
-        self.assertTrue(public_report.required)
+        self.assertFalse(public_report.required)
         self.assertFalse(internal_report.required)
 
         with mock.patch.object(
@@ -111,6 +124,31 @@ class VNextProductSurfaceTests(unittest.TestCase):
         self.assertTrue(public_args.public_cli)
         self.assertIsNone(public_args.map_file)
         self.assertIsNone(public_args.metrics_file)
+
+        with mock.patch.object(
+            rewrite,
+            "_decrypt_vnext",
+            return_value={"summary": "shared"},
+        ) as decrypt:
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "rtl_decrypt",
+                    "--map",
+                    "mapping.json",
+                    "--gate-dir",
+                    "gate",
+                    "--output-dir",
+                    "restored",
+                ],
+            ):
+                with mock.patch("builtins.print"):
+                    self.assertEqual(rewrite.rtl_decrypt_main(), 0)
+        public_decrypt_args = decrypt.call_args.args[0]
+        self.assertTrue(public_decrypt_args.public_cli)
+        self.assertFalse(hasattr(public_decrypt_args, "source_root"))
+        self.assertIsNone(public_decrypt_args.report)
 
     def test_legacy_operations_fail_without_traceback_or_fallback_output(self):
         for operation in (

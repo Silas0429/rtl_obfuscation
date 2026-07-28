@@ -1,10 +1,10 @@
 # SystemVerilog 可加密类型表
 
 `python rtl_encrypt.py` 使用 `--category` 选择要加密的名称类型。单文件和不带 `--top`
-的 filelist 默认选择前 13 类；带 `--top` 的 filelist 和 project-root 默认选择全部
-19 类。
+的 filelist 默认选择前 13 类；带 `--top` 的 filelist，以及只提供
+`--source-root + --top` 的项目加密，默认选择全部 19 类。
 
-| `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/project-root 提供 `--top` |
+| `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
 | --- | --- | --- | --- | --- |
 | `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |
 | `parameters` | parameter、localparam 和 generate 参数 | 是 | 加密只在 module 内部使用的参数 | 跨 module 使用的参数及引用会一致改名 |
@@ -29,7 +29,7 @@
 ## 默认选择与快捷值
 
 - 不提供 `--category` 时，单文件和不带 `--top` 的 filelist 加密表中的默认 13 类。
-- 不提供 `--category` 时，带 `--top` 的 filelist 和 project-root 加密全部 19 类。
+- 不提供 `--category` 时，带 `--top` 的 filelist 和项目加密会处理全部 19 类。
 - 一旦手动使用 `--category`，工具只处理用户选择的类型，不再追加默认类型。
 - 快捷值 `all`（`--category all`）：选择全部 19 类。
 - 快捷值 `struct`（`--category struct`）：等同于
@@ -37,8 +37,9 @@
 - 快捷值 `interface`（`--category interface`）：等同于
   `--category interfaces --category interface_instances --category interface_ports --category modports`。
 
-filelist 或 project-root 提供 `--top` 后，工具会自动保证所选类型在子 module 定义和调用
-位置使用同一个新名称。top module 名称和对外端口始终保留。
+filelist 提供 `--top`，或者只提供 `--source-root + --top` 进行项目加密后，工具会自动
+保证所选类型在子 module 定义和调用位置使用同一个新名称。top module 名称和对外端口
+始终保留。
 
 当前版本会保留 top module 内部直接声明的 interface 实例名；interface 类型和成员仍会
 加密。
@@ -57,7 +58,7 @@ filelist 或 project-root 提供 `--top` 后，工具会自动保证所选类型
 --category struct --category union_fields
 ```
 
-在带 `--top` 的 filelist 或 project-root 中，只加密子 module 名称、端口和 interface：
+在带 `--top` 的 filelist 或项目加密中，只加密子 module 名称、端口和 interface：
 
 ```sh
 --category modules --category ports --category interface

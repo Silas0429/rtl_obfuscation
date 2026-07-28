@@ -17,7 +17,7 @@ python rtl_decrypt.py --help
 | --- | --- | --- | --- |
 | 单文件 | 一个 `.sv` 文件及源码根目录 | 该输入文件 | 不改变 module 端口，只加密内部名称 |
 | filelist | filelist 及源码根目录 | filelist 中的全部文件 | 不提供 `--top` 时不改变 module 端口；提供 `--top` 后会同时加密子 module 端口和跨 module 引用 |
-| project-root | top module 及项目根目录 | top module 及其使用的全部源码 | 只保留顶层 module 名称和端口，加密子 module 端口以及跨 module 使用的接口、参数和类型 |
+| project-root | 源码根目录及 top module | top module 及其使用的全部源码 | 只保留顶层 module 名称和端口，加密子 module 端口以及跨 module 使用的接口、参数和类型 |
 
 不提供 `--category` 时，单文件和不带 `--top` 的 filelist 默认加密 13 类常用内部名称，
 包括信号、实例、参数、结构体、函数和任务等。它们不会改变其他 module 调用当前 module
@@ -152,16 +152,17 @@ python rtl_encrypt.py \
 
 ```sh
 python rtl_encrypt.py \
-  --project-root <项目根目录> \
+  --source-root <项目根目录> \
   --top <顶层模块名> \
   --output-dir <加密输出目录>
 ```
 
-- `--project-root`：RTL 项目根目录。
+- `--source-root`：RTL 项目根目录。
 - `--top`：项目对外使用的顶层 module 名称。
 - `--output-dir`：加密结果目录，运行前不能存在。
 
-project-root 不需要 `--source-root` 或 filelist。工具会从 top 开始自动找到实际使用的源码。
+不提供 `--input` 或 `--filelist`、同时提供 `--source-root` 和 `--top` 时，工具会自动进入
+项目加密模式，从 top 开始找到实际使用的源码。
 
 ### 示例与架构
 
@@ -172,7 +173,7 @@ project-root 不需要 `--source-root` 或 filelist。工具会从 top 开始自
 project_work="$(mktemp -d /tmp/rtl-obfuscation-project.XXXXXX)"
 
 python rtl_encrypt.py \
-  --project-root rtl_samples/example_fifo \
+  --source-root rtl_samples/example_fifo \
   --top fifo_top \
   --output-dir "$project_work/gate"
 ```
@@ -191,16 +192,12 @@ python rtl_encrypt.py \
 python rtl_decrypt.py \
   --map <加密输出目录>/mapping.json \
   --gate-dir <加密输出目录> \
-  --source-root <原始源码根目录> \
-  --output-dir <恢复输出目录> \
-  --report <恢复报告.json>
+  --output-dir <恢复输出目录>
 ```
 
 - `--map`：加密时生成的 `mapping.json`。
 - `--gate-dir`：加密 RTL 所在目录。
-- `--source-root`：原始 RTL 根目录，用于检查源文件是否与加密时一致。
 - `--output-dir`：恢复后的源码目录，运行前不能存在。
-- `--report`：恢复结果报告，运行前不能存在。
 
 恢复上面的 project-root 示例：
 
@@ -208,12 +205,13 @@ python rtl_decrypt.py \
 python rtl_decrypt.py \
   --map "$project_work/gate/mapping.json" \
   --gate-dir "$project_work/gate" \
-  --source-root rtl_samples/example_fifo \
-  --output-dir "$project_work/restored" \
-  --report "$project_work/restore.json"
+  --output-dir "$project_work/restored"
 ```
 
 恢复成功后，四个 SystemVerilog 源文件与加密前逐字节一致。
+
+如果还需要保存一份恢复结果报告，可以增加 `--report <恢复报告.json>`。RTL 功能等价验证
+是独立步骤，参见 [Formal 验证流程](docs/formal_verification.md)。
 
 ## 常用可选参数
 
@@ -226,6 +224,7 @@ python rtl_decrypt.py \
 | `--name-length N` | 设置新名称长度，最小为 `4`，默认值为 `20`。 |
 | `--map PATH` | 把映射报告写到指定文件；省略时写入 `<output-dir>/mapping.json`。 |
 | `--metrics PATH` | 把覆盖率报告写到指定文件；省略时写入 `<output-dir>/metrics.json`。 |
+| `--report PATH` | 解密时把恢复结果报告写到指定文件；省略时只输出恢复后的 RTL。 |
 
 可加密内容和 `--category` 示例见
 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。开发与维护信息见

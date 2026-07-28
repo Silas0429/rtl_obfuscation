@@ -114,15 +114,33 @@ def _cli_vnext_validate_arguments(
     input_file = getattr(args, "input_file", None)
     filelist = getattr(args, "filelist", None)
     project_root_arg = getattr(args, "project_root", None)
-    modes = sum(value is not None for value in (input_file, filelist, project_root_arg))
-    if modes != 1:
+    public_cli = bool(getattr(args, "public_cli", False))
+    source_root_value = getattr(args, "source_root", None)
+    public_project_mode = (
+        public_cli
+        and input_file is None
+        and filelist is None
+        and source_root_value is not None
+        and args.top is not None
+    )
+    if public_cli:
+        if project_root_arg is not None or sum(
+            value is not None for value in (input_file, filelist)
+        ) > 1:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        if input_file is None and filelist is None and not public_project_mode:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+    elif sum(
+        value is not None for value in (input_file, filelist, project_root_arg)
+    ) != 1:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+
     if project_root_arg is not None:
         if getattr(args, "source_root", None) is not None or args.top is None:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
         source_root_arg = project_root_arg
     else:
-        source_root_arg = getattr(args, "source_root", None)
+        source_root_arg = source_root_value
         if source_root_arg is None:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     try:
@@ -132,9 +150,8 @@ def _cli_vnext_validate_arguments(
     if not source_root.is_dir():
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
 
-    public_cli = bool(getattr(args, "public_cli", False))
     public_top_scope = public_cli and (
-        project_root_arg is not None
+        public_project_mode
         or (filelist is not None and args.top is not None)
     )
     try:
@@ -229,7 +246,11 @@ def _cli_vnext_input_path(value: Path, source_root: Path) -> Path:
 
 def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
     try:
-        if getattr(args, "project_root", None) is not None:
+        if getattr(args, "project_root", None) is not None or (
+            bool(getattr(args, "public_cli", False))
+            and getattr(args, "input_file", None) is None
+            and getattr(args, "filelist", None) is None
+        ):
             return from_project_root(
                 project_root=source_root,
                 top=args.top,
@@ -408,20 +429,30 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
 def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
     """Restore one persisted T053 orchestration envelope in a new process."""
 
-    try:
-        map_path, gate_path, source_path, output_path, report_path = restore_vnext._validate_paths(
-            args.map_file,
-            args.gate_dir,
-            args.source_root,
-            args.output_dir,
-            args.report,
+    public_cli = bool(getattr(args, "public_cli", False))
+    if public_cli:
+        map_path, gate_path, output_path, report_path = (
+            restore_vnext.validate_direct_restore_paths_vnext(
+                args.map_file,
+                args.gate_dir,
+                args.output_dir,
+                args.report,
+            )
         )
-    except restore_vnext.RestoreVNextError:
-        raise
-    if report_path is None:
-        raise restore_vnext.RestoreVNextError(
-            "RESTORE_VNEXT_OUTPUT_INVALID", "report is required"
+    else:
+        map_path, gate_path, source_path, output_path, report_path = (
+            restore_vnext._validate_paths(
+                args.map_file,
+                args.gate_dir,
+                args.source_root,
+                args.output_dir,
+                args.report,
+            )
         )
+        if report_path is None:
+            raise restore_vnext.RestoreVNextError(
+                "RESTORE_VNEXT_OUTPUT_INVALID", "report is required"
+            )
     try:
         staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-restore-cli-vnext-"))
     except OSError as error:
@@ -429,16 +460,24 @@ def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
     staging_restore = staging_root / "restore"
     staging_report = staging_root / "restore.json"
     try:
-        restored = restore_vnext.load_restore_vnext(
-            map_path,
-            gate_dir=gate_path,
-            source_root=source_path,
-            output_dir=staging_restore,
-        )
-        restore_vnext.write_restore_report_vnext(restored, staging_report)
-        restore_vnext.publish_restore_vnext(
-            [(staging_restore, output_path), (staging_report, report_path)]
-        )
+        if public_cli:
+            restored = restore_vnext.load_direct_restore_vnext(
+                map_path,
+                gate_dir=gate_path,
+                output_dir=staging_restore,
+            )
+        else:
+            restored = restore_vnext.load_restore_vnext(
+                map_path,
+                gate_dir=gate_path,
+                source_root=source_path,
+                output_dir=staging_restore,
+            )
+        artifacts = [(staging_restore, output_path)]
+        if report_path is not None:
+            restore_vnext.write_restore_report_vnext(restored, staging_report)
+            artifacts.append((staging_report, report_path))
+        restore_vnext.publish_restore_vnext(artifacts)
         return {
             "format": "rtl-obfuscation.restore-vnext-cli",
             "schema_version": 1,
@@ -458,7 +497,8 @@ def _register_encrypt_arguments(
 ) -> None:
     parser.add_argument("--input", dest="input_file", type=Path)
     parser.add_argument("--filelist", type=Path)
-    parser.add_argument("--project-root", type=Path)
+    if not public_cli:
+        parser.add_argument("--project-root", type=Path)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--top")
     parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[])
@@ -482,13 +522,15 @@ def _register_encrypt_arguments(
 def _register_decrypt_arguments(
     parser: argparse.ArgumentParser,
     *,
-    report_required: bool,
+    public_cli: bool,
 ) -> None:
     parser.add_argument("--map", dest="map_file", required=True, type=Path)
     parser.add_argument("--gate-dir", required=True, type=Path)
-    parser.add_argument("--source-root", required=True, type=Path)
+    if not public_cli:
+        parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--report", required=report_required, type=Path)
+    parser.add_argument("--report", type=Path)
+    parser.set_defaults(public_cli=public_cli)
 
 
 def _create_argument_parser() -> argparse.ArgumentParser:
@@ -500,7 +542,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     )
     _register_decrypt_arguments(
         subparsers.add_parser("decrypt-vnext"),
-        report_required=False,
+        public_cli=False,
     )
     return parser
 
@@ -519,7 +561,7 @@ def _create_decrypt_argument_parser() -> argparse.ArgumentParser:
         prog="rtl_decrypt",
         description="Restore SystemVerilog sources from an encryption report.",
     )
-    _register_decrypt_arguments(parser, report_required=True)
+    _register_decrypt_arguments(parser, public_cli=True)
     return parser
 
 

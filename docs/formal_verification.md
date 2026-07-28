@@ -22,7 +22,9 @@ Formal 非零，并包含 `unproven` 与 `equiv_status -assert`。不得删除�
 ## 当前产品流程
 
 公共入口 `python rtl_encrypt.py` 发布 actual gate、orchestration report 和 metrics report。
-公共恢复入口 `python rtl_decrypt.py` 从 report hydration 后调用既有 restore engine。
+项目模式通过 `--source-root <项目根目录> --top <顶层模块名>` 进入，不再使用单独的
+project-root 参数。公共恢复入口 `python rtl_decrypt.py` 只使用 mapping 和 actual gate，
+从 gate 恢复源码并完成 report hydration 与 manifest 校验。
 持久化 report 和 schema 继续沿用现有 vNext 名称，本次公共命令变化不迁移数据格式：
 
 ```sh
@@ -37,8 +39,9 @@ python scripts/formal_equivalence.py \
 脚本保持 `read_verilog -sv`、`prep`、`equiv_make`、`equiv_simple`、`equiv_induct` 和
 `equiv_status -assert` 的证明强度。gold 和 gate 必须使用同一 top、端口形状和 compile context。
 
-恢复时必须校验 report、mapping、gate manifest、range、metrics 和 restored manifest；失败不得
-留下部分输出。`--project-root`、显式 filelist 和 single-file 入口都复用同一执行 pipeline。
+Formal 是独立验证工具，不属于加密或解密基础命令。恢复时必须校验 report、mapping、
+gate manifest、range、metrics 和 restored manifest；失败不得留下部分输出。项目扫描、
+显式 filelist 和 single-file 入口都复用同一执行 pipeline。
 
 ## RISC-V-Vector 边界
 

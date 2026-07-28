@@ -159,6 +159,40 @@ def _validate_paths(
     return map_path, gate_path, source_path, output_path, report_path
 
 
+def validate_direct_restore_paths_vnext(
+    map_file: Path,
+    gate_dir: Path,
+    output_dir: Path,
+    report_file: Path | None = None,
+) -> tuple[Path, Path, Path, Path | None]:
+    """Validate public restore paths without requiring the original source tree."""
+    map_path = _resolve(map_file, "RESTORE_VNEXT_INPUT_INVALID")
+    gate_path = _resolve(gate_dir, "RESTORE_VNEXT_GATE_INVALID")
+    output_path = _resolve(output_dir, "RESTORE_VNEXT_OUTPUT_INVALID")
+    report_path = (
+        None
+        if report_file is None
+        else _resolve(report_file, "RESTORE_VNEXT_OUTPUT_INVALID")
+    )
+    if not map_path.is_file():
+        _fail("RESTORE_VNEXT_INPUT_INVALID", "map is not a regular file")
+    if not gate_path.is_dir():
+        _fail("RESTORE_VNEXT_GATE_INVALID", "gate-dir is not a directory")
+    targets = (output_path,) if report_path is None else (output_path, report_path)
+    for path, label in (
+        (output_path, "output-dir"),
+        *(([(report_path, "report")] if report_path else [])),
+    ):
+        if path.exists() or path.is_symlink() or not path.parent.is_dir():
+            _fail("RESTORE_VNEXT_OUTPUT_INVALID", label)
+    for target in targets:
+        if _overlap(target, gate_path) or _overlap(target, map_path):
+            _fail("RESTORE_VNEXT_OUTPUT_INVALID", "output overlaps an input")
+    if report_path is not None and _overlap(output_path, report_path):
+        _fail("RESTORE_VNEXT_OUTPUT_INVALID", "output and report overlap")
+    return map_path, gate_path, output_path, report_path
+
+
 def _validate_gate_file_set(
     report_path: Path,
     gate_path: Path,
@@ -631,6 +665,20 @@ class OrchestrationGateAuditVNext:
     gate_manifest: tuple[InputFileDigest, ...]
 
 
+@dataclass(frozen=True)
+class _OrchestrationGateInputsVNext:
+    report_path: Path
+    gate_path: Path
+    report: dict[str, object]
+    source_set: SourceSet
+    files: tuple[str, ...]
+    gate_data: dict[str, bytes]
+    effective_records: tuple[MappingRecord, ...]
+    input_manifest: tuple[InputFileDigest, ...]
+    gate_manifest: tuple[InputFileDigest, ...]
+    rename_ranges: dict[str, tuple[tuple[int, int, bytes], ...]]
+
+
 def _unbound_occurrences(value: object) -> tuple[SymbolOccurrence, ...]:
     if not isinstance(value, list):
         _fail("RESTORE_VNEXT_REPORT_INVALID", "effective mapping occurrences are invalid")
@@ -706,7 +754,7 @@ def _audit_gate_ranges(
     records: tuple[MappingRecord, ...],
     files: tuple[str, ...],
     gate_data: dict[str, bytes],
-) -> None:
+) -> dict[str, tuple[tuple[int, int, bytes], ...]]:
     per_file = execution.get("per_file_mapping")
     if not isinstance(per_file, list) or len(per_file) != len(files):
         _fail("RESTORE_VNEXT_REPORT_INVALID", "per-file mapping does not cover physical files")
@@ -774,14 +822,14 @@ def _audit_gate_ranges(
         for previous, current in zip(ranges, ranges[1:]):
             if current[0] < previous[1]:
                 _fail("RESTORE_VNEXT_GATE_INVALID", "effective rename gate ranges overlap")
+    return {file: tuple(ranges) for file, ranges in rename_ranges.items()}
 
 
-def audit_orchestration_gate_vnext(
+def _load_orchestration_gate_inputs_vnext(
     report_file: Path,
     *,
     gate_dir: Path,
-) -> OrchestrationGateAuditVNext:
-    """Audit one persisted orchestration report against its actual gate bytes."""
+) -> _OrchestrationGateInputsVNext:
     report_path = _resolve(report_file, "RESTORE_VNEXT_INPUT_INVALID")
     gate_path = _resolve(gate_dir, "RESTORE_VNEXT_GATE_INVALID")
     if not report_path.is_file():
@@ -818,42 +866,99 @@ def audit_orchestration_gate_vnext(
     actual_gate_manifest = tuple(InputFileDigest(file=file, sha256=hashlib.sha256(gate_data[file]).hexdigest()) for file in files)
     if gate_manifest != actual_gate_manifest:
         _fail("RESTORE_VNEXT_GATE_INVALID", "gate manifest differs from actual gate bytes")
-    _audit_gate_ranges(execution, records=effective_records, files=files, gate_data=gate_data)
-    with tempfile.TemporaryDirectory(prefix=".restore-vnext-audit-", dir=str(gate_path.parent)) as temporary:
-        container = Path(temporary)
-        source_root = container / "source"
+    rename_ranges = _audit_gate_ranges(
+        execution,
+        records=effective_records,
+        files=files,
+        gate_data=gate_data,
+    )
+    return _OrchestrationGateInputsVNext(
+        report_path=report_path,
+        gate_path=gate_path,
+        report=report,
+        source_set=source_set,
+        files=files,
+        gate_data=gate_data,
+        effective_records=effective_records,
+        input_manifest=outer_input,
+        gate_manifest=gate_manifest,
+        rename_ranges=rename_ranges,
+    )
+
+
+def _materialize_direct_source_vnext(
+    inputs: _OrchestrationGateInputsVNext,
+    source_root: Path,
+) -> None:
+    source_data: dict[str, bytes] = {}
+    for file in inputs.files:
+        content = inputs.gate_data[file]
+        for start, end, replacement in sorted(
+            inputs.rename_ranges[file],
+            reverse=True,
+        ):
+            content = content[:start] + replacement + content[end:]
+        source_data[file] = content
+    restored_manifest = tuple(
+        InputFileDigest(file=file, sha256=hashlib.sha256(source_data[file]).hexdigest())
+        for file in inputs.files
+    )
+    if restored_manifest != inputs.input_manifest:
+        _fail(
+            "RESTORE_VNEXT_REPORT_INVALID",
+            "direct restore differs from the input manifest",
+        )
+    try:
         source_root.mkdir()
-        for file in files:
-            content = gate_data[file]
-            ranges: list[tuple[int, int, bytes]] = []
-            per_file = execution["per_file_mapping"]
-            for item in per_file:
-                if isinstance(item, dict) and item.get("file") == file:
-                    for projected_record in item.get("records", []):
-                        record = next((candidate for candidate in effective_records if candidate.symbol_id == projected_record.get("symbol_id")), None)
-                        if record is None or record.action != "rename":
-                            continue
-                        for projected_range in projected_record.get("ranges", []):
-                            gate_range = _parse_range(projected_range["gate_range"], label="per-file gate range")
-                            original = record.original_name.encode("utf-8")
-                            ranges.append((gate_range.start, gate_range.end, original))
-            for start, end, replacement in sorted(ranges, reverse=True):
-                content = content[:start] + replacement + content[end:]
+        for file in inputs.files:
             destination = source_root / file
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
+            destination.write_bytes(source_data[file])
+    except OSError as error:
+        _fail("RESTORE_VNEXT_IO_ERROR", str(error))
+
+
+def _hydrate_orchestration_gate_vnext(
+    inputs: _OrchestrationGateInputsVNext,
+    *,
+    output_dir: Path,
+) -> RestoreVNext:
+    with tempfile.TemporaryDirectory(prefix=".restore-vnext-direct-") as temporary:
+        container = Path(temporary)
+        source_root = container / "source"
+        _materialize_direct_source_vnext(inputs, source_root)
         try:
-            hydrated = load_restore_vnext(
-                report_path,
-                gate_dir=gate_path,
+            return load_restore_vnext(
+                inputs.report_path,
+                gate_dir=inputs.gate_path,
                 source_root=source_root,
-                output_dir=container / "restored",
+                output_dir=output_dir,
             )
         except RestoreVNextError:
             raise
         except (OSError, RuntimeError, ValueError) as error:
             _fail("RESTORE_VNEXT_REPORT_INVALID", str(error))
-    projected_source_set = replace(hydrated.source_set, source_root=gate_path)
+
+
+def audit_orchestration_gate_vnext(
+    report_file: Path,
+    *,
+    gate_dir: Path,
+) -> OrchestrationGateAuditVNext:
+    """Audit one persisted orchestration report against its actual gate bytes."""
+    inputs = _load_orchestration_gate_inputs_vnext(
+        report_file,
+        gate_dir=gate_dir,
+    )
+    with tempfile.TemporaryDirectory(prefix=".restore-vnext-audit-") as temporary:
+        hydrated = _hydrate_orchestration_gate_vnext(
+            inputs,
+            output_dir=Path(temporary) / "restored",
+        )
+    projected_source_set = replace(
+        hydrated.source_set,
+        source_root=inputs.gate_path,
+    )
     return OrchestrationGateAuditVNext(
         schema_version=1,
         source_set=projected_source_set,
@@ -861,6 +966,25 @@ def audit_orchestration_gate_vnext(
         input_manifest=hydrated.mapping_vnext.input_manifest,
         gate_manifest=hydrated.mapping_execution.rewrite_execution.gate_manifest,
     )
+
+
+def load_direct_restore_vnext(
+    map_file: Path,
+    *,
+    gate_dir: Path,
+    output_dir: Path,
+) -> RestoreVNext:
+    """Restore from a persisted mapping and actual gate without original RTL."""
+    map_path, gate_path, output_path, _ = validate_direct_restore_paths_vnext(
+        map_file,
+        gate_dir,
+        output_dir,
+    )
+    inputs = _load_orchestration_gate_inputs_vnext(
+        map_path,
+        gate_dir=gate_path,
+    )
+    return _hydrate_orchestration_gate_vnext(inputs, output_dir=output_path)
 
 
 def load_restore_vnext(
