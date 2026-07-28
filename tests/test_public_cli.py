@@ -548,9 +548,6 @@ class PublicCliTests(unittest.TestCase):
                         f"加密率：{metrics_report['affected_lines']['rate']}",
                         f"实际加密行数：{metrics_report['affected_lines']['changed']}",
                         f"总代码行数：{metrics_report['effective_lines']['total']}",
-                        f"实际加密名称数：{metrics_report['symbols']['renamed']}",
-                        f"可加密名称数：{metrics_report['symbols']['eligible']}",
-                        f"加密覆盖率：{metrics_report['effective_coverage']}",
                         f"加密类型数：{len(renamed_categories)}",
                         f"加密类型：{', '.join(renamed_categories)}",
                     ]

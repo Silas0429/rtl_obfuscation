@@ -560,21 +560,14 @@ def _cli_vnext_encryption_summary(
     records = mapping.get("records") if isinstance(mapping, dict) else None
     effective_lines = metrics_report.get("effective_lines")
     affected_lines = metrics_report.get("affected_lines")
-    symbols = metrics_report.get("symbols")
-    effective_coverage = metrics_report.get("effective_coverage")
     if (
         not isinstance(records, list)
         or not isinstance(effective_lines, dict)
         or not isinstance(affected_lines, dict)
-        or not isinstance(symbols, dict)
         or type(effective_lines.get("total")) is not int
         or type(affected_lines.get("changed")) is not int
         or isinstance(affected_lines.get("rate"), bool)
         or not isinstance(affected_lines.get("rate"), (int, float))
-        or type(symbols.get("renamed")) is not int
-        or type(symbols.get("eligible")) is not int
-        or isinstance(effective_coverage, bool)
-        or not isinstance(effective_coverage, (int, float))
     ):
         _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
     renamed_records = []
@@ -596,9 +589,6 @@ def _cli_vnext_encryption_summary(
             f"加密率：{affected_lines['rate']}",
             f"实际加密行数：{affected_lines['changed']}",
             f"总代码行数：{effective_lines['total']}",
-            f"实际加密名称数：{symbols['renamed']}",
-            f"可加密名称数：{symbols['eligible']}",
-            f"加密覆盖率：{effective_coverage}",
             f"加密类型数：{len(categories)}",
             f"加密类型：{', '.join(categories)}",
         )
