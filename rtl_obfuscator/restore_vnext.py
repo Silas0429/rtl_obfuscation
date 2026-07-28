@@ -159,6 +159,41 @@ def _validate_paths(
     return map_path, gate_path, source_path, output_path, report_path
 
 
+def _validate_gate_file_set(
+    report_path: Path,
+    gate_path: Path,
+    report: dict[str, object],
+    files: tuple[str, ...],
+) -> None:
+    expected = {*files, "design.f"}
+    default_map = gate_path / "mapping.json"
+    if default_map.exists() or default_map.is_symlink():
+        if (
+            default_map.is_symlink()
+            or not default_map.is_file()
+            or report_path != default_map.resolve()
+        ):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "default mapping report is invalid")
+        expected.add("mapping.json")
+    default_metrics = gate_path / "metrics.json"
+    if default_metrics.exists() or default_metrics.is_symlink():
+        if default_metrics.is_symlink() or not default_metrics.is_file():
+            _fail("RESTORE_VNEXT_GATE_INVALID", "default metrics report is invalid")
+        if _read_json(default_metrics) != report.get("metrics"):
+            _fail(
+                "RESTORE_VNEXT_REPORT_INVALID",
+                "default metrics differ from the mapping report",
+            )
+        expected.add("metrics.json")
+    actual = {
+        path.relative_to(gate_path).as_posix()
+        for path in gate_path.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    if actual != expected:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "actual gate file set is invalid")
+
+
 def _parse_source_set(value: object, source_root: Path) -> SourceSet:
     if not isinstance(value, dict):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set is not an object")
@@ -761,13 +796,7 @@ def audit_orchestration_gate_vnext(
     files = tuple(dict.fromkeys((*source_set.ordered_source_files, *source_set.included_files)))
     if not files or tuple(source_set.compile_order) != files:
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set physical order is invalid")
-    actual_files = {
-        path.relative_to(gate_path).as_posix()
-        for path in gate_path.rglob("*")
-        if path.is_file()
-    }
-    if actual_files != {*files, "design.f"}:
-        _fail("RESTORE_VNEXT_GATE_INVALID", "actual gate file set is invalid")
+    _validate_gate_file_set(report_path, gate_path, report, files)
     try:
         if (gate_path / "design.f").read_bytes() != "".join(f"{file}\n" for file in source_set.compile_order).encode("utf-8"):
             _fail("RESTORE_VNEXT_GATE_INVALID", "gate design.f differs from compile order")
@@ -813,11 +842,9 @@ def audit_orchestration_gate_vnext(
             destination = source_root / file
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-        audit_report = container / "orchestration.json"
-        audit_report.write_text(json.dumps(report, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         try:
             hydrated = load_restore_vnext(
-                audit_report,
+                report_path,
                 gate_dir=gate_path,
                 source_root=source_root,
                 output_dir=container / "restored",
@@ -854,6 +881,7 @@ def load_restore_vnext(
     files = tuple(dict.fromkeys((*source_set.ordered_source_files, *source_set.included_files)))
     if not files:
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set has no physical files")
+    _validate_gate_file_set(map_path, gate_path, report, files)
     try:
         source_data = {file: (source_path / file).read_bytes() for file in files}
         catalog = build_source_catalog(source_set)

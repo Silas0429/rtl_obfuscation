@@ -22,7 +22,7 @@ class VNextProductSurfaceTests(unittest.TestCase):
         self.assertEqual(len(actions), 1)
         self.assertEqual(set(actions[0].choices), {"encrypt-vnext", "decrypt-vnext"})
 
-    def test_public_entrypoints_share_registered_arguments_and_execution_functions(self):
+    def test_public_entrypoints_share_execution_but_keep_the_simplified_surface(self):
         internal = rewrite._create_argument_parser()
         internal_action = next(
             action for action in internal._actions if action.dest == "operation"
@@ -38,14 +38,43 @@ class VNextProductSurfaceTests(unittest.TestCase):
                 if option != "--help"
             }
 
+        internal_encrypt = option_destinations(
+            internal_action.choices["encrypt-vnext"]
+        )
         self.assertEqual(
             option_destinations(public_encrypt),
-            option_destinations(internal_action.choices["encrypt-vnext"]),
+            {
+                option: destination
+                for option, destination in internal_encrypt.items()
+                if option != "--abi-category"
+            },
         )
         self.assertEqual(
             option_destinations(public_decrypt),
             option_destinations(internal_action.choices["decrypt-vnext"]),
         )
+        public_map = next(
+            action for action in public_encrypt._actions if action.dest == "map_file"
+        )
+        public_metrics = next(
+            action
+            for action in public_encrypt._actions
+            if action.dest == "metrics_file"
+        )
+        internal_map = next(
+            action
+            for action in internal_action.choices["encrypt-vnext"]._actions
+            if action.dest == "map_file"
+        )
+        internal_metrics = next(
+            action
+            for action in internal_action.choices["encrypt-vnext"]._actions
+            if action.dest == "metrics_file"
+        )
+        self.assertFalse(public_map.required)
+        self.assertFalse(public_metrics.required)
+        self.assertTrue(internal_map.required)
+        self.assertTrue(internal_metrics.required)
         public_report = next(
             action for action in public_decrypt._actions if action.dest == "report"
         )
@@ -73,15 +102,15 @@ class VNextProductSurfaceTests(unittest.TestCase):
                     ".",
                     "--output-dir",
                     "gate",
-                    "--map",
-                    "map.json",
-                    "--metrics",
-                    "metrics.json",
                 ],
             ):
                 with mock.patch("builtins.print"):
                     self.assertEqual(rewrite.rtl_encrypt_main(), 0)
         self.assertEqual(encrypt.call_count, 1)
+        public_args = encrypt.call_args.args[0]
+        self.assertTrue(public_args.public_cli)
+        self.assertIsNone(public_args.map_file)
+        self.assertIsNone(public_args.metrics_file)
 
     def test_legacy_operations_fail_without_traceback_or_fallback_output(self):
         for operation in (

@@ -102,7 +102,15 @@ def _cli_vnext_validate_rate(value: object) -> str | None:
 
 def _cli_vnext_validate_arguments(
     args: argparse.Namespace,
-) -> tuple[Path, tuple[Path, Path, Path], tuple[str, ...], tuple[str, ...], int, str | None]:
+) -> tuple[
+    Path,
+    tuple[Path, Path, Path],
+    tuple[str, ...],
+    tuple[str, ...],
+    int,
+    str | None,
+    tuple[bool, bool],
+]:
     input_file = getattr(args, "input_file", None)
     filelist = getattr(args, "filelist", None)
     project_root_arg = getattr(args, "project_root", None)
@@ -124,9 +132,38 @@ def _cli_vnext_validate_arguments(
     if not source_root.is_dir():
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
 
+    public_cli = bool(getattr(args, "public_cli", False))
+    public_top_scope = public_cli and (
+        project_root_arg is not None
+        or (filelist is not None and args.top is not None)
+    )
     try:
-        categories = normalize_categories(args.category, default=True)
-        abi_categories = normalize_abi_categories(args.abi_category or ())
+        if public_cli:
+            if args.category is None:
+                categories = (
+                    tuple(CANONICAL_CATEGORIES)
+                    if public_top_scope
+                    else _CLI_VNEXT_DEFAULT_CATEGORIES
+                )
+            else:
+                requested: list[str] = []
+                for category in args.category:
+                    requested.extend(
+                        CANONICAL_CATEGORIES if category == "all" else (category,)
+                    )
+                categories = normalize_categories(requested, default=False)
+            abi_categories = (
+                tuple(
+                    category
+                    for category in MODULE_ABI_CATEGORIES
+                    if category in categories
+                )
+                if public_top_scope
+                else ()
+            )
+        else:
+            categories = normalize_categories(args.category, default=True)
+            abi_categories = normalize_abi_categories(args.abi_category or ())
     except CategoryRegistryError:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     if any(category not in categories for category in abi_categories):
@@ -142,17 +179,46 @@ def _cli_vnext_validate_arguments(
     rate = _cli_vnext_validate_rate(args.encryption_rate)
 
     output_dir = _cli_vnext_output_path(args.output_dir, "--output-dir")
-    map_file = _cli_vnext_output_path(args.map_file, "--map")
-    metrics_file = _cli_vnext_output_path(args.metrics_file, "--metrics")
-    paths = (output_dir, map_file, metrics_file)
-    for path in paths:
-        if _cli_vnext_path_overlap(path, source_root):
+    map_default = public_cli and args.map_file is None
+    metrics_default = public_cli and args.metrics_file is None
+    map_file = (
+        output_dir / "mapping.json"
+        if map_default
+        else _cli_vnext_output_path(args.map_file, "--map")
+    )
+    metrics_file = (
+        output_dir / "metrics.json"
+        if metrics_default
+        else _cli_vnext_output_path(args.metrics_file, "--metrics")
+    )
+    if _cli_vnext_path_overlap(output_dir, source_root):
+        _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+    explicit_reports = tuple(
+        path
+        for path, is_default in (
+            (map_file, map_default),
+            (metrics_file, metrics_default),
+        )
+        if not is_default
+    )
+    for path in explicit_reports:
+        if _cli_vnext_path_overlap(path, source_root) or _cli_vnext_path_overlap(
+            path, output_dir
+        ):
             _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
-    for index, first in enumerate(paths):
-        for second in paths[index + 1 :]:
-            if _cli_vnext_path_overlap(first, second):
-                _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
-    return source_root, paths, categories, abi_categories, name_length, rate
+    if len(explicit_reports) == 2 and _cli_vnext_path_overlap(
+        explicit_reports[0], explicit_reports[1]
+    ):
+        _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+    return (
+        source_root,
+        (output_dir, map_file, metrics_file),
+        categories,
+        abi_categories,
+        name_length,
+        rate,
+        (map_default, metrics_default),
+    )
 
 
 def _cli_vnext_input_path(value: Path, source_root: Path) -> Path:
@@ -274,7 +340,15 @@ def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
 
 
 def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
-    source_root, (output_dir, map_file, metrics_file), categories, abi_categories, name_length, rate = _cli_vnext_validate_arguments(args)
+    (
+        source_root,
+        (output_dir, map_file, metrics_file),
+        categories,
+        abi_categories,
+        name_length,
+        rate,
+        (map_default, metrics_default),
+    ) = _cli_vnext_validate_arguments(args)
     source_set = _cli_vnext_source_set(args, source_root)
     try:
         staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-cli-vnext-"))
@@ -311,17 +385,16 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
         if not isinstance(summary, dict) or not _cli_vnext_portable_report(report):
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-        staged_map = staging_root / "orchestration.json"
-        staged_metrics = staging_root / "metrics.json"
+        staged_map = gate_dir / "mapping.json" if map_default else staging_root / "orchestration.json"
+        staged_metrics = gate_dir / "metrics.json" if metrics_default else staging_root / "metrics.json"
         _cli_vnext_write_json_atomic(staged_map, report)
         _cli_vnext_write_json_atomic(staged_metrics, metrics_report)
-        _cli_vnext_publish(
-            [
-                (gate_dir, output_dir),
-                (staged_map, map_file),
-                (staged_metrics, metrics_file),
-            ]
-        )
+        artifacts = [(gate_dir, output_dir)]
+        if not map_default:
+            artifacts.append((staged_map, map_file))
+        if not metrics_default:
+            artifacts.append((staged_metrics, metrics_file))
+        _cli_vnext_publish(artifacts)
         return {
             "format": "rtl-obfuscation.cli-vnext",
             "schema_version": 1,
@@ -378,7 +451,11 @@ def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
 
 
 
-def _register_encrypt_arguments(parser: argparse.ArgumentParser) -> None:
+def _register_encrypt_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    public_cli: bool,
+) -> None:
     parser.add_argument("--input", dest="input_file", type=Path)
     parser.add_argument("--filelist", type=Path)
     parser.add_argument("--project-root", type=Path)
@@ -387,12 +464,19 @@ def _register_encrypt_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[])
     parser.add_argument("--define", dest="defines", action="append", default=[])
     parser.add_argument("--category", action="append", default=None)
-    parser.add_argument("--abi-category", action="append", default=None)
+    if not public_cli:
+        parser.add_argument("--abi-category", action="append", default=None)
     parser.add_argument("--encryption-rate")
     parser.add_argument("--name-length", default=20)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--map", dest="map_file", required=True, type=Path)
-    parser.add_argument("--metrics", dest="metrics_file", required=True, type=Path)
+    parser.add_argument("--map", dest="map_file", required=not public_cli, type=Path)
+    parser.add_argument(
+        "--metrics",
+        dest="metrics_file",
+        required=not public_cli,
+        type=Path,
+    )
+    parser.set_defaults(public_cli=public_cli)
 
 
 def _register_decrypt_arguments(
@@ -410,7 +494,10 @@ def _register_decrypt_arguments(
 def _create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="vNext SystemVerilog encryption and restore")
     subparsers = parser.add_subparsers(dest="operation", required=True)
-    _register_encrypt_arguments(subparsers.add_parser("encrypt-vnext"))
+    _register_encrypt_arguments(
+        subparsers.add_parser("encrypt-vnext"),
+        public_cli=False,
+    )
     _register_decrypt_arguments(
         subparsers.add_parser("decrypt-vnext"),
         report_required=False,
@@ -423,7 +510,7 @@ def _create_encrypt_argument_parser() -> argparse.ArgumentParser:
         prog="rtl_encrypt",
         description="Encrypt selected SystemVerilog identifiers.",
     )
-    _register_encrypt_arguments(parser)
+    _register_encrypt_arguments(parser, public_cli=True)
     return parser
 
 

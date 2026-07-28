@@ -1,53 +1,70 @@
 # SystemVerilog 可加密类型表
 
-在 `python rtl_encrypt.py` 命令中使用一个或多个 `--category` 选择要加密的名称类型。
+`python rtl_encrypt.py` 使用 `--category` 选择要加密的名称类型。单文件和不带 `--top`
+的 filelist 默认选择前 13 类；带 `--top` 的 filelist 和 project-root 默认选择全部
+19 类。
 
-| 选项值 | 加密对象 | 默认选择 | 跨模块名称要求 |
-| --- | --- | --- | --- |
-| `signals` | 模块内的变量和连线 | 是 | 不适用 |
-| `parameters` | parameter、localparam 和 generate 迭代参数 | 是 | 跨模块参数需要 `--top`，并同时使用 `--category parameters --abi-category parameters` |
-| `enum_values` | 枚举值 | 是 | 不适用 |
-| `genvars` | generate-for 的 genvar | 是 | 不适用 |
-| `functions` | function 名称 | 是 | 不适用 |
-| `tasks` | task 名称 | 是 | 不适用 |
-| `arguments` | function 和 task 的参数 | 是 | 不适用 |
-| `instances` | 模块实例名称 | 是 | 不适用 |
-| `generate_blocks` | 命名 generate block | 是 | 不适用 |
-| `typedefs` | 非 struct/union 的 typedef 名称 | 是 | 跨模块使用的类型需要 `--top`，并同时使用 `--category typedefs --abi-category typedefs` |
-| `struct_types` | struct/union 类型名称 | 是 | 跨模块使用的类型需要 `--top`，并同时使用 `--category struct_types --abi-category struct_types` |
-| `struct_fields` | struct 成员名称 | 是 | 跨模块使用的成员需要 `--top`，并同时使用 `--category struct_fields --abi-category struct_fields` |
-| `union_fields` | union 成员名称 | 是 | 跨模块使用的成员需要 `--top`，并同时使用 `--category union_fields --abi-category union_fields` |
-| `modules` | 模块名称 | 否 | 需要 `--top`，并同时使用 `--category modules --abi-category modules` |
-| `ports` | 普通模块端口名称 | 否 | 需要 `--top`，并同时使用 `--category ports --abi-category ports` |
-| `interfaces` | interface 名称 | 否 | 需要 `--top`，并同时使用 `--category interfaces --abi-category interfaces` |
-| `interface_instances` | interface 实例名称 | 否 | 闭包内符合条件的对象需要 `--top`，并同时使用 `--category interface_instances --abi-category interface_instances`；但 selected top 内声明的实例当前按 `selected_top_boundary` 保留 |
-| `interface_ports` | interface 端口或成员名称 | 否 | 需要 `--top`，并同时使用 `--category interface_ports --abi-category interface_ports` |
-| `modports` | modport 名称 | 否 | 需要 `--top`，并同时使用 `--category modports --abi-category modports` |
+| `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/project-root 提供 `--top` |
+| --- | --- | --- | --- | --- |
+| `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |
+| `parameters` | parameter、localparam 和 generate 参数 | 是 | 加密只在 module 内部使用的参数 | 跨 module 使用的参数及引用会一致改名 |
+| `enum_values` | 枚举值 | 是 | 加密 | 加密 |
+| `genvars` | generate-for 使用的 genvar | 是 | 加密 | 加密 |
+| `functions` | function 名称 | 是 | 加密 | 加密 |
+| `tasks` | task 名称 | 是 | 加密 | 加密 |
+| `arguments` | function 和 task 的参数 | 是 | 加密 | 加密 |
+| `instances` | module 实例名称 | 是 | 加密 | 加密 |
+| `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
+| `typedefs` | 普通 typedef 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
+| `struct_types` | struct 和 union 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
+| `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
+| `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
+| `modules` | module 名称 | 否 | 保留 | 加密子 module 名称和实例化引用；top module 名称保留 |
+| `ports` | module 端口名称 | 否 | 保留 | 加密子 module 端口和连接引用；top module 对外端口保留 |
+| `interfaces` | interface 类型名称 | 否 | 保留 | interface 类型及引用会一致改名 |
+| `interface_instances` | interface 实例名称 | 否 | 保留 | 加密符合条件的 interface 实例；top module 内直接声明的实例名当前保留 |
+| `interface_ports` | interface 端口和成员名称 | 否 | 保留 | interface 端口、成员及引用会一致改名 |
+| `modports` | modport 名称 | 否 | 保留 | modport 名称及引用会一致改名 |
 
-## 默认选择和快捷值
+## 默认选择与快捷值
 
-不提供 `--category` 时，默认选择表中的前 13 类。快捷值 `all` 也只展开这 13 类，不包含
-`modules`、`ports` 或 interface 相关类型。
-
-- `--category struct` 等同于
+- 不提供 `--category` 时，单文件和不带 `--top` 的 filelist 加密表中的默认 13 类。
+- 不提供 `--category` 时，带 `--top` 的 filelist 和 project-root 加密全部 19 类。
+- 一旦手动使用 `--category`，工具只处理用户选择的类型，不再追加默认类型。
+- 快捷值 `all`（`--category all`）：选择全部 19 类。
+- 快捷值 `struct`（`--category struct`）：等同于
   `--category struct_types --category struct_fields`。
-- `--category interface` 等同于
+- 快捷值 `interface`（`--category interface`）：等同于
   `--category interfaces --category interface_instances --category interface_ports --category modports`。
 
-一旦显式提供任意 `--category`，默认类型不会自动追加。例如，同时选择默认 13 类、模块名和端口名：
+filelist 或 project-root 提供 `--top` 后，工具会自动保证所选类型在子 module 定义和调用
+位置使用同一个新名称。top module 名称和对外端口始终保留。
+
+当前版本会保留 top module 内部直接声明的 interface 实例名；interface 类型和成员仍会
+加密。
+
+## 常用示例
+
+只加密信号和 module 实例：
 
 ```sh
---top top_module \
---category all --category modules --category ports \
---abi-category modules --abi-category ports
+--category signals --category instances
 ```
 
-跨模块名称必须满足三项要求：
+只加密 struct/union 类型和 struct 成员：
 
-1. 提供 `--top`；
-2. 用 `--category` 选择该类型；
-3. 用 `--abi-category` 再次明确允许该类型。
+```sh
+--category struct --category union_fields
+```
 
-`interface_instances` 还有一个当前边界：双重授权只允许处理 top closure 内其他符合条件的
-interface instance。selected top 内声明的实例仍按 `selected_top_boundary` 保留；例如 FIFO
-示例中的 `fifo_bus`，即使同时选择 category 和 ABI category 也仍会保留。
+在带 `--top` 的 filelist 或 project-root 中，只加密子 module 名称、端口和 interface：
+
+```sh
+--category modules --category ports --category interface
+```
+
+选择当前支持的全部类型：
+
+```sh
+--category all
+```
