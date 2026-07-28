@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -321,6 +323,137 @@ def _cli_vnext_write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
 
 
+def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
+    try:
+        payload = value.encode("utf-8")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = -1
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            if temporary.read_bytes() != payload:
+                raise ValueError("text readback differs from generated artifact")
+            temporary.replace(path)
+        except BaseException:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+            raise
+    except (OSError, TypeError, ValueError, UnicodeError) as error:
+        _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+
+
+def _cli_vnext_owner_name(owner: str, source_root: Path) -> str:
+    if owner == "$unit":
+        return owner
+    try:
+        owner_kind_file, start_text, end_text = owner.rsplit(":", 2)
+        _owner_kind, file = owner_kind_file.split(":", 1)
+        start = int(start_text)
+        end = int(end_text)
+        source_path = (source_root / file).resolve()
+        source_path.relative_to(source_root)
+        name = source_path.read_bytes()[start:end].decode("utf-8")
+    except (OSError, UnicodeError, ValueError, TypeError):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    if not name:
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    return name
+
+
+def _cli_vnext_mapping_table(report: dict[str, Any], source_root: Path) -> str:
+    mapping = report.get("mapping")
+    if not isinstance(mapping, dict) or not isinstance(mapping.get("records"), list):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(("文件名", "模块名", "加密类型", "原名", "替换后名"))
+    for record in mapping["records"]:
+        if not isinstance(record, dict):
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        action = record.get("action")
+        if action not in {"rename", "preserve", "unsupported"}:
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        if action != "rename":
+            continue
+        declaration = record.get("declaration")
+        if (
+            not isinstance(declaration, dict)
+            or not isinstance(declaration.get("file"), str)
+            or not isinstance(record.get("owner_module"), str)
+            or not isinstance(record.get("category"), str)
+            or not isinstance(record.get("original_name"), str)
+            or not isinstance(record.get("renamed_name"), str)
+        ):
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        writer.writerow(
+            (
+                declaration["file"],
+                _cli_vnext_owner_name(record["owner_module"], source_root),
+                record["category"],
+                record["original_name"],
+                record["renamed_name"],
+            )
+        )
+    return output.getvalue()
+
+
+def _cli_vnext_encryption_summary(
+    report: dict[str, Any],
+    metrics_report: dict[str, Any],
+) -> str:
+    mapping = report.get("mapping")
+    records = mapping.get("records") if isinstance(mapping, dict) else None
+    effective_lines = metrics_report.get("effective_lines")
+    affected_lines = metrics_report.get("affected_lines")
+    if (
+        not isinstance(records, list)
+        or not isinstance(effective_lines, dict)
+        or not isinstance(affected_lines, dict)
+        or type(effective_lines.get("total")) is not int
+        or type(affected_lines.get("changed")) is not int
+    ):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    renamed_records = []
+    for record in records:
+        if not isinstance(record, dict):
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        if record.get("action") == "rename":
+            renamed_records.append(record)
+    category_set = {
+        record.get("category")
+        for record in renamed_records
+        if isinstance(record.get("category"), str)
+    }
+    categories = tuple(
+        category for category in CANONICAL_CATEGORIES if category in category_set
+    )
+    rate_report = report.get("rate_metrics")
+    if rate_report is None:
+        encryption_rate = "1.0"
+    else:
+        selection = rate_report.get("rate_selection") if isinstance(rate_report, dict) else None
+        target = selection.get("target") if isinstance(selection, dict) else None
+        if isinstance(target, bool) or not isinstance(target, (int, float)):
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        encryption_rate = str(target)
+    return "\n".join(
+        (
+            f"加密率：{encryption_rate}",
+            f"总代码行数：{effective_lines['total']}",
+            f"替换行数：{affected_lines['changed']}",
+            f"总替换名称数：{len(renamed_records)}",
+            f"替换类型数：{len(categories)}",
+            f"加密类型：{', '.join(categories)}",
+        )
+    ) + "\n"
+
+
 def _cli_vnext_remove(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
@@ -408,8 +541,18 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
         staged_map = gate_dir / "mapping.json" if map_default else staging_root / "orchestration.json"
         staged_metrics = gate_dir / "metrics.json" if metrics_default else staging_root / "metrics.json"
+        staged_mapping_table = gate_dir / "mapping_table.csv"
+        staged_encryption_summary = gate_dir / "encryption_summary.txt"
         _cli_vnext_write_json_atomic(staged_map, report)
         _cli_vnext_write_json_atomic(staged_metrics, metrics_report)
+        _cli_vnext_write_text_atomic(
+            staged_mapping_table,
+            _cli_vnext_mapping_table(report, source_root),
+        )
+        _cli_vnext_write_text_atomic(
+            staged_encryption_summary,
+            _cli_vnext_encryption_summary(report, metrics_report),
+        )
         artifacts = [(gate_dir, output_dir)]
         if not map_default:
             artifacts.append((staged_map, map_file))

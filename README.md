@@ -47,13 +47,18 @@ project-root 必须提供 `--top`。工具会自动找到该 top 使用的源码
 ```text
 <output-dir>/mapping.json
 <output-dir>/metrics.json
+<output-dir>/mapping_table.csv
+<output-dir>/encryption_summary.txt
 ```
 
 - `mapping.json`：用于恢复原始名称，同时记录本次加密结果。
 - `metrics.json`：记录实际加密覆盖率。
+- `mapping_table.csv`：用表格列出每个实际替换的文件名、模块名、加密类型、原名和替换后名。
+- `encryption_summary.txt`：用文字列出加密率、代码行数、替换行数、替换名称数和实际加密类型。
 
 只有希望把报告放到其他位置时，才需要使用 `--map` 或 `--metrics`。可以只指定其中一个，
-另一个仍会写入默认位置。
+另一个仍会写入默认位置。`mapping_table.csv` 和 `encryption_summary.txt` 始终写入
+`<output-dir>`。
 
 默认会处理当前范围内全部可加密名称。使用下面的参数可以控制加密率：
 

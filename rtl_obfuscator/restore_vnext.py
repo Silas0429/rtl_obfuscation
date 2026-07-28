@@ -219,6 +219,12 @@ def _validate_gate_file_set(
                 "default metrics differ from the mapping report",
             )
         expected.add("metrics.json")
+    for derived_name in ("mapping_table.csv", "encryption_summary.txt"):
+        derived_path = gate_path / derived_name
+        if derived_path.exists() or derived_path.is_symlink():
+            if derived_path.is_symlink() or not derived_path.is_file():
+                _fail("RESTORE_VNEXT_GATE_INVALID", f"derived artifact is invalid: {derived_name}")
+            expected.add(derived_name)
     actual = {
         path.relative_to(gate_path).as_posix()
         for path in gate_path.rglob("*")

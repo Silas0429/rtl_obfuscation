@@ -384,6 +384,8 @@ class PublicCliTests(unittest.TestCase):
                 expected = {
                     "11_supported_obfuscation.sv",
                     "design.f",
+                    "mapping_table.csv",
+                    "encryption_summary.txt",
                     *({"mapping.json"} if map_location == "default" else set()),
                     *({"metrics.json"} if metrics_location == "default" else set()),
                 }
@@ -521,6 +523,15 @@ class PublicCliTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(report["summary"]["rate_enabled"], rate)
+                summary_lines = (
+                    (gate / "encryption_summary.txt")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                self.assertEqual(
+                    summary_lines[0],
+                    "加密率：0.35" if rate else "加密率：1.0",
+                )
                 for relative in self._physical_files(report):
                     self.assertEqual(
                         (restored / relative).read_bytes(),

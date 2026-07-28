@@ -1,4 +1,5 @@
 from dataclasses import replace
+import csv
 import json
 from pathlib import Path
 import shutil
@@ -9,6 +10,7 @@ import unittest
 from unittest import mock
 
 from rtl_obfuscator import orchestration_vnext
+from rtl_obfuscator.category_registry_vnext import CANONICAL_CATEGORIES
 from rtl_obfuscator import rewrite as rewrite_module
 from rtl_obfuscator import rewrite as legacy_rewrite
 from rtl_obfuscator.source_catalog import build_source_catalog
@@ -125,6 +127,39 @@ class CliVNextEncryptionTests(unittest.TestCase):
             self.assertEqual(
                 json.dumps(metrics, ensure_ascii=False, separators=(",", ":")),
                 metrics_file.read_text(encoding="utf-8"),
+            )
+            with (gate / "mapping_table.csv").open(
+                encoding="utf-8",
+                newline="",
+            ) as csv_file:
+                mapping_rows = list(csv.DictReader(csv_file))
+            expected_rows = [
+                {
+                    "文件名": record["declaration"]["file"],
+                    "模块名": "parameter_single",
+                    "加密类型": record["category"],
+                    "原名": record["original_name"],
+                    "替换后名": record["renamed_name"],
+                }
+                for record in report["mapping"]["records"]
+                if record["action"] == "rename"
+            ]
+            self.assertEqual(mapping_rows, expected_rows)
+            renamed_categories = [
+                category
+                for category in CANONICAL_CATEGORIES
+                if any(row["加密类型"] == category for row in mapping_rows)
+            ]
+            self.assertEqual(
+                (gate / "encryption_summary.txt").read_text(encoding="utf-8").splitlines(),
+                [
+                    "加密率：1.0",
+                    f"总代码行数：{metrics['effective_lines']['total']}",
+                    f"替换行数：{metrics['affected_lines']['changed']}",
+                    f"总替换名称数：{len(mapping_rows)}",
+                    f"替换类型数：{len(renamed_categories)}",
+                    f"加密类型：{', '.join(renamed_categories)}",
+                ],
             )
             self._assert_portable(stdout)
             self._assert_portable(report)
@@ -351,11 +386,25 @@ class CliVNextEncryptionTests(unittest.TestCase):
             self.assertFalse((root / "map.json").exists())
             self.assertFalse((root / "metrics.json").exists())
 
+            with mock.patch.object(
+                rewrite_module,
+                "_cli_vnext_write_text_atomic",
+                side_effect=rewrite_module._CliVNextError("CLI_VNEXT_IO_ERROR"),
+            ):
+                with self.assertRaises(rewrite_module._CliVNextError) as raised:
+                    rewrite_module._encrypt_vnext(args)
+            self.assertEqual(raised.exception.code, "CLI_VNEXT_IO_ERROR")
+            self.assertFalse((root / "gate").exists())
+            self.assertFalse((root / "map.json").exists())
+            self.assertFalse((root / "metrics.json").exists())
+
             summary = rewrite_module._encrypt_vnext(args)
             self.assertEqual(summary["format"], "rtl-obfuscation.cli-vnext")
             self.assertTrue((root / "gate").is_dir())
             self.assertTrue((root / "map.json").is_file())
             self.assertTrue((root / "metrics.json").is_file())
+            self.assertTrue((root / "gate/mapping_table.csv").is_file())
+            self.assertTrue((root / "gate/encryption_summary.txt").is_file())
 
 
 if __name__ == "__main__":
