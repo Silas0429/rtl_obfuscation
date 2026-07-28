@@ -137,6 +137,7 @@ class CliVNextEncryptionTests(unittest.TestCase):
                 {
                     "文件名": record["declaration"]["file"],
                     "模块名": "parameter_single",
+                    "作用域": "module",
                     "加密类型": record["category"],
                     "原名": record["original_name"],
                     "替换后名": record["renamed_name"],
@@ -166,6 +167,90 @@ class CliVNextEncryptionTests(unittest.TestCase):
             self._assert_portable(metrics)
             self.assertTrue((gate / "single.sv").is_file())
             self.assertFalse((root / "restore").exists())
+
+    def test_mapping_table_separates_module_and_scope(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gate = root / "gate"
+            result = self._run_cli(
+                "--input",
+                "11_supported_obfuscation.sv",
+                "--source-root",
+                str(ROOT / "rtl_samples"),
+                "--output-dir",
+                str(gate),
+                "--map",
+                str(root / "mapping.json"),
+                "--metrics",
+                str(root / "metrics.json"),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with (gate / "mapping_table.csv").open(
+                encoding="utf-8",
+                newline="",
+            ) as csv_file:
+                rows = {
+                    row["原名"]: row
+                    for row in csv.DictReader(csv_file)
+                }
+            self.assertEqual(rows["pair_t"]["模块名"], "sample11_supported_obfuscation")
+            self.assertEqual(rows["pair_t"]["作用域"], "type:pair_t")
+            self.assertEqual(rows["apply_mask"]["模块名"], "sample11_supported_obfuscation")
+            self.assertEqual(rows["apply_mask"]["作用域"], "function:apply_mask")
+            self.assertEqual(rows["select_value"]["模块名"], "sample11_supported_obfuscation")
+            self.assertEqual(rows["select_value"]["作用域"], "task:select_value")
+            self.assertEqual(rows["generate_input"]["模块名"], "sample11_supported_obfuscation")
+            self.assertEqual(rows["generate_input"]["作用域"], "generate:generate_input")
+
+    def test_mapping_table_uses_line_for_unnamed_generate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source_root = root / "source"
+            source_root.mkdir()
+            source = source_root / "anonymous_generate.sv"
+            source.write_text(
+                "module anonymous_generate #(parameter int WIDTH = 4) (\n"
+                "    input logic [WIDTH-1:0] input_data,\n"
+                "    output logic [WIDTH-1:0] generated_output\n"
+                ");\n"
+                "    genvar bit_index;\n"
+                "    for (bit_index = 0; bit_index < WIDTH; bit_index++) begin\n"
+                "        logic generated_value;\n"
+                "        assign generated_value = input_data[bit_index];\n"
+                "        assign generated_output[bit_index] = input_data[bit_index];\n"
+                "    end\n"
+                "endmodule\n",
+                encoding="utf-8",
+            )
+            gate = root / "gate"
+            result = self._run_cli(
+                "--input",
+                source.name,
+                "--source-root",
+                str(source_root),
+                "--output-dir",
+                str(gate),
+                "--map",
+                str(root / "mapping.json"),
+                "--metrics",
+                str(root / "metrics.json"),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with (gate / "mapping_table.csv").open(
+                encoding="utf-8",
+                newline="",
+            ) as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            self.assertTrue(
+                any(
+                    row["作用域"].startswith("generate:line ")
+                    for row in rows
+                ),
+                rows,
+            )
+            self.assertTrue(
+                all("begin" not in row["作用域"] for row in rows)
+            )
 
     def test_filelist_rate_actual_gate_formal_and_functional_negative(self):
         with tempfile.TemporaryDirectory() as temp:
