@@ -1,7 +1,7 @@
 # 统一重构期子 Agent 行为与验收规范
 
 - 文档状态：`APPROVED`
-- 适用范围：`docs/three_mode_refactor_plan.md` 的 R0–R5
+- 适用范围：`docs/development/architecture/three_mode_refactor_plan.md` 的 R0–R5
 - 优先级：活动任务合同 > 本规范 > 历史任务单
 - 目标：小步实现、证据充分、验收简洁，不为旧 oracle 增加兼容层
 

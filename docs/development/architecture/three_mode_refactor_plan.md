@@ -4,29 +4,29 @@
 - 决策日期：2026-07-22
 - 适用范围：单文件、显式 filelist、`project-root + top`
 - 实现状态：R0–R5 已全部完成；最终发布验收 T057 已 `ACCEPTED`；本文仅保留历史设计决策，
-  当前代码结构见 [`docs/project_structure.md`](project_structure.md)
+  当前代码结构见 [`docs/development/project_structure.md`](../project_structure.md)
 - 历史阻塞任务：T038 保持 `BLOCKED / NOT_ACCEPTED`，已由提交 `e4f3f94` 保存
-- 历史 R1 实现草案：[`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)
-- 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
-- 已验收 catalog 任务：[`docs/tasks/T040_source_catalog_owner_registry.md`](tasks/T040_source_catalog_owner_registry.md)，提交 `019f14d`
-- 已验收 signals graph：[`docs/tasks/T041_symbol_graph_signals.md`](tasks/T041_symbol_graph_signals.md)，提交 `89b8a55`
-- 已验收 genvar graph：[`docs/tasks/T042_symbol_graph_genvars.md`](tasks/T042_symbol_graph_genvars.md)，提交 `8edfa06`
-- 已验收 parameter graph：[`docs/tasks/T043_symbol_graph_parameters.md`](tasks/T043_symbol_graph_parameters.md)，提交 `6e80b18`
-- 已验收 rewrite policy：[`docs/tasks/T044_rewrite_policy_selection.md`](tasks/T044_rewrite_policy_selection.md)，提交 `451cf13`
-- 已验收 mapping vNext：[`docs/tasks/T045_mapping_vnext_naming.md`](tasks/T045_mapping_vnext_naming.md)，提交 `27902a1`
-- 已验收 rewrite vNext：[`docs/tasks/T046_rewrite_vnext_roundtrip.md`](tasks/T046_rewrite_vnext_roundtrip.md)，提交 `48b2b68`
-- 已验收 execution envelope：[`docs/tasks/T047_mapping_execution_envelope.md`](tasks/T047_mapping_execution_envelope.md)，提交 `a1e757a`
-- 已验收 metrics vNext：[`docs/tasks/T048_metrics_vnext_effective_lines.md`](tasks/T048_metrics_vnext_effective_lines.md)，提交 `44f9f84`
-- 已验收 rate selection vNext：[`docs/tasks/T049_rate_selection_vnext.md`](tasks/T049_rate_selection_vnext.md)，提交 `1c8851f`
-- 已验收 rate-selected execution：[`docs/tasks/T050_rate_selected_execution.md`](tasks/T050_rate_selected_execution.md)，提交 `2ad27a1`
-- 已验收 rate/metrics adapter：[`docs/tasks/T051_rate_metrics_vnext_adapter.md`](tasks/T051_rate_metrics_vnext_adapter.md)，提交 `50a4e8e`
-- 已验收 orchestration service：[`docs/tasks/T052_orchestration_vnext.md`](tasks/T052_orchestration_vnext.md)，提交 `c681cea`
-- 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
-- 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
-- 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
-- 已验收产品收口任务：[`docs/tasks/T056_vnext_product_convergence.md`](tasks/T056_vnext_product_convergence.md)
-- 已验收最终发布任务：[`docs/tasks/T057_risc_v_vector_release_acceptance.md`](tasks/T057_risc_v_vector_release_acceptance.md)
-- 子 Agent 规范：[`docs/refactor_subagent_protocol.md`](refactor_subagent_protocol.md)
+- 历史 R1 实现草案：[`docs/development/process/refactor_next_sourceset_task.md`](../process/refactor_next_sourceset_task.md)
+- 已验收输入任务：[`docs/tasks/T039_sourceset_input_contract.md`](../../tasks/T039_sourceset_input_contract.md)，提交 `5a8b073`
+- 已验收 catalog 任务：[`docs/tasks/T040_source_catalog_owner_registry.md`](../../tasks/T040_source_catalog_owner_registry.md)，提交 `019f14d`
+- 已验收 signals graph：[`docs/tasks/T041_symbol_graph_signals.md`](../../tasks/T041_symbol_graph_signals.md)，提交 `89b8a55`
+- 已验收 genvar graph：[`docs/tasks/T042_symbol_graph_genvars.md`](../../tasks/T042_symbol_graph_genvars.md)，提交 `8edfa06`
+- 已验收 parameter graph：[`docs/tasks/T043_symbol_graph_parameters.md`](../../tasks/T043_symbol_graph_parameters.md)，提交 `6e80b18`
+- 已验收 rewrite policy：[`docs/tasks/T044_rewrite_policy_selection.md`](../../tasks/T044_rewrite_policy_selection.md)，提交 `451cf13`
+- 已验收 mapping vNext：[`docs/tasks/T045_mapping_vnext_naming.md`](../../tasks/T045_mapping_vnext_naming.md)，提交 `27902a1`
+- 已验收 rewrite vNext：[`docs/tasks/T046_rewrite_vnext_roundtrip.md`](../../tasks/T046_rewrite_vnext_roundtrip.md)，提交 `48b2b68`
+- 已验收 execution envelope：[`docs/tasks/T047_mapping_execution_envelope.md`](../../tasks/T047_mapping_execution_envelope.md)，提交 `a1e757a`
+- 已验收 metrics vNext：[`docs/tasks/T048_metrics_vnext_effective_lines.md`](../../tasks/T048_metrics_vnext_effective_lines.md)，提交 `44f9f84`
+- 已验收 rate selection vNext：[`docs/tasks/T049_rate_selection_vnext.md`](../../tasks/T049_rate_selection_vnext.md)，提交 `1c8851f`
+- 已验收 rate-selected execution：[`docs/tasks/T050_rate_selected_execution.md`](../../tasks/T050_rate_selected_execution.md)，提交 `2ad27a1`
+- 已验收 rate/metrics adapter：[`docs/tasks/T051_rate_metrics_vnext_adapter.md`](../../tasks/T051_rate_metrics_vnext_adapter.md)，提交 `50a4e8e`
+- 已验收 orchestration service：[`docs/tasks/T052_orchestration_vnext.md`](../../tasks/T052_orchestration_vnext.md)，提交 `c681cea`
+- 已验收 vNext encryption CLI：[`docs/tasks/T053_cli_vnext_encryption.md`](../../tasks/T053_cli_vnext_encryption.md)，提交 `ef48c9b`
+- 已验收 vNext restore/decrypt adapter：[`docs/tasks/T054_vnext_restore_decrypt.md`](../../tasks/T054_vnext_restore_decrypt.md)，提交 `14127eb`
+- 已验收 project-root vNext adapter：[`docs/tasks/T055_project_root_vnext.md`](../../tasks/T055_project_root_vnext.md)，提交 `ed71ad1`
+- 已验收产品收口任务：[`docs/tasks/T056_vnext_product_convergence.md`](../../tasks/T056_vnext_product_convergence.md)
+- 已验收最终发布任务：[`docs/tasks/T057_risc_v_vector_release_acceptance.md`](../../tasks/T057_risc_v_vector_release_acceptance.md)
+- 子 Agent 规范：[`docs/development/process/refactor_subagent_protocol.md`](../process/refactor_subagent_protocol.md)
 
 ## 1. 决策摘要
 
@@ -212,8 +212,8 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 
 ### 阶段 R1：SourceSet 与三入口输入合同
 
-- 详细计划见 [`docs/refactor_next_sourceset_task.md`](refactor_next_sourceset_task.md)；
-- 正式任务合同见 [`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md)；
+- 详细计划见 [`docs/development/process/refactor_next_sourceset_task.md`](../process/refactor_next_sourceset_task.md)；
+- 正式任务合同见 [`docs/tasks/T039_sourceset_input_contract.md`](../../tasks/T039_sourceset_input_contract.md)；
 - 单一目标：实现 single-file/filelist/project-root 三个 adapter，输出同一种 SourceSet；
 - 保留显式 filelist 顺序，冻结 include/define/header/top/closure 语义；
 - project-root 只负责 discovery，不产生独立 inventory；

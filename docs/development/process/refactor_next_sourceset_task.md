@@ -3,12 +3,12 @@
 - 计划状态：`CONTRACTED_AS_T039`
 - 所属阶段：R1
 - 实现状态：`ACCEPTED`，交付提交 `5a8b073`
-- 后续任务：[`T040`](tasks/T040_source_catalog_owner_registry.md) 已设为 `READY`
+- 后续任务：[`T040`](../../tasks/T040_source_catalog_owner_registry.md) 已设为 `READY`
 - 前置条件：已满足；T038 工作区已保存为提交 `e4f3f94`
 - Formal verification：`N/A`，本步骤不产生 rewritten RTL
 
 本文保留为 R1 设计草案；正式实现边界、API、fixture 和验收以
-[`docs/tasks/T039_sourceset_input_contract.md`](tasks/T039_sourceset_input_contract.md) 为准。T038
+[`docs/tasks/T039_sourceset_input_contract.md`](../../tasks/T039_sourceset_input_contract.md) 为准。T038
 停点已由主 Agent 保存为提交 `e4f3f94`，用户随后授权建立 T039。
 
 ## 1. 单一目标

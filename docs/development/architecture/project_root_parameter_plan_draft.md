@@ -8,8 +8,8 @@
   两种多文件工作流的默认/手动 profile 统一尚未实施。
 
 本文件保留原始设计假设、阶段门禁和后续路线，作为 T031/T032 的计划归档；实际验收证据以
-[`docs/tasks/T031_project_root_parameters.md`](tasks/T031_project_root_parameters.md) 和
-[`docs/tasks/T032_project_root_parameter_rewrite.md`](tasks/T032_project_root_parameter_rewrite.md) 为准。
+[`docs/tasks/T031_project_root_parameters.md`](../../tasks/T031_project_root_parameters.md) 和
+[`docs/tasks/T032_project_root_parameter_rewrite.md`](../../tasks/T032_project_root_parameter_rewrite.md) 为准。
 
 ## 1. 目标输入
 

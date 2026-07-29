@@ -5,14 +5,14 @@
 
 - 普通用户操作：[`README.md`](../../README.md)；
 - 可加密类型：[`docs/systemverilog_renaming_table.md`](../systemverilog_renaming_table.md)；
-- 开发者结构：[`docs/project_structure.md`](../project_structure.md)。
+- 开发者结构：[`docs/development/project_structure.md`](../development/project_structure.md)。
 
 Formal 和已知边界分别以
 [`docs/formal_verification.md`](../formal_verification.md) 和
-[`docs/future_work.md`](../future_work.md) 为准。
+[`docs/development/future_work.md`](../development/future_work.md) 为准。
 
 统一重构 R0–R5 还必须遵守
-[`docs/refactor_subagent_protocol.md`](../refactor_subagent_protocol.md)。该规范按任务类型选择一组
+[`docs/development/process/refactor_subagent_protocol.md`](../development/process/refactor_subagent_protocol.md)。该规范按任务类型选择一组
 最小验收，不再默认叠加历史 acceptance driver、全量回归和 RISC Formal。
 
 ## 1. 一次只允许一个活动任务

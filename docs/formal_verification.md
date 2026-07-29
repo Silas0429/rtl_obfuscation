@@ -1,57 +1,106 @@
-# RTL 改写验证流程
+# 加密后的 Formal 功能验证
 
-当前产品使用 PySlang 建立 source catalog、semantic owner 和 rewrite gate；产生 rewritten RTL
-后，再使用 `scripts/formal_equivalence.py` 做 Yosys 等价证明。mapping range、strict compile、
-restore manifest 和 byte identity 是同一交付门禁的一部分。
+加密工具只替换 SystemVerilog 名称。Formal 验证用于确认“原始 RTL”和“加密后的 RTL”在相同输入下功能等价。
+它是独立的检查工具，不是加密或解密命令的必需参数，也不会生成加密结果或恢复源码。
 
-## 必要门禁
+## 什么时候需要运行
 
-每次产生 rewritten RTL 的交付必须满足：
+建议在以下情况运行一次：
 
-1. graph/mapping 的每个 declaration 和 occurrence range 与输入字节一致；
-2. gate 的 PySlang catalog 与 top overlay 无错误；
-3. gate 与 gold 的 physical manifest 顺序和 hash 可审计；
-4. restore 后所有 physical files 与输入逐字节相同；
-5. metrics coverage 为 1，`plaintext_leakage_rate` 为 0；
-6. Yosys 正例退出码为 0，且 JSON 包含 `formal_equivalence=pass`。
+- 第一次给某个 RTL 项目加密后；
+- 修改了 `--category`、`--top` 或 `--encryption-rate` 后；
+- 需要向下游交付一份功能等价的加密 RTL 时。
 
-功能负例只能从 actual gate 复制后做一处功能修改。它必须保持 strict compile 的 0/0 结果，
-Formal 非零，并包含 `unproven` 与 `equiv_status -assert`。不得删除或绕过
-`equiv_status -assert`。
+加密命令本身已经检查名称替换、严格编译、映射报告和恢复结果。Formal 进一步检查改名没有改变电路功能。
 
-## 当前产品流程
+## 准备条件
 
-公共入口 `python rtl_encrypt.py` 发布 actual gate、orchestration report 和 metrics report。
-项目模式通过 `--source-root <项目根目录> --top <顶层模块名>` 进入，不再使用单独的
-project-root 参数。公共恢复入口 `python rtl_decrypt.py` 只使用 mapping 和 actual gate，
-从 gate 恢复源码并完成 report hydration 与 manifest 校验。
-持久化 report 和 schema 继续沿用现有 vNext 名称，本次公共命令变化不迁移数据格式：
+需要在当前 Python 环境中可以运行项目命令，并且系统中可以找到 Yosys：
+
+```sh
+python -c "import pyslang; print(pyslang.__version__)"
+yosys -V
+```
+
+如果服务器无法联网安装 PySlang，请先阅读
+[PySlang 源码编译与离线部署指南](pyslang源码编译与离线部署指南.md)。
+
+Formal 输入必须满足：
+
+- 原始 RTL 与加密 RTL 使用相同的 top module 名称；
+- top 的端口和端口方向保持一致；
+- 多文件工程使用相同的编译顺序和等价的宏/include 设置；
+- filelist 中的路径相对于各自的 `--gold-root` 或 `--gate-root` 可找到。
+
+## 多文件项目：推荐命令
+
+加密时保留原始 filelist，并让工具在输出目录生成加密后的 `design.f`：
+
+```sh
+python rtl_encrypt.py \
+  --filelist <原始项目>/design.f \
+  --source-root <原始项目> \
+  --top <top_module> \
+  --output-dir <工作目录>/gate
+```
+
+然后运行：
 
 ```sh
 python scripts/formal_equivalence.py \
-  --gold-filelist tests/fixtures/refactor_symbol_graph_parameters/design.f \
-  --gold-root tests/fixtures/refactor_symbol_graph_parameters \
-  --gate-filelist <actual-gate>/design.f \
-  --gate-root <actual-gate> \
-  --top parameter_top --seq 5
+  --gold-filelist <原始项目>/design.f \
+  --gold-root <原始项目> \
+  --gate-filelist <工作目录>/gate/design.f \
+  --gate-root <工作目录>/gate \
+  --top <top_module> \
+  --seq 5
 ```
 
-脚本保持 `read_verilog -sv`、`prep`、`equiv_make`、`equiv_simple`、`equiv_induct` 和
-`equiv_status -assert` 的证明强度。gold 和 gate 必须使用同一 top、端口形状和 compile context。
+`--seq 5` 是默认的时序证明深度；如果项目需要更深的时序展开，可以改为更大的正整数。
 
-Formal 是独立验证工具，不属于加密或解密基础命令。恢复时必须校验 report、mapping、
-gate manifest、range、metrics 和 restored manifest；失败不得留下部分输出。项目扫描、
-显式 filelist 和 single-file 入口都复用同一执行 pipeline。
+## 单文件：简化命令
 
-## RISC-V-Vector 边界
+单文件加密结果可以直接比较原始文件和 gate 文件：
 
-RISC-V-Vector 专项 Formal 只在活动任务合同明确要求时运行；普通 vNext 回归不得启动它，且不得
-修改 RTL fixture。T057 的专用驱动为 `scripts/risc_v_vector_acceptance.py`，通用 view/alignment
-API 位于 `rtl_obfuscator/formal_vnext.py`；它们只在该专项验收中组合使用。跳过该专项检查不等于
-跳过当前任务实际产生的 rewritten RTL Formal。
+```sh
+python rtl_encrypt.py \
+  --input <原始目录>/design.sv \
+  --source-root <原始目录> \
+  --output-dir <工作目录>/gate
 
-## 输入边界
+python scripts/formal_equivalence.py \
+  --gold <原始目录>/design.sv \
+  --gate <工作目录>/gate/rtl/design.sv \
+  --top <top_module> \
+  --seq 5
+```
 
-PySlang semantic binding 失败、owner 不明确、range 重叠、未解析层次引用、宏生成范围、复杂
-package/class/DPI/bind/clocking/virtual-interface 语义均应 fail-closed。Verible、Icarus 或其他
-前端只能作为附加诊断，不能替代 semantic owner 或 Yosys equivalence。
+如果输出目录中的文件名或目录结构不同，以加密命令生成的实际 gate 文件路径为准。
+
+## 如何判断结果
+
+成功时命令退出码为 `0`，最后会输出一行 JSON，其中包含：
+
+```json
+{"formal_equivalence": "pass", "top": "<top_module>"}
+```
+
+只有同时满足退出码为 `0` 且 `formal_equivalence` 为 `pass`，才表示这次 Formal 验证通过。
+
+失败时命令退出码非 `0`。常见原因包括：
+
+- 原始 RTL 与 gate 的 top 或端口不一致；
+- Yosys 无法解析项目使用的 SystemVerilog 语法；
+- 加密范围导致了实际的功能差异；
+- 时序证明深度不足。
+
+失败后应检查加密命令的终端错误、`mapping.json`、`metrics.json` 和生成的 gate，不要把失败结果作为可交付 RTL。
+
+## 负例测试说明
+
+项目测试会从实际 gate 复制一份文件，只在功能表达式中加入一个 `~`，再确认 Formal 以非零状态失败。
+这只是验证 Formal 门禁确实能发现功能变化的测试方法；正常使用时不要修改 gate 后再交付。
+
+## RISC-V-Vector 专项
+
+RISC-V-Vector 是项目内部的专项发布验收，不属于普通用户的日常加密验证流程。普通项目只需按本页的单文件或多文件命令检查自己的 top；专项脚本不作为用户入口。

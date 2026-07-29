@@ -38,12 +38,12 @@ conda run -n rtl_obfuscation yosys -V
 
 - `docs/systemverilog_renaming_table.md` defines the only renaming categories in scope.
 - `README.md` defines the current user encryption workflow and CLI options.
-- `docs/project_structure.md` defines the current product structure and module responsibilities.
+- `docs/development/project_structure.md` defines the current product structure and module responsibilities.
 - `docs/formal_verification.md` defines the mandatory Yosys equivalence flow for rewritten RTL.
-- `docs/future_work.md` records unsupported behavior and possible future expansion; it does not authorize implementation.
+- `docs/development/future_work.md` records unsupported behavior and possible future expansion; it does not authorize implementation.
 - `docs/tasks/README.md` defines the mandatory task status workflow.
-- `docs/three_mode_refactor_plan.md` defines the approved R0–R5 replacement architecture.
-- `docs/refactor_subagent_protocol.md` defines the mandatory sub-agent and simplified acceptance
+- `docs/development/architecture/three_mode_refactor_plan.md` defines the approved R0–R5 replacement architecture.
+- `docs/development/process/refactor_subagent_protocol.md` defines the mandatory sub-agent and simplified acceptance
   rules for R0–R5.
 - Implementation work must have exactly one active `docs/tasks/TNNN_*.md` task contract.
 - Do not implement a renaming category or behavior that is not authorized by the active task contract.
@@ -59,7 +59,7 @@ conda run -n rtl_obfuscation yosys -V
 ## Sub-agent role and documentation duty
 
 - The sub-agent implements and self-tests only the active task.
-- During R0–R5, the sub-agent must follow `docs/refactor_subagent_protocol.md` and run only the
+- During R0–R5, the sub-agent must follow `docs/development/process/refactor_subagent_protocol.md` and run only the
   acceptance row selected by the active task; blanket discovery and historical acceptance drivers
   are not default requirements.
 - During R0–R5, diff acceptance must use `git diff --check HEAD`, and the active task must include an

@@ -2,7 +2,7 @@
 
 > 2026-07-22 架构决策：现有 default/manual profile、mapping v2/v3/v4 和模式专用路径将在
 > 后续顺序重构中被 SourceSet、SymbolGraph 和统一 rewrite 流水线取代。已确认的新设计见
-> [`docs/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)。T038 仍为
+> [`docs/development/architecture/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)。T038 仍为
 > `BLOCKED / NOT_ACCEPTED`，当前只记录计划，不提前启动下一张实现任务单。
 
 ## 1. 目标与任务粒度
@@ -27,11 +27,11 @@ inventory 和每一种重命名对象分别建立任务。当前状态如下：
 
 每张任务单内部可以有多个按顺序执行的门禁，但只在整张任务完成后发生一次
 `READY_FOR_REVIEW -> ACCEPTED` 交接。仍然遵守
-[`docs/tasks/README.md`](tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
+[`docs/tasks/README.md`](../../tasks/README.md) 的规则：同一时间只有一张任务单可处于 `READY`、
 `IN_PROGRESS` 或 `READY_FOR_REVIEW`；前一任务未 `ACCEPTED` 时不得启动后一任务。
 
 本路线图不是活动任务合同。T027—T037 已验收，T006 继续保持 `DRAFT`；T038 合同见
-[`docs/tasks/T038_risc_v_vector_parameter_genvar_rate.md`](tasks/T038_risc_v_vector_parameter_genvar_rate.md)。
+[`docs/tasks/T038_risc_v_vector_parameter_genvar_rate.md`](../../tasks/T038_risc_v_vector_parameter_genvar_rate.md)。
 T035 的 shared canonical registry、两入口的 13 类 default profile、19 类 manual profile、
 filelist bounded closure、top ABI preservation 和 mapping v4，以及 T036 的加密率选择已完成。
 RISC-V-Vector Formal 只在 T037/T038 这类专门 RISC 验收任务中运行。
@@ -497,8 +497,8 @@ T029 还必须更新：
 
 - 根目录 `README.md` 的正式使用方式；
 - [`systemverilog_renaming_table.md`](systemverilog_renaming_table.md) 的新输入边界；
-- [`formal_verification.md`](formal_verification.md) 的 formal-view 规则；
-- [`future_work.md`](future_work.md) 中仍不支持的外部库、blackbox、复杂宏和顶层 ABI 情况。
+- [`formal_verification.md`](../../formal_verification.md) 的 formal-view 规则；
+- [`future_work.md`](../future_work.md) 中仍不支持的外部库、blackbox、复杂宏和顶层 ABI 情况。
 
 ### 7.5 T029 完成条件
 

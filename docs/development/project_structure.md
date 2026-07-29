@@ -1,8 +1,8 @@
 # 项目结构
 
 本文面向开发者。普通用户只需要阅读根目录
-[`README.md`](../README.md) 和
-[`SystemVerilog 可加密类型表`](systemverilog_renaming_table.md)。
+[`README.md`](../../README.md) 和
+[`SystemVerilog 可加密类型表`](../systemverilog_renaming_table.md)。
 
 ## 产品入口
 
@@ -57,7 +57,7 @@ python rtl_decrypt.py -> persisted report + actual gate
 
 ## 开发规范
 
-- [Formal 验证流程](formal_verification.md)
+- [Formal 验证流程](../formal_verification.md)
 - [未来扩展与已知边界](future_work.md)
-- [任务状态和验收流程](tasks/README.md)
-- [R0–R5 历史重构计划](three_mode_refactor_plan.md)
+- [任务状态和验收流程](../tasks/README.md)
+- [R0–R5 历史重构计划](architecture/three_mode_refactor_plan.md)

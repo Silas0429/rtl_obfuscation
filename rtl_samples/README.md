@@ -28,7 +28,7 @@ fields, and union fields. A one-pass `--category all` run on sample 11 produces
 
 当前加密命令见仓库根目录的[最简使用示例](../README.md)，可选名称类型见
 [SystemVerilog 可加密类型表](../docs/systemverilog_renaming_table.md)，代码布局见
-[项目结构](../docs/project_structure.md)。
+[项目结构](../docs/development/project_structure.md)。
 
 ## File list
 

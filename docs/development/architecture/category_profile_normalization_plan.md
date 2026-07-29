@@ -1,7 +1,7 @@
 # 单-module / 多-module Category 统一实现方案
 
 - 历史状态：`SUPERSEDED_BY_DESIGN`
-- 替代方案：[`docs/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)
+- 替代方案：[`docs/development/architecture/three_mode_refactor_plan.md`](three_mode_refactor_plan.md)
 - 说明：本文保留 T033–T038 的历史 profile/mapping 设计，不再作为后续重构的产品架构来源。
 
 - 原文档状态：`IN_PROGRESS`（历史快照）

@@ -4,12 +4,20 @@
 interface 名称。加密只改变名称，不改变 RTL 的预期功能，并且可以恢复原始源码。
 
 请从仓库根目录运行。需要 Python 3.10 或更高版本，并确保当前 Python 环境已经安装
-PySlang 11.x。无需安装本项目；可先查看命令帮助：
+PySlang 11.x。无需安装本项目；如果目标服务器无法联网安装 PySlang，请先阅读
+[PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。可先查看命令帮助：
 
 ```sh
 python rtl_encrypt.py --help
 python rtl_decrypt.py --help
 ```
+
+## 文档导航
+
+- [PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)：服务器无法联网时准备运行环境。
+- [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)：查看 `--category` 可以选择的内容。
+- [Formal 验证流程](docs/formal_verification.md)：加密完成后，按需独立检查原始 RTL 与加密 RTL 的功能等价性。
+- [开发文档索引](docs/development/README.md)：只面向项目维护者，不是用户操作必读内容。
 
 ## 加密模式
 
@@ -236,4 +244,4 @@ python rtl_decrypt.py \
 
 可加密内容和 `--category` 示例见
 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。开发与维护信息见
-[项目结构](docs/project_structure.md)。
+[开发文档索引](docs/development/README.md)。
