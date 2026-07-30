@@ -3,9 +3,47 @@
 本项目用于加密 SystemVerilog RTL 中的名称，例如信号、实例、参数、类型、module 和
 interface 名称。加密只改变名称，不改变 RTL 的预期功能，并且可以恢复原始源码。
 
-请从仓库根目录运行。需要 Python 3.10 或更高版本，并确保当前 Python 环境已经安装
-PySlang 11.x。无需安装本项目；如果目标服务器无法联网安装 PySlang，请先阅读
-[PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。可先查看命令帮助：
+## 安装 PySlang wheel
+
+请先进入仓库根目录。项目本身无需安装，但运行加密命令需要 Python 3.10 或更高版本，
+以及已安装的 PySlang 11.x。仓库当前提供以下离线 wheel：
+
+| 文件 | 适用版本和平台 |
+| --- | --- |
+| `wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` | CPython 3.11、Linux x86_64、glibc 2.17 或更高版本 |
+
+该 wheel 不适用于 Python 3.10、Windows、macOS 或 ARM。其他平台请安装匹配的 PySlang 11.x，
+或阅读 [PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。
+
+### 方式一：安装到当前 Python 环境
+
+确认当前 `python` 是 CPython 3.11，然后直接安装仓库提供的 wheel：
+
+```sh
+python --version
+python -m pip install --no-index --no-deps \
+  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+python -c "import pyslang; print(pyslang.__version__)"
+```
+
+### 方式二：创建虚拟环境后安装
+
+如果不希望修改当前 Python 环境，可以创建并激活一个 Python 3.11 虚拟环境：
+
+```sh
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --no-index --no-deps \
+  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+python -c "import pyslang; print(pyslang.__version__)"
+python rtl_encrypt.py --help
+```
+
+之后保持虚拟环境处于激活状态即可运行本项目；使用完毕后执行 `deactivate` 退出。
+
+如果目标服务器无法联网安装或当前平台不匹配，请使用上面的离线部署指南准备兼容环境。
+
+安装完成后，可查看命令帮助：
 
 ```sh
 python rtl_encrypt.py --help
