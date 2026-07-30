@@ -31,7 +31,7 @@ python -c "import pyslang; print(pyslang.__version__)"
 如果不希望修改当前 Python 环境，可以创建并激活一个 Python 3.11 虚拟环境：
 
 ```sh
-python3.11 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 python -m pip install --no-index --no-deps \
   wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
