@@ -109,6 +109,12 @@ class _GenvarRecord:
 
 
 @dataclass(frozen=True)
+class _NestedModuleSpan:
+    owner_id: str
+    source_range: SourceRange
+
+
+@dataclass(frozen=True)
 class _ParameterRecord:
     name: str
     declaration: SourceRange
@@ -656,6 +662,82 @@ def _module_definition_key(
     return declaration.file, declaration.start, declaration.end
 
 
+def _nested_module_span(
+    source_catalog: SourceCatalog,
+    owner: ModuleOwner,
+    definition: Any,
+) -> _NestedModuleSpan:
+    syntax = getattr(definition, "syntax", None)
+    if not isinstance(syntax, pyslang.syntax.ModuleDeclarationSyntax):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_OWNER_MISMATCH",
+            "nested generate definition is not a module declaration syntax",
+            file=owner.declaration.file,
+            start=owner.declaration.start,
+        )
+    source_range = getattr(syntax, "sourceRange", None)
+    start = getattr(source_range, "start", None)
+    end = getattr(source_range, "end", None)
+    if start is None or end is None or start.buffer != end.buffer:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_OWNER_MISMATCH",
+            "nested generate module syntax span is not source-backed",
+            file=owner.declaration.file,
+            start=owner.declaration.start,
+        )
+    _reject_macro_location(source_catalog, start)
+    _reject_macro_location(source_catalog, end)
+    file, start_offset = _location_start(source_catalog, start)
+    end_file, end_offset = _location_start(source_catalog, end)
+    if (
+        file is None
+        or end_file != file
+        or start_offset is None
+        or end_offset is None
+        or start_offset >= end_offset
+    ):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_OWNER_MISMATCH",
+            "nested generate module syntax span is not a precise physical range",
+            file=file,
+            start=start_offset,
+        )
+    if file not in _physical_files(source_catalog):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_OWNER_MISMATCH",
+            "nested generate module syntax span is not in a physical source file",
+            file=file,
+            start=start_offset,
+        )
+    span = SourceRange(file=file, start=start_offset, end=end_offset)
+    if not (
+        span.file == owner.declaration.file
+        and span.start <= owner.declaration.start
+        and owner.declaration.end <= span.end
+    ):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_OWNER_MISMATCH",
+            "nested generate module syntax span does not contain its owner declaration",
+            file=span.file,
+            start=span.start,
+        )
+    contained_modules = [
+        module
+        for module in source_catalog.modules
+        if module.declaration.file == span.file
+        and span.start <= module.declaration.start
+        and module.declaration.end <= span.end
+    ]
+    if len(contained_modules) != 1 or contained_modules[0].owner_id != owner.owner_id:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_RANGE_CONFLICT",
+            "nested generate module syntax span contains multiple or different module owners",
+            file=span.file,
+            start=span.start,
+        )
+    return _NestedModuleSpan(owner.owner_id, span)
+
+
 def _has_iteration_evidence(
     source_catalog: SourceCatalog,
     nodes: list[Any],
@@ -721,7 +803,7 @@ def _collect_genvar_symbols(
     source_catalog: SourceCatalog,
     nodes: list[Any],
     owners: dict[tuple[str, int, int], ModuleOwner],
-) -> list[SourceSymbol]:
+) -> tuple[list[SourceSymbol], tuple[_NestedModuleSpan, ...]]:
     genvar_kind = pyslang.ast.SymbolKind.Genvar
     records: dict[tuple[str, int, int], _GenvarRecord] = {}
     for node in nodes:
@@ -759,13 +841,8 @@ def _collect_genvar_symbols(
         )
 
     seen_definitions: set[tuple[str, int, int]] = set()
+    nested_spans_by_owner: dict[str, SourceRange] = {}
     for record_key, record in records.items():
-        definition_key = _module_definition_key(source_catalog, record.definition)
-        if definition_key is None:
-            continue
-        if definition_key in seen_definitions:
-            continue
-        seen_definitions.add(definition_key)
         syntax = getattr(record.definition, "syntax", None)
         if syntax is None:
             continue
@@ -776,15 +853,51 @@ def _collect_genvar_symbols(
             for node in syntax_nodes
             if isinstance(node, pyslang.syntax.LoopGenerateSyntax)
         ]
-        for loop in loops:
-            if _loop_has_nested_loop(loop):
-                file, start = _syntax_node_start(source_catalog, loop)
+        nested_loops = [loop for loop in loops if _loop_has_nested_loop(loop)]
+        definition_key = _module_definition_key(source_catalog, record.definition)
+        if nested_loops:
+            if definition_key is None:
                 raise SymbolGraphError(
-                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
-                    "nested generate-for is outside T042 scope",
-                    file=file,
-                    start=start,
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "genvar declaring definition is not a physical module definition",
+                    file=record.declaration.file,
+                    start=record.declaration.start,
                 )
+            owner_key = (
+                record.owner.declaration.file,
+                record.owner.declaration.start,
+                record.owner.declaration.end,
+            )
+            if definition_key != owner_key:
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "genvar declaring definition does not match its physical module owner",
+                    file=record.declaration.file,
+                    start=record.declaration.start,
+                )
+            if definition_key in seen_definitions:
+                continue
+            seen_definitions.add(definition_key)
+            for loop in nested_loops:
+                nested_span = _nested_module_span(
+                    source_catalog, record.owner, record.definition
+                )
+                previous_span = nested_spans_by_owner.get(record.owner.owner_id)
+                if previous_span is not None and previous_span != nested_span.source_range:
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_RANGE_CONFLICT",
+                        "nested generate owner was discovered with conflicting module spans",
+                        file=record.declaration.file,
+                        start=record.declaration.start,
+                    )
+                nested_spans_by_owner[record.owner.owner_id] = nested_span.source_range
+            continue
+
+        if definition_key is None:
+            continue
+        if definition_key in seen_definitions:
+            continue
+        seen_definitions.add(definition_key)
 
         for loop in loops:
             identifier = getattr(loop, "identifier", None)
@@ -878,7 +991,10 @@ def _collect_genvar_symbols(
                 reason=None,
             )
         )
-    return symbols
+    return symbols, tuple(
+        _NestedModuleSpan(owner_id, source_range)
+        for owner_id, source_range in sorted(nested_spans_by_owner.items())
+    )
 
 
 def _expression_identifier_range(
@@ -3027,6 +3143,7 @@ def _apply_owner_quarantine(
     type_parameter_owner_ids: set[str],
     type_parameter_symbol_ids: set[str],
     defparam_owner_ids: set[str],
+    nested_module_spans: tuple[_NestedModuleSpan, ...],
 ) -> list[SourceSymbol]:
     reasons: dict[str, str] = {}
 
@@ -3044,17 +3161,91 @@ def _apply_owner_quarantine(
     for owner_id in defparam_owner_ids:
         add_reason(owner_id, "defparam_binding_not_renamed")
 
+    spans_by_owner: dict[str, SourceRange] = {}
+    for nested_span in nested_module_spans:
+        previous = spans_by_owner.get(nested_span.owner_id)
+        if previous is not None and previous != nested_span.source_range:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "nested generate owner has conflicting module spans",
+                file=nested_span.source_range.file,
+                start=nested_span.source_range.start,
+            )
+        spans_by_owner[nested_span.owner_id] = nested_span.source_range
+    ordered_spans = tuple(
+        sorted(
+            spans_by_owner.items(),
+            key=lambda item: (
+                item[1].file,
+                item[1].start,
+                item[1].end,
+                item[0],
+            ),
+        )
+    )
+    for index, (_owner_id, left) in enumerate(ordered_spans):
+        for _other_owner_id, right in ordered_spans[index + 1 :]:
+            if (
+                left.file == right.file
+                and left.start < right.end
+                and right.start < left.end
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "nested generate module spans overlap",
+                    file=left.file,
+                    start=left.start,
+                )
+
+    nested_symbol_ids: set[str] = set()
+    for symbol in symbols:
+        containing = [
+            source_range
+            for _owner_id, source_range in ordered_spans
+            if (
+                symbol.declaration.file == source_range.file
+                and source_range.start <= symbol.declaration.start
+                and symbol.declaration.end <= source_range.end
+            )
+        ]
+        if len(containing) > 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "symbol declaration is contained in multiple nested module spans",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        if not containing:
+            continue
+        if symbol.symbol_id in type_parameter_symbol_ids or symbol.owner_module in reasons:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical module owner has conflicting quarantine reasons",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        nested_symbol_ids.add(symbol.symbol_id)
+    for owner_id, _source_range in ordered_spans:
+        if owner_id in reasons:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical module owner has conflicting quarantine reasons",
+            )
+
     return [
         replace(
             symbol,
             support="unsupported",
             reason=(
-                "type_parameter_not_renamed"
+                "owner_contains_nested_generate"
+                if symbol.symbol_id in nested_symbol_ids
+                else "type_parameter_not_renamed"
                 if symbol.symbol_id in type_parameter_symbol_ids
                 else reasons[symbol.owner_module]
             ),
         )
-        if symbol.symbol_id in type_parameter_symbol_ids
+        if symbol.symbol_id in nested_symbol_ids
+        or symbol.symbol_id in type_parameter_symbol_ids
         or symbol.owner_module in reasons
         else symbol
         for symbol in symbols
@@ -3258,7 +3449,9 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         )
         occurrences[target_key][occurrence_key] = occurrence
 
-    genvar_symbols = _collect_genvar_symbols(source_catalog, nodes, owners)
+    genvar_symbols, nested_module_spans = _collect_genvar_symbols(
+        source_catalog, nodes, owners
+    )
     symbols_list: list[SourceSymbol] = []
     for key, (name, declaration, owner) in declarations.items():
         ordered_occurrences = tuple(
@@ -3310,6 +3503,7 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         type_parameter_owner_ids=type_parameter_owner_ids,
         type_parameter_symbol_ids=type_parameter_symbol_ids,
         defparam_owner_ids=defparam_owner_ids,
+        nested_module_spans=nested_module_spans,
     )
 
     symbols = tuple(

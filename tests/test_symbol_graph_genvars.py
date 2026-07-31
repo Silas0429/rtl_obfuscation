@@ -240,16 +240,39 @@ class SymbolGraphGenvarTests(unittest.TestCase):
             build_symbol_graph(catalog)
         self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
 
-    def test_nested_same_named_genvars_fail_closed(self):
+    def test_nested_same_named_genvars_safe_preserve(self):
         catalog = build_source_catalog(
             from_filelist(
                 filelist=INVALID_ROOT / "nested.f",
                 source_root=INVALID_ROOT,
             )
         )
-        with self.assertRaises(SymbolGraphError) as raised:
-            build_symbol_graph(catalog)
-        self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE")
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(graph.to_report()["range_audit"], {
+            "symbols": 6,
+            "declarations": 6,
+            "occurrences": 0,
+            "total_ranges": 6,
+        })
+        self.assertTrue(all(
+            symbol.support == "unsupported"
+            and symbol.reason == "owner_contains_nested_generate"
+            for symbol in graph.symbols
+        ))
+        genvars = [symbol for symbol in graph.symbols if symbol.category == "genvars"]
+        self.assertEqual(
+            {(symbol.declaration.file, symbol.declaration.start, symbol.declaration.end)
+             for symbol in genvars},
+            {
+                ("rtl/nested.sv", 38, 39),
+                ("rtl/nested.sv", 93, 94),
+            },
+        )
+        self.assertEqual([len(symbol.occurrences) for symbol in genvars], [0, 0])
+        self.assertEqual(
+            {symbol.name for symbol in graph.symbols if symbol.category == "generate_blocks"},
+            {"g_outer", "g_inner"},
+        )
 
 
 if __name__ == "__main__":

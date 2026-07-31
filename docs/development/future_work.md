@@ -23,8 +23,11 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
 - T070 已按 PySlang typed syntax kind 忽略 `SignedCastExpressionSyntax` 内建 keyword cast
   及其 `TypeAliasType` 隐式 wrapper；typedef identifier cast 仍精确绑定，无法证明 direct
   type token 的普通 `TypeAliasType` conversion 继续 fail-closed。
-- instance array、嵌套或 conditional generate、复杂层次路径和完整 import/export member 语义
-  仍需要专项 semantic coverage。
+- T072 已将能够由 semantic declaring definition 唯一证明 physical module owner 与
+  source-backed module syntax span 的 nested generate 转为 module-span safe-preserve；该 span
+  内全部 source symbols（包括 generate block scope）保持不改名，无法证明 owner/span 的形状
+  仍保持 fail-closed。nested generate 内部 genvar/层次对象改名、instance array、conditional
+  generate、复杂层次路径和完整 import/export member 语义仍需要专项 semantic coverage。
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
   显式改写。
 
