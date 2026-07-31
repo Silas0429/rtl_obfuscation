@@ -504,6 +504,115 @@ def _scope_lookup_target(scope: Any, token: Any) -> Any:
     return target
 
 
+def _sized_cast_identifier_token(syntax: Any) -> Any | None:
+    """Return only the direct identifier of a typed cast syntax node."""
+
+    if type(syntax).__name__ != "CastExpressionSyntax":
+        return None
+    left = getattr(syntax, "left", None)
+    if type(left).__name__ != "IdentifierNameSyntax":
+        return None
+    token = getattr(left, "identifier", None)
+    if token is None or not getattr(token, "rawText", ""):
+        return None
+    return token
+
+
+def _semantic_scope_span(
+    source_catalog: SourceCatalog, node: Any
+) -> tuple[str, int, int] | None:
+    """Return a source-backed span for one semantic lexical-scope candidate."""
+
+    syntax = getattr(node, "syntax", None)
+    source_range = getattr(syntax, "sourceRange", None)
+    start = getattr(source_range, "start", None)
+    end = getattr(source_range, "end", None)
+    if start is None or end is None or start.buffer != end.buffer:
+        return None
+    _reject_macro_location(source_catalog, start)
+    try:
+        absolute = Path(
+            source_catalog.catalog_source_manager.getFullPath(start.buffer)
+        ).resolve()
+        file = absolute.relative_to(
+            source_catalog.source_set.source_root
+        ).as_posix()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_RANGE_INVALID",
+            "semantic scope is outside the SourceSet root",
+        ) from error
+    if file not in _physical_files(source_catalog):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_RANGE_INVALID",
+            "semantic scope is not in a SourceSet physical file",
+            file=file,
+            start=int(start.offset),
+        )
+    start_offset = int(start.offset)
+    end_offset = int(end.offset)
+    source = (source_catalog.source_set.source_root / file).read_bytes()
+    if start_offset < 0 or start_offset >= end_offset or end_offset > len(source):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_RANGE_INVALID",
+            "semantic scope span is outside source bytes",
+            file=file,
+            start=start_offset,
+        )
+    return file, start_offset, end_offset
+
+
+def _sized_cast_target_from_scopes(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    token: Any,
+) -> Any | None:
+    """Resolve a cast token through the smallest source-backed semantic scope."""
+
+    token_offset = int(token.location.offset)
+    token_buffer = token.location.buffer
+    candidates: list[tuple[int, tuple[str, int, int], Any]] = []
+    name = str(token.rawText)
+    for node in nodes:
+        scope = getattr(node, "parentScope", None)
+        lookup_name = getattr(scope, "lookupName", None)
+        if lookup_name is None:
+            continue
+        syntax = getattr(node, "syntax", None)
+        source_range = getattr(syntax, "sourceRange", None)
+        start = getattr(source_range, "start", None)
+        end = getattr(source_range, "end", None)
+        if start is None or end is None or start.buffer != token_buffer:
+            continue
+        if not (int(start.offset) <= token_offset < int(end.offset)):
+            continue
+        span = _semantic_scope_span(source_catalog, node)
+        if span is None:
+            continue
+        target = lookup_name(name)
+        if target is None:
+            continue
+        candidates.append((span[2] - span[1], span, target))
+    if not candidates:
+        return None
+    smallest = min(item[0] for item in candidates)
+    selected = [item for item in candidates if item[0] == smallest]
+    target_keys = {
+        _parameter_source_key(source_catalog, item[2])
+        for item in selected
+    }
+    target_keys.discard(None)
+    if len(target_keys) > 1:
+        file, start = _location_start(source_catalog, token.location)
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+            "sized cast lexical scope resolves to multiple parameter declarations",
+            file=file,
+            start=start,
+        )
+    return selected[0][2]
+
+
 def _token_range(
     source_catalog: SourceCatalog, token: Any, name: str
 ) -> SourceRange:
@@ -1105,6 +1214,73 @@ def _collect_parameter_symbols(
                 occurrence.provenance,
             )
             occurrences[target_key][occurrence_key] = occurrence
+
+    def add_sized_cast_occurrence(token: Any, target: Any) -> None:
+        name = str(getattr(token, "rawText", ""))
+        if not name:
+            return
+        target_key = _parameter_source_key(source_catalog, target)
+        if target_key is None or target_key in genvar_keys:
+            return
+        record = records.get(target_key)
+        if record is None:
+            return
+        _reject_macro_location(source_catalog, token.location)
+        source_range = _range_from_location(source_catalog, token.location, name)
+        if source_range == record.declaration:
+            return
+        range_key = (source_range.file, source_range.start, source_range.end)
+        for other_key, other_occurrences in occurrences.items():
+            if other_key == target_key:
+                continue
+            if any(
+                occurrence.source_range == source_range
+                for occurrence in other_occurrences.values()
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "physical sized cast range maps to multiple parameters",
+                    file=source_range.file,
+                    start=source_range.start,
+                )
+        for occurrence_key, occurrence in tuple(occurrences[target_key].items()):
+            if occurrence.source_range != source_range:
+                continue
+            del occurrences[target_key][occurrence_key]
+        occurrence = SymbolOccurrence(source_range, "sized_cast_type")
+        occurrences[target_key][(*range_key, occurrence.provenance)] = occurrence
+        special_ranges.add((target_key, range_key))
+
+    # A parameter declaration's default initializer remains source-backed even
+    # when elaboration replaces its semantic value with a named override.
+    for node in nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Parameter:
+            continue
+        syntax = getattr(node, "syntax", None)
+        syntax_nodes: list[Any] = []
+        if syntax is not None and hasattr(syntax, "visit"):
+            syntax.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            token = _sized_cast_identifier_token(syntax_node)
+            if token is None:
+                continue
+            target = _scope_lookup_target(getattr(node, "parentScope", None), token)
+            add_sized_cast_occurrence(token, target)
+
+    # Body conversions expose a typed CastExpressionSyntax but not a direct
+    # semantic target.  Bind their direct identifier through the smallest
+    # source-backed semantic scope candidate, then require an existing module
+    # parameter record.
+    for node in nodes:
+        if type(node).__name__ != "ConversionExpression":
+            continue
+        token = _sized_cast_identifier_token(getattr(node, "syntax", None))
+        if token is None:
+            continue
+        target = _sized_cast_target_from_scopes(source_catalog, nodes, token)
+        if target is None:
+            continue
+        add_sized_cast_occurrence(token, target)
 
     # Dimensions whose semantic expressions are not exposed by PySlang have
     # no bound target evidence. Do not recover them through syntax scanning or
