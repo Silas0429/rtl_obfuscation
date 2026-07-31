@@ -428,11 +428,56 @@ endmodule
     def test_macro_parameter_reference_fails_closed(self):
         self._assert_invalid("macro_reference.f", "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
 
-    def test_type_parameter_fails_closed(self):
-        self._assert_invalid("type_parameter.f", "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
+    def test_type_parameter_safe_preserve(self):
+        catalog = build_source_catalog(
+            from_filelist(
+                filelist=INVALID_ROOT / "type_parameter.f",
+                source_root=INVALID_ROOT,
+            )
+        )
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(graph.to_report()["range_audit"], {
+            "symbols": 3,
+            "declarations": 3,
+            "occurrences": 0,
+            "total_ranges": 3,
+        })
+        self.assertEqual(
+            {(symbol.name, symbol.support, symbol.reason) for symbol in graph.symbols},
+            {
+                ("T", "unsupported", "type_parameter_not_renamed"),
+                ("unsupported_type_parameter", "unsupported", "owner_contains_type_parameter"),
+                ("value", "unsupported", "owner_contains_type_parameter"),
+            },
+        )
 
-    def test_defparam_fails_closed(self):
-        self._assert_invalid("defparam.f", "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE")
+    def test_defparam_safe_preserve(self):
+        catalog = build_source_catalog(
+            from_filelist(
+                filelist=INVALID_ROOT / "defparam.f",
+                source_root=INVALID_ROOT,
+            )
+        )
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(graph.to_report()["range_audit"], {
+            "symbols": 4,
+            "declarations": 4,
+            "occurrences": 2,
+            "total_ranges": 6,
+        })
+        self.assertTrue(
+            all(
+                symbol.support == "unsupported"
+                and symbol.reason == "defparam_binding_not_renamed"
+                for symbol in graph.symbols
+            )
+        )
+        width = next(symbol for symbol in graph.symbols if symbol.name == "WIDTH")
+        self.assertEqual(
+            [(item.source_range.file, item.source_range.start, item.source_range.end, item.provenance)
+             for item in width.occurrences],
+            [("rtl/defparam.sv", 139, 144, "defparam_binding")],
+        )
 
     def test_parameter_declaration_bytes_changed_after_catalog_fail_with_range_invalid(self):
         with tempfile.TemporaryDirectory() as temporary:

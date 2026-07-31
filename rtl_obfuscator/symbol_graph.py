@@ -997,42 +997,158 @@ def _append_bound_parameter_references(
             )
 
 
-def _reject_parameter_unsupported_nodes(
+def _collect_type_parameter_symbols(
     source_catalog: SourceCatalog,
     nodes: list[Any],
     owners: dict[tuple[str, int, int], ModuleOwner],
-) -> None:
+) -> tuple[list[SourceSymbol], set[str], set[str]]:
     type_parameter_kind = getattr(pyslang.ast.SymbolKind, "TypeParameter", None)
-    defparam_kind = getattr(pyslang.ast.SymbolKind, "DefParam", None)
+    symbols: list[SourceSymbol] = []
+    owner_ids: set[str] = set()
+    symbol_ids: set[str] = set()
+    declarations: dict[tuple[str, int, int], tuple[str, ModuleOwner]] = {}
     for node in nodes:
-        definition = getattr(node, "declaringDefinition", None)
-        if definition is None:
+        if getattr(node, "kind", None) != type_parameter_kind:
             continue
-        if getattr(node, "kind", None) == type_parameter_kind:
-            owner = _owner_for_module_symbol(
-                source_catalog, node, owners, label="parameter"
+        name = str(getattr(node, "name", ""))
+        location = getattr(node, "location", None)
+        if not name or location is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "module type parameter has no physical declaration",
             )
-            if owner is not None:
-                raise SymbolGraphError(
-                    "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
-                    "module type parameter is outside T043 scope",
-                    file=owner.declaration.file,
-                    start=owner.declaration.start,
-                )
-        elif getattr(node, "kind", None) == defparam_kind:
-            owner = _owner_for_module_symbol(
-                source_catalog, node, owners, label="defparam"
+        owner = _owner_for_module_symbol(
+            source_catalog, node, owners, label="type parameter"
+        )
+        if owner is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "type parameter cannot map to a physical module owner",
             )
-            if owner is not None:
-                file, start = _location_start(
-                    source_catalog, getattr(node, "location", None)
-                )
+        _reject_macro_location(source_catalog, location)
+        declaration = _range_from_location(source_catalog, location, name)
+        key = (declaration.file, declaration.start, declaration.end)
+        previous = declarations.get(key)
+        if previous is not None:
+            if previous[0] != name or previous[1].owner_id != owner.owner_id:
                 raise SymbolGraphError(
-                    "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
-                    "defparam is outside T043 scope",
-                    file=file,
-                    start=start,
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "physical type parameter declaration maps to multiple owners",
+                    file=declaration.file,
+                    start=declaration.start,
                 )
+            continue
+        symbol_id = (
+            f"symbol:parameters:{declaration.file}:"
+            f"{declaration.start}:{declaration.end}"
+        )
+        symbols.append(
+            SourceSymbol(
+                symbol_id=symbol_id,
+                category="parameters",
+                name=name,
+                declaration=declaration,
+                owner_module=owner.owner_id,
+                semantic_owner=owner.owner_id,
+                occurrences=(),
+                impact="cross_module",
+                abi="module_abi",
+                support="unsupported",
+                reason="type_parameter_not_renamed",
+            )
+        )
+        declarations[key] = (name, owner)
+        owner_ids.add(owner.owner_id)
+        symbol_ids.add(symbol_id)
+    return symbols, owner_ids, symbol_ids
+
+
+def _defparam_final_identifier_token(node: Any) -> Any:
+    syntax = getattr(node, "syntax", None)
+    name_syntax = getattr(syntax, "name", None)
+    if type(name_syntax).__name__ != "ScopedNameSyntax":
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+            "defparam binding has no typed scoped name",
+        )
+    final_identifier = getattr(name_syntax, "right", None)
+    if type(final_identifier).__name__ != "IdentifierNameSyntax":
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+            "defparam binding has no typed final identifier",
+        )
+    token = getattr(final_identifier, "identifier", None)
+    if not getattr(token, "rawText", "") or getattr(token, "location", None) is None:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+            "defparam binding final identifier has no physical token",
+        )
+    return token
+
+
+def _collect_defparam_bindings(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+    owners: dict[tuple[str, int, int], ModuleOwner],
+    records: dict[tuple[str, int, int], _ParameterRecord],
+    occurrences: dict[
+        tuple[str, int, int], dict[tuple[str, int, int, str], SymbolOccurrence]
+    ],
+) -> set[str]:
+    defparam_kind = getattr(pyslang.ast.SymbolKind, "DefParam", None)
+    binding_owners: set[str] = set()
+    token_targets: dict[tuple[str, int, int], tuple[str, int, int]] = {}
+    for node in nodes:
+        if getattr(node, "kind", None) != defparam_kind:
+            continue
+        reference_owner = _owner_for_module_symbol(
+            source_catalog, node, owners, label="defparam"
+        )
+        if reference_owner is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "defparam cannot map to a physical module owner",
+            )
+        target = getattr(node, "target", None)
+        target_key = _parameter_source_key(source_catalog, target)
+        target_record = records.get(target_key) if target_key is not None else None
+        if target_key is None or target_record is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                "defparam target is not an exact module value parameter declaration",
+            )
+        target_owner = _owner_for_module_symbol(
+            source_catalog, target, owners, label="defparam target"
+        )
+        if target_owner is None or target_owner.owner_id != target_record.owner.owner_id:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "defparam target declaration owner does not match its parameter record",
+            )
+        token = _defparam_final_identifier_token(node)
+        token_name = str(getattr(token, "rawText", ""))
+        if token_name != target_record.name or token_name != str(getattr(target, "name", "")):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                "defparam binding token does not match its semantic target",
+            )
+        _reject_macro_location(source_catalog, token.location)
+        source_range = _range_from_location(source_catalog, token.location, token_name)
+        token_key = (source_range.file, source_range.start, source_range.end)
+        previous_target = token_targets.get(token_key)
+        if previous_target is not None and previous_target != target_key:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical defparam binding token maps to multiple parameters",
+                file=source_range.file,
+                start=source_range.start,
+            )
+        token_targets[token_key] = target_key
+        occurrences[target_key][(*token_key, "defparam_binding")] = SymbolOccurrence(
+            source_range, "defparam_binding"
+        )
+        binding_owners.update((reference_owner.owner_id, target_owner.owner_id))
+    return binding_owners
 
 
 def _parameter_classification(
@@ -1054,8 +1170,7 @@ def _collect_parameter_symbols(
     nodes: list[Any],
     owners: dict[tuple[str, int, int], ModuleOwner],
     genvar_symbols: list[SourceSymbol],
-) -> list[SourceSymbol]:
-    _reject_parameter_unsupported_nodes(source_catalog, nodes, owners)
+) -> tuple[list[SourceSymbol], set[str]]:
     genvar_keys = {
         (source_range.file, source_range.start, source_range.end)
         for symbol in genvar_symbols
@@ -1072,11 +1187,6 @@ def _collect_parameter_symbols(
         name = str(getattr(node, "name", ""))
         if not name or name.startswith("$"):
             continue
-        if getattr(node, "isType", False):
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
-                "type parameter is outside T043 scope",
-            )
         if (
             getattr(node, "isLocalParam", False)
             and getattr(node, "isBodyParam", False)
@@ -1400,6 +1510,10 @@ def _collect_parameter_symbols(
             (*source_range_key, "semantic_expression"), None
         )
 
+    defparam_owners = _collect_defparam_bindings(
+        source_catalog, nodes, owners, records, occurrences
+    )
+
     symbols: list[SourceSymbol] = []
     for key, record in records.items():
         ordered_occurrences = tuple(
@@ -1434,7 +1548,7 @@ def _collect_parameter_symbols(
                 reason=reason,
             )
         )
-    return symbols
+    return symbols, defparam_owners
 
 
 def _audit_ranges(symbols: tuple[SourceSymbol, ...]) -> None:
@@ -2907,6 +3021,46 @@ def _augment_signal_generate_connection_occurrences(
     ]
 
 
+def _apply_owner_quarantine(
+    symbols: list[SourceSymbol],
+    *,
+    type_parameter_owner_ids: set[str],
+    type_parameter_symbol_ids: set[str],
+    defparam_owner_ids: set[str],
+) -> list[SourceSymbol]:
+    reasons: dict[str, str] = {}
+
+    def add_reason(owner_id: str, reason: str) -> None:
+        previous = reasons.get(owner_id)
+        if previous is not None and previous != reason:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical module owner has conflicting quarantine reasons",
+            )
+        reasons[owner_id] = reason
+
+    for owner_id in type_parameter_owner_ids:
+        add_reason(owner_id, "owner_contains_type_parameter")
+    for owner_id in defparam_owner_ids:
+        add_reason(owner_id, "defparam_binding_not_renamed")
+
+    return [
+        replace(
+            symbol,
+            support="unsupported",
+            reason=(
+                "type_parameter_not_renamed"
+                if symbol.symbol_id in type_parameter_symbol_ids
+                else reasons[symbol.owner_module]
+            ),
+        )
+        if symbol.symbol_id in type_parameter_symbol_ids
+        or symbol.owner_module in reasons
+        else symbol
+        for symbol in symbols
+    ]
+
+
 def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
     """Build the complete vNext semantic graph from the compiled catalog view."""
 
@@ -3137,15 +3291,26 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             )
         )
 
-    symbols_list.extend(
-        _collect_parameter_symbols(source_catalog, nodes, owners, genvar_symbols)
+    type_parameter_symbols, type_parameter_owner_ids, type_parameter_symbol_ids = (
+        _collect_type_parameter_symbols(source_catalog, nodes, owners)
     )
+    parameter_symbols, defparam_owner_ids = _collect_parameter_symbols(
+        source_catalog, nodes, owners, genvar_symbols
+    )
+    symbols_list.extend(parameter_symbols)
+    symbols_list.extend(type_parameter_symbols)
     symbols_list.extend(genvar_symbols)
     symbols_list = _augment_signal_member_occurrences(source_catalog, symbols_list)
     symbols_list = _augment_signal_generate_connection_occurrences(
         source_catalog, symbols_list
     )
     symbols_list.extend(_collect_extended_symbols(source_catalog, symbols_list))
+    symbols_list = _apply_owner_quarantine(
+        symbols_list,
+        type_parameter_owner_ids=type_parameter_owner_ids,
+        type_parameter_symbol_ids=type_parameter_symbol_ids,
+        defparam_owner_ids=defparam_owner_ids,
+    )
 
     symbols = tuple(
         sorted(

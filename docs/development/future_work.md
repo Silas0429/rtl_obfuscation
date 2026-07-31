@@ -10,9 +10,11 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
 
 ## 语言语义边界
 
-- 任意深度 lexical shadow、复杂 aggregate、package/class scope、type parameter、`defparam`、
-  DPI、bind、checker、primitive、clocking block 和 virtual interface 需要额外的 PySlang owner
-  证据；无法证明时保持 fail-closed。
+- T071 已将物理可定位的 module type parameter 与语义绑定的 `defparam` 转为 module-owner
+  safe-preserve：type parameter 本身和其 owner 全部保持，`defparam` 引用/目标 owner 全部保持；
+  无法证明物理 declaration、typed binding token 或 owner 时仍保持 fail-closed。package/class
+  scope、其他 type parameter、DPI、bind、checker、primitive、clocking block 和 virtual interface
+  仍需要额外的 PySlang owner 证据。
 - T069 已补齐真实工程 CDC FIFO 和 riscv-dbg JTAG wrapper 中复现的 value parameter
   sized-cast occurrence 边界：`WIDTH'(0)`、`POINTER_WIDTH'(~0)`、`IrLength'(4'b0101)`
   等 cast type token 现在通过精确 parameter declaration identity 绑定，并进入同一
