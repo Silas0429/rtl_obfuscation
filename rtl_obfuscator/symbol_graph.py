@@ -518,6 +518,22 @@ def _sized_cast_identifier_token(syntax: Any) -> Any | None:
     return token
 
 
+def _is_builtin_keyword_cast_conversion(node: Any) -> bool:
+    """Recognize only PySlang's typed built-in keyword-cast syntax."""
+
+    syntax = getattr(node, "syntax", None)
+    if type(syntax).__name__ == "SignedCastExpressionSyntax":
+        return True
+    if syntax is not None:
+        return False
+    operand = getattr(node, "operand", None)
+    return (
+        type(operand).__name__ == "ConversionExpression"
+        and type(getattr(operand, "syntax", None)).__name__
+        == "SignedCastExpressionSyntax"
+    )
+
+
 def _semantic_scope_span(
     source_catalog: SourceCatalog, node: Any
 ) -> tuple[str, int, int] | None:
@@ -2074,6 +2090,8 @@ def _collect_extended_symbols(
             continue
         alias_name = str(getattr(semantic_type, "name", "")).rsplit(".", 1)[-1]
         syntax = getattr(node, "syntax", None)
+        if _is_builtin_keyword_cast_conversion(node):
+            continue
         token = _direct_expression_identifier(getattr(syntax, "left", None))
         if token is None:
             raise SymbolGraphError(

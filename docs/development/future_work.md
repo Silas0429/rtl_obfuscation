@@ -18,6 +18,9 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
   等 cast type token 现在通过精确 parameter declaration identity 绑定，并进入同一
   mapping/edit。T069 compact actual gate 已验证 strict compile、逐字节恢复及 Formal
   正负例；后续真实工程复测仍应保留这些闭包作为独立边界证据。
+- T070 已按 PySlang typed syntax kind 忽略 `SignedCastExpressionSyntax` 内建 keyword cast
+  及其 `TypeAliasType` 隐式 wrapper；typedef identifier cast 仍精确绑定，无法证明 direct
+  type token 的普通 `TypeAliasType` conversion 继续 fail-closed。
 - instance array、嵌套或 conditional generate、复杂层次路径和完整 import/export member 语义
   仍需要专项 semantic coverage。
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
