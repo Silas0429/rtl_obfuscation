@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,19 @@ class _NestedModuleSpan:
 
 
 @dataclass(frozen=True)
+class _MacroOwnerEvidence:
+    source_manager: Any
+    module_spans: tuple[_NestedModuleSpan, ...]
+    owner_ids: frozenset[str]
+    target_owner_ids: set[str] = field(default_factory=set)
+
+
+_active_macro_owner_evidence: ContextVar[_MacroOwnerEvidence | None] = ContextVar(
+    "symbol_graph_macro_owner_evidence", default=None
+)
+
+
+@dataclass(frozen=True)
 class _ParameterRecord:
     name: str
     declaration: SourceRange
@@ -182,10 +196,39 @@ def _range_from_location(
 
 def _reject_macro_location(
     source_catalog: SourceCatalog, location: Any
-) -> None:
+) -> bool:
     if location is None:
-        return
+        return False
     if source_catalog.catalog_source_manager.isMacroLoc(location):
+        evidence = _active_macro_owner_evidence.get()
+        owner_id = None
+        if evidence is not None and evidence.source_manager is source_catalog.catalog_source_manager:
+            try:
+                expanded = source_catalog.catalog_source_manager.getFullyExpandedLoc(
+                    location
+                )
+            except (AttributeError, RuntimeError, ValueError):
+                expanded = None
+            if expanded is not None:
+                file, offset = _location_start(source_catalog, expanded)
+                matches = [
+                    span.owner_id
+                    for span in evidence.module_spans
+                    if span.source_range.file == file
+                    and offset is not None
+                    and span.source_range.start <= offset < span.source_range.end
+                ]
+                if len(matches) > 1:
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_RANGE_CONFLICT",
+                        "macro expanded location maps to multiple physical module owners",
+                        file=file,
+                        start=offset,
+                    )
+                if matches:
+                    owner_id = matches[0]
+        if owner_id is not None:
+            return True
         file, start = _location_start(source_catalog, location)
         raise SymbolGraphError(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
@@ -193,6 +236,7 @@ def _reject_macro_location(
             file=file,
             start=start,
         )
+    return False
 
 
 def _module_owner_map(source_catalog: SourceCatalog) -> dict[tuple[str, int, int], ModuleOwner]:
@@ -258,14 +302,15 @@ def _owner_for_signal(
 
 def _signal_range_key(
     source_catalog: SourceCatalog, symbol: Any
-) -> tuple[str, int, int]:
+) -> tuple[str, int, int] | None:
     name = str(getattr(symbol, "name", ""))
     if not name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
             "semantic signal has no source identifier",
         )
-    _reject_macro_location(source_catalog, symbol.location)
+    if _reject_macro_location(source_catalog, symbol.location):
+        return None
     declaration = _range_from_location(
         source_catalog, symbol.location, name
     )
@@ -281,7 +326,7 @@ def _is_signal_target(symbol: Any) -> bool:
 
 def _expression_range(
     source_catalog: SourceCatalog, expression: Any, name: str
-) -> SourceRange:
+) -> SourceRange | None:
     syntax = getattr(expression, "syntax", None)
     token = _direct_expression_identifier(syntax)
     if token is None or not token.rawText:
@@ -303,7 +348,8 @@ def _expression_range(
                 "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
                 "semantic expression has no direct source identifier token",
             )
-        _reject_macro_location(source_catalog, start)
+        if _reject_macro_location(source_catalog, start):
+            return None
         file, start_offset = _location_start(source_catalog, start)
         if file is None or start_offset is None:
             raise SymbolGraphError(
@@ -325,7 +371,8 @@ def _expression_range(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
             "semantic expression identifier does not match bound signal",
         )
-    _reject_macro_location(source_catalog, token.location)
+    if _reject_macro_location(source_catalog, token.location):
+        return None
     return _range_from_location(source_catalog, token.location, name)
 
 
@@ -637,14 +684,15 @@ def _sized_cast_target_from_scopes(
 
 def _token_range(
     source_catalog: SourceCatalog, token: Any, name: str
-) -> SourceRange:
+) -> SourceRange | None:
     raw_text = getattr(token, "rawText", "")
     if not raw_text or raw_text != name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
             "generate syntax identifier does not match bound genvar",
         )
-    _reject_macro_location(source_catalog, token.location)
+    if _reject_macro_location(source_catalog, token.location):
+        return None
     return _range_from_location(source_catalog, token.location, name)
 
 
@@ -815,7 +863,8 @@ def _collect_genvar_symbols(
         owner = _owner_for_signal(source_catalog, node, owners)
         if owner is None:
             continue
-        _reject_macro_location(source_catalog, node.location)
+        if _reject_macro_location(source_catalog, node.location):
+            continue
         declaration = _range_from_location(source_catalog, node.location, name)
         key = (declaration.file, declaration.start, declaration.end)
         existing = records.get(key)
@@ -914,6 +963,8 @@ def _collect_genvar_symbols(
             inline = bool(getattr(getattr(loop, "genvar", None), "rawText", ""))
             if inline:
                 identifier_range = _token_range(source_catalog, identifier, name)
+                if identifier_range is None:
+                    continue
                 candidate_keys = [
                     candidate_key
                     for candidate_key in candidate_keys
@@ -951,6 +1002,8 @@ def _collect_genvar_symbols(
                 loop, name=name, inline=inline
             ):
                 source_range = _token_range(source_catalog, token, name)
+                if source_range is None:
+                    continue
                 occurrence = SymbolOccurrence(source_range, "generate_syntax")
                 occurrence_key = (
                     source_range.file,
@@ -1001,7 +1054,7 @@ def _expression_identifier_range(
     source_catalog: SourceCatalog,
     expression: Any,
     name: str,
-) -> SourceRange:
+) -> SourceRange | None:
     syntax = getattr(expression, "syntax", None)
     identifier = _direct_expression_identifier(syntax)
     if identifier is None or not getattr(identifier, "rawText", ""):
@@ -1017,7 +1070,8 @@ def _expression_identifier_range(
                 "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
                 "semantic parameter expression has no direct source identifier token",
             )
-        _reject_macro_location(source_catalog, start)
+        if _reject_macro_location(source_catalog, start):
+            return None
         file, start_offset = _location_start(source_catalog, start)
         if file is None or start_offset is None:
             raise SymbolGraphError(
@@ -1039,7 +1093,8 @@ def _expression_identifier_range(
             "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
             "semantic parameter expression identifier does not match bound parameter",
         )
-    _reject_macro_location(source_catalog, identifier.location)
+    if _reject_macro_location(source_catalog, identifier.location):
+        return None
     return _range_from_location(source_catalog, identifier.location, name)
 
 
@@ -1053,6 +1108,8 @@ def _parameter_source_key(
         return None
     name = str(getattr(symbol, "name", ""))
     if not name:
+        return None
+    if _reject_macro_location(source_catalog, getattr(symbol, "location", None)):
         return None
     declaration = _range_from_location(source_catalog, symbol.location, name)
     return declaration.file, declaration.start, declaration.end
@@ -1086,6 +1143,8 @@ def _append_bound_parameter_references(
         source_range = _expression_identifier_range(
             source_catalog, node, record.name
         )
+        if source_range is None:
+            continue
         if (
             source_range.file,
             source_range.start,
@@ -1141,7 +1200,8 @@ def _collect_type_parameter_symbols(
                 "SYMBOL_GRAPH_OWNER_MISMATCH",
                 "type parameter cannot map to a physical module owner",
             )
-        _reject_macro_location(source_catalog, location)
+        if _reject_macro_location(source_catalog, location):
+            continue
         declaration = _range_from_location(source_catalog, location, name)
         key = (declaration.file, declaration.start, declaration.end)
         previous = declarations.get(key)
@@ -1248,7 +1308,8 @@ def _collect_defparam_bindings(
                 "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
                 "defparam binding token does not match its semantic target",
             )
-        _reject_macro_location(source_catalog, token.location)
+        if _reject_macro_location(source_catalog, token.location):
+            continue
         source_range = _range_from_location(source_catalog, token.location, token_name)
         token_key = (source_range.file, source_range.start, source_range.end)
         previous_target = token_targets.get(token_key)
@@ -1315,7 +1376,8 @@ def _collect_parameter_symbols(
         )
         if owner is None:
             continue
-        _reject_macro_location(source_catalog, node.location)
+        if _reject_macro_location(source_catalog, node.location):
+            continue
         if _parameter_source_key(source_catalog, node) in genvar_keys:
             continue
         declaration = _range_from_location(
@@ -1409,6 +1471,8 @@ def _collect_parameter_symbols(
             record = records.get(target_key)
             if record is None:
                 continue
+            if _reject_macro_location(source_catalog, token.location):
+                continue
             source_range = _range_from_location(source_catalog, token.location, name)
             if source_range == record.declaration:
                 continue
@@ -1439,7 +1503,8 @@ def _collect_parameter_symbols(
             record = records.get(target_key)
             if record is None:
                 continue
-            _reject_macro_location(source_catalog, token.location)
+            if _reject_macro_location(source_catalog, token.location):
+                continue
             source_range = _range_from_location(source_catalog, token.location, name)
             if source_range == record.declaration:
                 continue
@@ -1467,7 +1532,8 @@ def _collect_parameter_symbols(
         record = records.get(target_key)
         if record is None:
             return
-        _reject_macro_location(source_catalog, token.location)
+        if _reject_macro_location(source_catalog, token.location):
+            return
         source_range = _range_from_location(source_catalog, token.location, name)
         if source_range == record.declaration:
             return
@@ -1601,7 +1667,8 @@ def _collect_parameter_symbols(
                 )
             if not candidate_keys:
                 continue
-            _reject_macro_location(source_catalog, name_token.location)
+            if _reject_macro_location(source_catalog, name_token.location):
+                continue
             target_key = candidate_keys[0]
             source_range = _range_from_location(
                 source_catalog, name_token.location, name_token.rawText
@@ -1838,6 +1905,87 @@ def _semantic_scopes(
     return tuple(sorted(scopes, key=lambda item: (item.file, item.start, item.end, item.owner)))
 
 
+def _macro_owner_evidence_for(
+    source_catalog: SourceCatalog,
+    nodes: list[Any],
+) -> _MacroOwnerEvidence:
+    """Prove ordinary physical owners for all macro-backed semantic locations."""
+
+    scopes = _semantic_scopes(source_catalog, nodes)
+    module_spans = tuple(
+        _NestedModuleSpan(
+            scope.owner,
+            SourceRange(scope.file, scope.start, scope.end),
+        )
+        for scope in scopes
+        if scope.kind == "module"
+    )
+    locations: list[Any] = []
+
+    def collect(location: Any) -> None:
+        if location is None:
+            return
+        if source_catalog.catalog_source_manager.isMacroLoc(location):
+            locations.append(location)
+
+    for node in nodes:
+        collect(getattr(node, "location", None))
+        syntax = getattr(node, "syntax", None)
+        source_range = getattr(syntax, "sourceRange", None)
+        collect(getattr(source_range, "start", None))
+        collect(getattr(source_range, "end", None))
+        if syntax is not None and hasattr(syntax, "visit"):
+            syntax_nodes: list[Any] = []
+            syntax.visit(syntax_nodes.append)
+            for syntax_node in syntax_nodes:
+                syntax_range = getattr(syntax_node, "sourceRange", None)
+                collect(getattr(syntax_range, "start", None))
+                collect(getattr(syntax_range, "end", None))
+                if hasattr(syntax_node, "visit"):
+                    for token in _syntax_identifier_tokens(syntax_node):
+                        collect(getattr(token, "location", None))
+        if type(node).__name__ == "InstanceSymbol":
+            parent = getattr(syntax, "parent", None)
+            collect(getattr(getattr(parent, "type", None), "location", None))
+
+    macro_owner_ids: set[str] = set()
+    for location in locations:
+        try:
+            expanded = source_catalog.catalog_source_manager.getFullyExpandedLoc(
+                location
+            )
+        except (AttributeError, RuntimeError, ValueError) as error:
+            file, start = _location_start(source_catalog, location)
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                "macro location has no fully expanded physical location",
+                file=file,
+                start=start,
+            ) from error
+        file, offset = _location_start(source_catalog, expanded)
+        matches = [
+            span
+            for span in module_spans
+            if span.source_range.file == file
+            and offset is not None
+            and span.source_range.start <= offset < span.source_range.end
+        ]
+        if len(matches) != 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "macro expanded location does not map to one physical module owner",
+                file=file,
+                start=offset,
+            )
+        macro_owner_ids.add(matches[0].owner_id)
+
+    return _MacroOwnerEvidence(
+        source_catalog.catalog_source_manager,
+        tuple(sorted(module_spans, key=lambda span: (span.source_range.file, span.source_range.start, span.source_range.end, span.owner_id))),
+        frozenset(macro_owner_ids),
+    )
+
+
 def _scope_at(
     scopes: tuple[_SemanticScope, ...],
     file: str | None,
@@ -1864,7 +2012,11 @@ def _record_range(
             "SYMBOL_GRAPH_SOURCE_INVALID",
             "semantic symbol has no source identifier",
         )
-    _reject_macro_location(source_catalog, getattr(node, "location", None))
+    if _reject_macro_location(source_catalog, getattr(node, "location", None)):
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+            "macro-backed semantic symbol has no physical declaration token",
+        )
     return _range_from_location(source_catalog, node.location, value)
 
 
@@ -1872,13 +2024,14 @@ def _token_source_range(
     source_catalog: SourceCatalog,
     token: Any,
     name: str,
-) -> SourceRange:
+) -> SourceRange | None:
     if token is None or getattr(token, "rawText", "") != name:
         raise SymbolGraphError(
             "SYMBOL_GRAPH_SOURCE_INVALID",
             f"semantic token does not match bound symbol: token={getattr(token, 'rawText', None)!r} name={name!r} offset={getattr(getattr(token, 'location', None), 'offset', None)}",
         )
-    _reject_macro_location(source_catalog, token.location)
+    if _reject_macro_location(source_catalog, token.location):
+        return None
     return _range_from_location(source_catalog, token.location, name)
 
 
@@ -1890,6 +2043,13 @@ def _collect_extended_symbols(
 
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
+    nodes = [
+        node
+        for node in nodes
+        if not _reject_macro_location(
+            source_catalog, getattr(node, "location", None)
+        )
+    ]
     scopes = _semantic_scopes(source_catalog, nodes)
     physical_files = _physical_files(source_catalog)
     top_closure_files = set(source_catalog.source_set.top_closure_files)
@@ -1933,6 +2093,7 @@ def _collect_extended_symbols(
     declaration_records: dict[tuple[str, int, int], dict[str, Any]] = {}
     target_records: dict[tuple[str, int, int], dict[str, Any]] = {}
     module_records: dict[str, dict[str, Any]] = {}
+    module_records_by_declaration: dict[tuple[str, int, int], dict[str, Any]] = {}
     interface_records: dict[str, dict[str, Any]] = {}
     modport_records: dict[tuple[str, str], dict[str, Any]] = {}
     port_records: dict[tuple[str, str], dict[str, Any]] = {}
@@ -2036,6 +2197,7 @@ def _collect_extended_symbols(
         occupied[key] = record
         if category == "modules":
             module_records[name] = record
+            module_records_by_declaration[key] = record
         elif category == "interfaces":
             interface_records[name] = record
         elif category in {"ports", "interface_ports"} and context is not None:
@@ -2046,9 +2208,11 @@ def _collect_extended_symbols(
 
     def add_occurrence(
         record: dict[str, Any],
-        source_range: SourceRange,
+        source_range: SourceRange | None,
         provenance: str,
     ) -> None:
+        if source_range is None:
+            return
         key = (source_range.file, source_range.start, source_range.end)
         declaration_key = (
             record["declaration"].file,
@@ -2228,6 +2392,8 @@ def _collect_extended_symbols(
                         "aggregate field has no semantic declaration token",
                     )
                 field_range = _token_source_range(source_catalog, token, name)
+                if field_range is None:
+                    continue
                 field_record = add_record(
                     category=field_category,
                     name=name,
@@ -2726,6 +2892,8 @@ def _collect_extended_symbols(
                 source_range = _token_source_range(
                     source_catalog, token, call_record["name"]
                 )
+                if source_range is None:
+                    continue
                 key = (source_range.file, source_range.start, source_range.end)
                 if key not in call_record["occurrence_ranges"]:
                     add_occurrence(call_record, source_range, "semantic_call")
@@ -2837,12 +3005,46 @@ def _collect_extended_symbols(
                 if getattr(node, "isInterface", False)
                 else module_records.get(str(target_definition))
             )
-            if target_record is not None and token is not None:
-                add_occurrence(
-                    target_record,
-                    _token_source_range(source_catalog, token, target_record["name"]),
-                    "semantic_hierarchy",
-                )
+            if token is not None:
+                if _reject_macro_location(source_catalog, getattr(token, "location", None)):
+                    evidence = _active_macro_owner_evidence.get()
+                    if evidence is None:
+                        raise SymbolGraphError(
+                            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                            "macro hierarchy occurrence has no owner evidence",
+                        )
+                    definition = getattr(node, "definition", None)
+                    definition_key = _module_definition_key(
+                        source_catalog, definition
+                    )
+                    if getattr(node, "isInterface", False) or definition_key is None:
+                        raise SymbolGraphError(
+                            "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                            "macro hierarchy target is not an ordinary physical module",
+                        )
+                    target_record = module_records_by_declaration.get(definition_key)
+                    physical_owner = _module_owner_map(source_catalog).get(definition_key)
+                    if target_record is None or physical_owner is None:
+                        raise SymbolGraphError(
+                            "SYMBOL_GRAPH_OWNER_MISMATCH",
+                            "macro hierarchy target cannot map to a catalog module owner",
+                        )
+                    if (
+                        target_record["category"] != "modules"
+                        or target_record["declaration"] != physical_owner.declaration
+                        or target_record["owner"] != physical_owner.owner_id
+                    ):
+                        raise SymbolGraphError(
+                            "SYMBOL_GRAPH_OWNER_MISMATCH",
+                            "macro hierarchy target record does not match its catalog module owner",
+                        )
+                    evidence.target_owner_ids.add(physical_owner.owner_id)
+                elif target_record is not None:
+                    add_occurrence(
+                        target_record,
+                        _token_source_range(source_catalog, token, target_record["name"]),
+                        "semantic_hierarchy",
+                    )
             target_scope_name = str(target_definition)
             for connection in getattr(node.syntax, "connections", ()):
                 if type(connection).__name__ != "NamedPortConnectionSyntax":
@@ -2997,6 +3199,8 @@ def _augment_signal_member_occurrences(
         if token is None:
             continue
         source_range = _token_source_range(source_catalog, token, symbol.name)
+        if source_range is None:
+            continue
         if any(
             occurrence.source_range == source_range
             for occurrence in additions[symbol.symbol_id]
@@ -3105,6 +3309,8 @@ def _augment_signal_generate_connection_occurrences(
                     source_range = _token_source_range(
                         source_catalog, token, symbol.name
                     )
+                    if source_range is None:
+                        continue
                     if source_range == symbol.declaration:
                         continue
                     if any(
@@ -3144,6 +3350,7 @@ def _apply_owner_quarantine(
     type_parameter_symbol_ids: set[str],
     defparam_owner_ids: set[str],
     nested_module_spans: tuple[_NestedModuleSpan, ...],
+    macro_module_spans: tuple[_NestedModuleSpan, ...],
 ) -> list[SourceSymbol]:
     reasons: dict[str, str] = {}
 
@@ -3160,6 +3367,44 @@ def _apply_owner_quarantine(
         add_reason(owner_id, "owner_contains_type_parameter")
     for owner_id in defparam_owner_ids:
         add_reason(owner_id, "defparam_binding_not_renamed")
+
+    macro_spans_by_owner: dict[str, SourceRange] = {}
+    for macro_span in macro_module_spans:
+        previous = macro_spans_by_owner.get(macro_span.owner_id)
+        if previous is not None and previous != macro_span.source_range:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "macro owner has conflicting module spans",
+                file=macro_span.source_range.file,
+                start=macro_span.source_range.start,
+            )
+        macro_spans_by_owner[macro_span.owner_id] = macro_span.source_range
+        add_reason(macro_span.owner_id, "owner_contains_macro_source")
+
+    ordered_macro_spans = tuple(
+        sorted(
+            macro_spans_by_owner.items(),
+            key=lambda item: (
+                item[1].file,
+                item[1].start,
+                item[1].end,
+                item[0],
+            ),
+        )
+    )
+    for index, (_owner_id, left) in enumerate(ordered_macro_spans):
+        for _other_owner_id, right in ordered_macro_spans[index + 1 :]:
+            if (
+                left.file == right.file
+                and left.start < right.end
+                and right.start < left.end
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "macro owner module spans overlap",
+                    file=left.file,
+                    start=left.start,
+                )
 
     spans_by_owner: dict[str, SourceRange] = {}
     for nested_span in nested_module_spans:
@@ -3197,7 +3442,15 @@ def _apply_owner_quarantine(
                     start=left.start,
                 )
 
+    for owner_id, _source_range in ordered_spans:
+        if owner_id in macro_spans_by_owner:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical module owner has conflicting quarantine reasons",
+            )
+
     nested_symbol_ids: set[str] = set()
+    macro_symbol_ids: set[str] = set()
     for symbol in symbols:
         containing = [
             source_range
@@ -3215,16 +3468,60 @@ def _apply_owner_quarantine(
                 file=symbol.declaration.file,
                 start=symbol.declaration.start,
             )
+        macro_containing = [
+            source_range
+            for _owner_id, source_range in ordered_macro_spans
+            if (
+                symbol.declaration.file == source_range.file
+                and source_range.start <= symbol.declaration.start
+                and symbol.declaration.end <= source_range.end
+            )
+        ]
+        if len(macro_containing) > 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "symbol declaration is contained in multiple macro module spans",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        if (
+            symbol.owner_module in macro_spans_by_owner
+            and not macro_containing
+        ):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "macro quarantine owner does not contain its physical declaration",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
         if not containing:
-            continue
-        if symbol.symbol_id in type_parameter_symbol_ids or symbol.owner_module in reasons:
+            if not macro_containing:
+                continue
+        if macro_containing:
+            conflicting_owner = (
+                symbol.owner_module in spans_by_owner
+                or symbol.owner_module in type_parameter_owner_ids
+                or symbol.owner_module in defparam_owner_ids
+                or symbol.symbol_id in type_parameter_symbol_ids
+            )
+        elif containing:
+            conflicting_owner = (
+                symbol.symbol_id in type_parameter_symbol_ids
+                or symbol.owner_module in reasons
+            )
+        else:
+            conflicting_owner = False
+        if conflicting_owner:
             raise SymbolGraphError(
                 "SYMBOL_GRAPH_RANGE_CONFLICT",
                 "physical module owner has conflicting quarantine reasons",
                 file=symbol.declaration.file,
                 start=symbol.declaration.start,
             )
-        nested_symbol_ids.add(symbol.symbol_id)
+        if containing:
+            nested_symbol_ids.add(symbol.symbol_id)
+        if macro_containing:
+            macro_symbol_ids.add(symbol.symbol_id)
     for owner_id, _source_range in ordered_spans:
         if owner_id in reasons:
             raise SymbolGraphError(
@@ -3237,6 +3534,9 @@ def _apply_owner_quarantine(
             symbol,
             support="unsupported",
             reason=(
+                "owner_contains_macro_source"
+                if symbol.symbol_id in macro_symbol_ids
+                else
                 "owner_contains_nested_generate"
                 if symbol.symbol_id in nested_symbol_ids
                 else "type_parameter_not_renamed"
@@ -3245,6 +3545,7 @@ def _apply_owner_quarantine(
             ),
         )
         if symbol.symbol_id in nested_symbol_ids
+        or symbol.symbol_id in macro_symbol_ids
         or symbol.symbol_id in type_parameter_symbol_ids
         or symbol.owner_module in reasons
         else symbol
@@ -3252,11 +3553,14 @@ def _apply_owner_quarantine(
     ]
 
 
-def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
+def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
     """Build the complete vNext semantic graph from the compiled catalog view."""
 
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
+    _active_macro_owner_evidence.set(
+        _macro_owner_evidence_for(source_catalog, nodes)
+    )
     # Uninstantiated definitions are semantic placeholders without a
     # byte-backed source identifier.  They are not source symbols and must
     # not make an otherwise closed selected-top graph fail globally.  All
@@ -3312,7 +3616,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         owner = _owner_for_signal(source_catalog, node, owners)
         if owner is None:
             continue
-        _reject_macro_location(source_catalog, node.location)
+        if _reject_macro_location(source_catalog, node.location):
+            continue
         declaration = _range_from_location(
             source_catalog, node.location, name
         )
@@ -3357,6 +3662,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             if not _is_signal_target(target):
                 continue
             target_key = _signal_range_key(source_catalog, target)
+            if target_key is None:
+                continue
             if target_key not in declarations:
                 continue
             file, start = _syntax_start(source_catalog, node)
@@ -3374,6 +3681,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                 continue
             if _is_signal_target(target):
                 target_key = _signal_range_key(source_catalog, target)
+                if target_key is None:
+                    continue
                 declaration = declarations.get(target_key)
                 if declaration is not None:
                     syntax = getattr(value, "syntax", None)
@@ -3388,6 +3697,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
                         source_range = _token_source_range(
                             source_catalog, token, declaration[0]
                         )
+                    if source_range is None:
+                        continue
                     if source_range == declaration[1]:
                         continue
                     occurrence = SymbolOccurrence(source_range, "semantic_expression")
@@ -3418,6 +3729,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         if not _is_signal_target(target):
             continue
         target_key = _signal_range_key(source_catalog, target)
+        if target_key is None:
+            continue
         declaration = declarations.get(target_key)
         if declaration is None:
             continue
@@ -3425,6 +3738,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             if semantic_range_key(node) in element_value_ranges:
                 continue
             source_range = _expression_range(source_catalog, node, declaration[0])
+            if source_range is None:
+                continue
             if source_range == declaration[1]:
                 continue
             occurrence = SymbolOccurrence(source_range, "semantic_expression")
@@ -3438,6 +3753,8 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
             continue
         name = declaration[0]
         source_range = _expression_range(source_catalog, node, name)
+        if source_range is None:
+            continue
         if source_range == declaration[1]:
             continue
         occurrence = SymbolOccurrence(source_range, "semantic_expression")
@@ -3498,12 +3815,27 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         source_catalog, symbols_list
     )
     symbols_list.extend(_collect_extended_symbols(source_catalog, symbols_list))
+    macro_evidence = _active_macro_owner_evidence.get()
+    if macro_evidence is None:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+            "macro owner evidence is unavailable",
+        )
+    macro_owner_ids = macro_evidence.owner_ids | frozenset(
+        macro_evidence.target_owner_ids
+    )
+    macro_module_spans = tuple(
+        span
+        for span in macro_evidence.module_spans
+        if span.owner_id in macro_owner_ids
+    )
     symbols_list = _apply_owner_quarantine(
         symbols_list,
         type_parameter_owner_ids=type_parameter_owner_ids,
         type_parameter_symbol_ids=type_parameter_symbol_ids,
         defparam_owner_ids=defparam_owner_ids,
         nested_module_spans=nested_module_spans,
+        macro_module_spans=macro_module_spans,
     )
 
     symbols = tuple(
@@ -3519,4 +3851,14 @@ def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
         )
     )
     _audit_ranges(symbols)
-    return SymbolGraph(schema_version=1, source_catalog=source_catalog, symbols=symbols)
+    result = SymbolGraph(schema_version=1, source_catalog=source_catalog, symbols=symbols)
+    return result
+
+
+def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
+    """Build a SymbolGraph and clear private macro evidence on every exit."""
+
+    try:
+        return _build_symbol_graph_impl(source_catalog)
+    finally:
+        _active_macro_owner_evidence.set(None)

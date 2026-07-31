@@ -28,6 +28,12 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
   内全部 source symbols（包括 generate block scope）保持不改名，无法证明 owner/span 的形状
   仍保持 fail-closed。nested generate 内部 genvar/层次对象改名、instance array、conditional
   generate、复杂层次路径和完整 import/export member 语义仍需要专项 semantic coverage。
+- T073 已将已有普通物理 `ModuleOwner` 内可由 `isMacroLoc()` 与
+  `getFullyExpandedLoc()` 唯一映射到 module span 的宏 declaration/reference/register/assert
+  来源转为 owner safe-preserve；宏生成 range 不进入 graph，已物理收集 symbol 统一使用
+  `owner_contains_macro_source`，宏 module-type 的 semantic target owner 也原子保护。无法证明
+  普通物理 owner、semantic target 或精确 span 时仍 fail-closed；宏生成 module definition name、
+  宏文本展开/改写、include/条件编译和 macro argument rename 仍不支持。
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
   显式改写。
 

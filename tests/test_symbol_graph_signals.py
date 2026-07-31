@@ -231,7 +231,7 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         self.assertTrue(graph.symbols)
         self.assertTrue(any(symbol.category == "modules" and symbol.name == "uninstantiated_child" for symbol in graph.symbols))
 
-    def test_macro_signal_declaration_fails_closed(self):
+    def test_macro_signal_declaration_safe_preserve(self):
         catalog = build_source_catalog(
             from_filelist(
                 filelist=INVALID_ROOT / "macro_declaration.f",
@@ -242,11 +242,18 @@ class SymbolGraphSignalsTests(unittest.TestCase):
             catalog.to_report()["compile"]["catalog"],
             {"parse_errors": 0, "semantic_errors": 0},
         )
-        with self.assertRaises(SymbolGraphError) as raised:
-            build_symbol_graph(catalog)
-        self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(
+            graph.to_report()["range_audit"],
+            {"symbols": 1, "declarations": 1, "occurrences": 0, "total_ranges": 1},
+        )
+        self.assertTrue(all(
+            symbol.support == "unsupported"
+            and symbol.reason == "owner_contains_macro_source"
+            for symbol in graph.symbols
+        ))
 
-    def test_macro_signal_reference_fails_closed(self):
+    def test_macro_signal_reference_safe_preserve(self):
         catalog = build_source_catalog(
             from_filelist(
                 filelist=INVALID_ROOT / "macro_reference.f",
@@ -257,9 +264,16 @@ class SymbolGraphSignalsTests(unittest.TestCase):
             catalog.to_report()["compile"]["catalog"],
             {"parse_errors": 0, "semantic_errors": 0},
         )
-        with self.assertRaises(SymbolGraphError) as raised:
-            build_symbol_graph(catalog)
-        self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(
+            graph.to_report()["range_audit"],
+            {"symbols": 2, "declarations": 2, "occurrences": 1, "total_ranges": 3},
+        )
+        self.assertTrue(all(
+            symbol.support == "unsupported"
+            and symbol.reason == "owner_contains_macro_source"
+            for symbol in graph.symbols
+        ))
 
     def test_signal_bytes_changed_after_catalog_fail_with_range_invalid(self):
         with tempfile.TemporaryDirectory() as temporary:

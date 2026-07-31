@@ -422,11 +422,35 @@ endmodule
             build_symbol_graph(catalog)
         self.assertEqual(raised.exception.code, code)
 
-    def test_macro_parameter_declaration_fails_closed(self):
-        self._assert_invalid("macro_declaration.f", "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
+    def test_macro_parameter_declaration_safe_preserve(self):
+        catalog = build_source_catalog(
+            from_filelist(filelist=INVALID_ROOT / "macro_declaration.f", source_root=INVALID_ROOT)
+        )
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(
+            graph.to_report()["range_audit"],
+            {"symbols": 2, "declarations": 2, "occurrences": 0, "total_ranges": 2},
+        )
+        self.assertTrue(all(
+            symbol.support == "unsupported"
+            and symbol.reason == "owner_contains_macro_source"
+            for symbol in graph.symbols
+        ))
 
-    def test_macro_parameter_reference_fails_closed(self):
-        self._assert_invalid("macro_reference.f", "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
+    def test_macro_parameter_reference_safe_preserve(self):
+        catalog = build_source_catalog(
+            from_filelist(filelist=INVALID_ROOT / "macro_reference.f", source_root=INVALID_ROOT)
+        )
+        graph = build_symbol_graph(catalog)
+        self.assertEqual(
+            graph.to_report()["range_audit"],
+            {"symbols": 3, "declarations": 3, "occurrences": 0, "total_ranges": 3},
+        )
+        self.assertTrue(all(
+            symbol.support == "unsupported"
+            and symbol.reason == "owner_contains_macro_source"
+            for symbol in graph.symbols
+        ))
 
     def test_type_parameter_safe_preserve(self):
         catalog = build_source_catalog(
