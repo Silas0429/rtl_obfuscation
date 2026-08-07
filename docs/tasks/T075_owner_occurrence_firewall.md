@@ -1,6 +1,6 @@
 # T075：受保护 owner 的跨 owner occurrence 防火墙
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -338,35 +338,80 @@ negative_result: <unproven / equiv_status -assert summary>
 ## 10. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model: pending
-starting_head: pending
-allowed_files_check: pending
-baseline: pending
-pre_fix_characterization: pending
-changed_files: pending
-commands: pending
-results: pending
-schema_or_behavior: pending
-boundaries: pending
-cleanup_candidates: pending
-formal_verification: pending
-review_request: pending
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh; 当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: ae22c8fb17c3140fc71fbb38dd98137be4400e88; origin/main 同提交；worktree clean
+allowed_files_check: PASS; 合同第 6 节九个允许路径无既有未提交修改，唯一活动任务为 T075 READY
+baseline: PASS; `conda run -n rtl_obfuscation python -m unittest tests.test_t071_type_parameter_defparam tests.test_t072_nested_generate tests.test_t073_macro_owner -v`; exit 0; Ran 24 tests; OK
+pre_fix_characterization: reproduced with a read-only semantic probe after adding the frozen fixture; compile 0/0 + 0/0; protected span `rtl/defparam_owner.sv:0..409`; external eligible records `t075_child` module and child ports `data_i/data_o` have occurrences at 286..296, 316..322 and 347..353 inside that span, and all three ranges become actual rewrite edits under the pre-fix implementation
+changed_files: docs/tasks/T075_owner_occurrence_firewall.md; rtl_obfuscator/symbol_graph.py; tests/test_t075_owner_occurrence_firewall.py; tests/fixtures/t075_owner_occurrence_firewall/design.f; tests/fixtures/t075_owner_occurrence_firewall/rtl/{parameter_target,child,defparam_owner,sibling,top}.sv
+commands: section 8 baseline once; then all five frozen acceptance commands exactly as written
+results: target unittest exit 0, Ran 7 tests, OK; T071/T072/T073 regression exit 0, Ran 24 tests, OK; py_compile exit 0; git diff --check HEAD exit 0; READY_FOR_REVIEW guard exit 0
+schema_or_behavior: no schema/API/category/reason changes except the authorized stable `occurrence_in_quarantined_owner` value; reused the existing semantic compilation and ordinary physical module spans; every source range is audited for zero-or-one complete protected-span containment, partial/multiple/unknown containment fails closed, and an eligible cross-owner hit downgrades the entire unchanged SourceSymbol record
+results_oracle: graph range audit 26/26/38/64; mapping total/rename/preserve/unsupported 26/9/3/14; 22 actual edits; `t075_child` module and child ports `data_i/data_o` are the three firewall records; protected-owner actual edits 0; child_state, sibling module/port/internal and selected-top internal records still produce real edits; strict compile 0/0 + 0/0; five restored `.sv` files byte-identical
+boundaries: existing type-parameter/defparam/nested-generate/macro quarantine discovery only; no new syntax/category or quarantine-reason merge; package/interface/cast/end-label/macro expansion and real-repository remediation remain out of scope; missing, disagreeing, overlapping or partially intersecting owner/range evidence is fail-closed
+cleanup_candidates: none; no obsolete test, compatibility layer or fallback was introduced
+formal_verification: PASS
+gold: tests/fixtures/t075_owner_occurrence_firewall
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-positive-2uurna3f/gate (actual `write_gate_vnext` output; 22 real edits)
+top: t075_top
+seq: 5
+positive_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t075_owner_occurrence_firewall/design.f --gold-root tests/fixtures/t075_owner_occurrence_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-positive-2uurna3f/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-positive-2uurna3f/gate --top t075_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence":"pass","top":"t075_top","seq":5}
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-negative-ntsde222/negative; only frozen `assign data_o = ~` mutation
+negative_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t075_owner_occurrence_firewall/design.f --gold-root tests/fixtures/t075_owner_occurrence_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-negative-ntsde222/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-negative-ntsde222/negative --top t075_top --seq 5
+negative_compile: catalog 0/0; top overlay 0/0
+negative_exit_code: 1
+negative_result: `equiv_status -assert`; 8 unproven cells remain in module equiv; ERROR reports unproven equivalence
+review_request: Main Agent independently rerun section 8, inspect owner/span/action evidence, and decide acceptance; sub-Agent did not stage, commit, push, set ACCEPTED or create T076
 ```
 
 ## 11. 主 Agent 验收
 
 ```text
-status: pending
-independent_commands: pending
-allowed_files: pending
-owner_span_audit: pending
-strict_compile: pending
-restore_byte_identity: pending
-formal_positive: pending
-formal_negative: pending
-decision: pending
-delivery_commit: pending
-push: pending
-successor: pending
+status: ACCEPTED
+accepted_date: 2026-08-07
+accepted_head_before_commit: ae22c8fb17c3140fc71fbb38dd98137be4400e88
+actual_subagent_model: gpt-5.6-sol / xhigh; Luna and standard-speed controls were unavailable and were not claimed
+allowed_files: PASS; exactly the nine section-6 paths changed; no existing fixture, mapping, rewrite,
+  restore, orchestration, CLI, schema, public documentation or Formal script changed
+fixture_review: PASS; design.f and all five .sv files match the frozen section-3 content exactly;
+  all files use SystemVerilog .sv syntax and t075_top is unchanged
+implementation_review: PASS; the existing semantic compilation supplies unique ordinary physical
+  module spans; existing type/defparam/nested/macro quarantine discovery and reasons are unchanged;
+  every declaration/occurrence range is audited for complete zero-or-one protected-span containment;
+  partial, multiple, missing or disagreeing evidence fails closed; an eligible cross-owner hit replaces
+  only support/reason on the whole unchanged SourceSymbol record
+forbidden_implementation_review: PASS; no spelling/file/module-name/offset branch, source text scan,
+  second collector/compilation, range deletion, partial edit suppression, fallback, warning-only path,
+  public API, category, symbol_id, schema, mapping, rewrite, restore or CLI special case was added
+target_tests: PASS; exact section-8 command exit 0; Ran 7 tests; OK
+regression: PASS; exact T071/T072/T073 command exit 0; Ran 24 tests; OK
+py_compile: PASS; exact section-8 command exit 0
+diff_check: PASS; `git diff --check HEAD` exit 0 with no output
+ready_for_review_guard: PASS; exact guard exit 0 before this ACCEPTED status change
+graph_oracle: PASS; symbols/declarations/occurrences/total_ranges 26/26/38/64;
+  one-to-one graph/mapping records and unique physical ranges verified
+mapping_oracle: PASS; total/rename/preserve/unsupported 26/9/3/14; actual edits 22
+owner_span_audit: PASS; protected defparam owner span rtl/defparam_owner.sv:0..409 and protected
+  parameter-target span are uniquely source-backed; t075_child module and child ports data_i/data_o
+  are the three unsupported/occurrence_in_quarantined_owner records; their declaration and all
+  occurrences remain auditable; both protected spans contain zero actual rewrite edits
+non_vacuous_encryption: PASS; child_state, sibling module/ports/internal symbol and selected-top
+  internal symbols still produce real edits, so the fix is not whole-graph preserve
+strict_compile: PASS; Main-Agent actual renamed gate catalog/top overlay diagnostics 0/0 + 0/0
+restore_byte_identity: PASS; all five restored .sv files equal their frozen input bytes
+formal_positive: PASS; Main-Agent actual gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-positive-v3y9auwg/gate;
+  top=t075_top; seq=5; exit 0; complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative; Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t075-formal-negative-f09cnb1b/negative;
+  only the frozen `assign data_o = ~` mutation; strict compile 0/0 + 0/0; exit 1;
+  eight unproven cells remain and output contains `unproven` plus `equiv_status -assert`
+forbidden_runs: blanket discovery, historical acceptance drivers and RISC-V-Vector Formal were not run
+decision: ACCEPTED; T075 establishes the owner-occurrence safety firewall without expanding syntax support
+delivery_commit: current acceptance commit; exact hash is reported after commit and frozen into the successor contract
+push: pending current acceptance commit
+successor: Main Agent will create the next task only after this acceptance commit is pushed
 ```

@@ -3351,6 +3351,7 @@ def _apply_owner_quarantine(
     defparam_owner_ids: set[str],
     nested_module_spans: tuple[_NestedModuleSpan, ...],
     macro_module_spans: tuple[_NestedModuleSpan, ...],
+    ordinary_module_spans: tuple[_NestedModuleSpan, ...],
 ) -> list[SourceSymbol]:
     reasons: dict[str, str] = {}
 
@@ -3529,7 +3530,7 @@ def _apply_owner_quarantine(
                 "physical module owner has conflicting quarantine reasons",
             )
 
-    return [
+    quarantined_symbols = [
         replace(
             symbol,
             support="unsupported",
@@ -3550,6 +3551,127 @@ def _apply_owner_quarantine(
         or symbol.owner_module in reasons
         else symbol
         for symbol in symbols
+    ]
+
+    ordinary_spans_by_owner: dict[str, SourceRange] = {}
+    for module_span in ordinary_module_spans:
+        previous = ordinary_spans_by_owner.get(module_span.owner_id)
+        if previous is not None and previous != module_span.source_range:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical module owner has multiple semantic module spans",
+                file=module_span.source_range.file,
+                start=module_span.source_range.start,
+            )
+        ordinary_spans_by_owner[module_span.owner_id] = module_span.source_range
+
+    protected_owner_ids = (
+        set(reasons) | set(spans_by_owner) | set(macro_spans_by_owner)
+    )
+    protected_spans_by_owner: dict[str, SourceRange] = {}
+    for owner_id in protected_owner_ids:
+        source_range = ordinary_spans_by_owner.get(owner_id)
+        if source_range is None:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "quarantine owner has no unique physical module span",
+            )
+        nested_range = spans_by_owner.get(owner_id)
+        macro_range = macro_spans_by_owner.get(owner_id)
+        if (
+            nested_range is not None
+            and nested_range != source_range
+            or macro_range is not None
+            and macro_range != source_range
+        ):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "quarantine owner semantic module spans disagree",
+                file=source_range.file,
+                start=source_range.start,
+            )
+        protected_spans_by_owner[owner_id] = source_range
+
+    ordered_protected_spans = tuple(
+        sorted(
+            protected_spans_by_owner.items(),
+            key=lambda item: (
+                item[1].file,
+                item[1].start,
+                item[1].end,
+                item[0],
+            ),
+        )
+    )
+    for index, (_owner_id, left) in enumerate(ordered_protected_spans):
+        for _other_owner_id, right in ordered_protected_spans[index + 1 :]:
+            if (
+                left.file == right.file
+                and left.start < right.end
+                and right.start < left.end
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "quarantined physical module spans overlap",
+                    file=left.file,
+                    start=max(left.start, right.start),
+                )
+
+    firewall_symbol_ids: set[str] = set()
+    for symbol in quarantined_symbols:
+        ranges = (
+            symbol.declaration,
+            *(occurrence.source_range for occurrence in symbol.occurrences),
+        )
+        for source_range in ranges:
+            containing_owner_ids: list[str] = []
+            for owner_id, protected_span in ordered_protected_spans:
+                if source_range.file != protected_span.file:
+                    continue
+                overlaps = (
+                    source_range.start < protected_span.end
+                    and protected_span.start < source_range.end
+                )
+                if not overlaps:
+                    continue
+                if not (
+                    protected_span.start <= source_range.start
+                    and source_range.end <= protected_span.end
+                ):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_RANGE_CONFLICT",
+                        "symbol range partially overlaps a quarantined module span",
+                        file=source_range.file,
+                        start=source_range.start,
+                    )
+                containing_owner_ids.append(owner_id)
+            if len(containing_owner_ids) > 1:
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_RANGE_CONFLICT",
+                    "symbol range is contained in multiple quarantined module spans",
+                    file=source_range.file,
+                    start=source_range.start,
+                )
+            if not containing_owner_ids or symbol.support != "eligible":
+                continue
+            if containing_owner_ids[0] == symbol.owner_module:
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "eligible symbol belongs to a quarantined physical module owner",
+                    file=source_range.file,
+                    start=source_range.start,
+                )
+            firewall_symbol_ids.add(symbol.symbol_id)
+
+    return [
+        replace(
+            symbol,
+            support="unsupported",
+            reason="occurrence_in_quarantined_owner",
+        )
+        if symbol.symbol_id in firewall_symbol_ids
+        else symbol
+        for symbol in quarantined_symbols
     ]
 
 
@@ -3836,6 +3958,7 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
         defparam_owner_ids=defparam_owner_ids,
         nested_module_spans=nested_module_spans,
         macro_module_spans=macro_module_spans,
+        ordinary_module_spans=macro_evidence.module_spans,
     )
 
     symbols = tuple(
