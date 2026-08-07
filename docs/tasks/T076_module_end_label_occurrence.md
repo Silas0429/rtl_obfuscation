@@ -1,6 +1,6 @@
 # T076：module closing label 的语义 occurrence 闭合
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.1
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -401,39 +401,90 @@ review_request: 请主 Agent复核 invalid-label 最小复现并决定重冻 `SO
 ### 12.2 合同 1.1 恢复执行记录
 
 ```text
-status: pending
-actual_model: pending
-starting_head: pending
-allowed_files_check: pending
-baseline: pending
-contract_delta_check: pending
-pre_fix_characterization_reused: pending
-changed_files: pending
-commands: pending
-results: pending
-schema_or_behavior: pending
-documentation: pending
-boundaries: pending
-cleanup_candidates: pending
-formal_verification: pending
-review_request: pending
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 465cc6333f2b33e33273189b3851fb9046d18a64；origin/main 同提交；worktree clean
+allowed_files_check: PASS；合同第 8 节 11 个允许路径无既有未提交修改；唯一活动实现任务为 T076
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t075_owner_occurrence_firewall tests.test_vnext_category_closure -v`；exit 0；Ran 15 tests；OK
+contract_delta_check: PASS；v1.1 只重冻 invalid diagnostic 为 public `SOURCESET_DISCOVERY_FAILED` 与 isolated catalog `CATALOG_PARSE_FAILED`；positive fixture、semantic token、strict/restore/Formal、允许路径和文档范围未改变
+pre_fix_characterization_reused: PASS；v1.0 证据完整保留；v1.1 baseline 后 `symbol_graph.py` 相对恢复基线无差异，closing-label 修复仍未实现，因此复用 declaration/hierarchy 两 edits、label range 缺席及原子不发布证据
+review_rework: PASS；主 Agent 指出 future-work 将 T075 firewall symbol 错写为 preserve；已改为“整条跨 owner symbol 标为 unsupported，并禁止其产生任何 rewrite edit”，目标测试已锁定该精确语义；产品 symbol_graph 与 fixture 未改；review rework 后五条冻结验收全部重跑通过
+changed_files: docs/tasks/T076_module_end_label_occurrence.md；rtl_obfuscator/symbol_graph.py；tests/test_t076_module_end_label.py；docs/systemverilog_renaming_table.md；docs/development/future_work.md；冻结 fixture 未改
+commands: v1.1 baseline 一次；目标 unittest 首次执行暴露测试自身误用 source offset 读取 shifted gate，修正该测试断言后重跑通过；随后逐条执行第 10 节五条冻结验收
+results: 目标 unittest 最终 exit 0，Ran 7 tests，OK；T075 + category closure exit 0，Ran 15 tests，OK；py_compile exit 0；git diff --check HEAD exit 0；READY_FOR_REVIEW guard exit 0
+schema_or_behavior: 不增加 schema/category/record 字段；只在现有 `_collect_extended_symbols()` semantic view 中按 `_module_definition_key()` 与 catalog declaration/owner identity 绑定 `ModuleDeclarationSyntax.blockName.name`，通过现有 `add_occurrence()` 写入 `semantic_module_end_label`；无 label 不增加 occurrence，多次 elaboration 由既有 range 去重，证据不一致 fail-closed
+results_oracle: positive compile 0/0 + 0/0；public invalid 精确 `SOURCESET_DISCOVERY_FAILED`，isolated catalog 精确 `CATALOG_PARSE_FAILED`；child declaration/hierarchy/end-label 同一 rename record 和三个实际 edits；top declaration/label preserve 且零 top-module edits；plain sibling 只有 hierarchy occurrence；全部 graph/mapping ranges 一对一且无重复/重叠；child/sibling/top internal 均有真实 rename；actual gate strict compile 0/0 + 0/0；三个 `.sv` restore byte-identical
+documentation: modules 行已同步 child declaration/hierarchy/direct closing label 一致改名及 selected-top label preserve；future work 已标记 T075/T076 完成并保留 expression-sized cast、package-qualified member、conflicting quarantine、syntax-less conversion 与工程输入边界
+boundaries: 仅普通物理 module 直接 closing label；不支持 interface/package/class/subroutine/task/generate closing label、宏生成/参数 label 或宏 module definition name；不修改 mapping/rewrite/restore/CLI/Formal；未运行 RISC-V-Vector Formal、blanket discovery 或历史 driver
+cleanup_candidates: none
+formal_verification: PASS
+gold: tests/fixtures/t076_module_end_label
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-positive-n7yk82ca/gate；review rework 后 actual `write_gate_vnext` output
+top: t076_top
+seq: 5
+positive_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t076_module_end_label/design.f --gold-root tests/fixtures/t076_module_end_label --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-positive-n7yk82ca/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-positive-n7yk82ca/gate --top t076_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-positive-n7yk82ca/gate","gold":"tests/fixtures/t076_module_end_label","seq":5,"top":"t076_top"}
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-negative-3du9gnl0/negative；只含冻结 `assign data_o = ~` 功能变更
+negative_compile: catalog 0/0；top overlay 0/0
+negative_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t076_module_end_label/design.f --gold-root tests/fixtures/t076_module_end_label --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-negative-3du9gnl0/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-negative-3du9gnl0/negative --top t076_top --seq 5
+negative_exit_code: 1
+negative_result: `equiv_status -assert`；8 unproven cells remain in module equiv；ERROR reports unproven equivalence
+review_request: 请主 Agent 独立复跑第 10 节、审计 semantic definition/declaration identity 与三处 child edits，并决定验收；子 Agent 未 stage、commit、push、设置 ACCEPTED 或创建 T077
 ```
 
 ## 13. 主 Agent 验收
 
 ```text
-status: pending
-independent_commands: pending
-allowed_files: pending
-semantic_identity_review: pending
-range_and_edit_audit: pending
-documentation: pending
-strict_compile: pending
-restore_byte_identity: pending
-formal_positive: pending
-formal_negative: pending
-decision: pending
-delivery_commit: pending
-push: pending
-successor: pending
+status: ACCEPTED
+accepted_date: 2026-08-07
+accepted_head_before_commit: 465cc6333f2b33e33273189b3851fb9046d18a64
+actual_subagent_model: gpt-5.6-sol / xhigh; Luna and standard-speed controls were unavailable and were not claimed
+contract_rebaseline: PASS; v1.0 invalid diagnostic mismatch was correctly reported without product
+  changes; Main Agent independently reproduced public SOURCESET_DISCOVERY_FAILED and isolated
+  CATALOG_PARSE_FAILED, retained the blocked evidence, froze v1.1, and resumed from a clean pushed HEAD
+allowed_files: PASS; only docs/tasks/T076_module_end_label_occurrence.md,
+  rtl_obfuscator/symbol_graph.py, tests/test_t076_module_end_label.py,
+  docs/systemverilog_renaming_table.md and docs/development/future_work.md changed;
+  all six frozen fixture files remained byte-identical to 465cc63
+semantic_identity_review: PASS; the existing semantic tree supplies InstanceBodySymbol.definition;
+  `_module_definition_key()` resolves the exact catalog declaration; record category/name/declaration/owner
+  must match the physical ModuleOwner; only ModuleDeclarationSyntax.blockName.name is accepted as the
+  closing-label token; no label yields no occurrence; repeated elaboration uses existing exact-range dedup
+forbidden_implementation_review: PASS; no source scan, `endmodule` search, name-only target, macro
+  expansion, exception skip, schema/category/public API, mapping/rewrite/restore/CLI/Formal special case or
+  compatibility fallback was added
+invalid_diagnostics: PASS; public from_filelist invalid_label.f is SOURCESET_DISCOVERY_FAILED with parse
+  errors; isolated immutable SourceSet build_source_catalog is CATALOG_PARSE_FAILED with parse errors;
+  neither path enters SymbolGraph or rewrite
+target_tests: PASS; exact section-10 command exit 0; Ran 7 tests; OK
+regression: PASS; exact T075 + category closure command exit 0; Ran 15 tests; OK
+py_compile: PASS; exact section-10 command exit 0
+diff_check: PASS; `git diff --check HEAD` exit 0 with no output
+ready_for_review_guard: PASS; exact guard exit 0 before this ACCEPTED status change
+range_and_edit_audit: PASS; child module record has one declaration, one semantic_hierarchy occurrence
+  and one semantic_module_end_label occurrence; all three ranges produce one record's same renamed name;
+  plain sibling has no manufactured end-label occurrence; graph/mapping ranges are unique and non-overlapping
+selected_top_boundary: PASS; t076_top module record retains its direct closing-label occurrence as
+  preserved/selected_top_boundary and produces zero top-module edits
+non_vacuous_encryption: PASS; child, sibling and selected-top internal symbol owners all produce real edits
+documentation: PASS; modules row documents child declaration/hierarchy/direct closing-label consistency and
+  selected-top label preservation; future work records T075 as unsupported/no-edit and T076 as completed,
+  while all other frozen unsupported boundaries remain listed
+strict_compile: PASS; Main-Agent actual renamed gate catalog/top overlay diagnostics 0/0 + 0/0
+restore_byte_identity: PASS; all three restored .sv files equal frozen input bytes
+formal_positive: PASS; Main-Agent actual gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-positive-jembqras/gate;
+  top=t076_top; seq=5; exit 0; complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative; Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t076-formal-negative-jjn6t2nb/negative;
+  only the frozen `assign data_o = ~` mutation; strict compile 0/0 + 0/0; exit 1;
+  eight unproven cells remain and output contains `unproven` plus `equiv_status -assert`
+review_rework: PASS; future-work terminology corrected from preserve to exact unsupported/no-rewrite
+  semantics; target test now locks that wording; all five acceptance commands were rerun afterward
+forbidden_runs: blanket discovery, historical acceptance drivers and RISC-V-Vector Formal were not run
+decision: ACCEPTED; T076 closes ordinary physical module end-label renaming without weakening fail-closed behavior
+delivery_commit: current acceptance commit; exact hash is reported after commit and frozen into the successor contract
+push: pending current acceptance commit
+successor: Main Agent will create the next task only after this acceptance commit is pushed
 ```

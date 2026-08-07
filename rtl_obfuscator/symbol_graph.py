@@ -2351,6 +2351,55 @@ def _collect_extended_symbols(
         else:
             interface_records[scope.name] = record
 
+    module_owners_by_declaration = _module_owner_map(source_catalog)
+    for node in nodes:
+        if type(node).__name__ != "InstanceBodySymbol":
+            continue
+        definition = getattr(node, "definition", None)
+        definition_key = _module_definition_key(source_catalog, definition)
+        if definition_key is None:
+            continue
+        syntax = getattr(definition, "syntax", None)
+        if not isinstance(syntax, pyslang.syntax.ModuleDeclarationSyntax):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "semantic module definition is not a physical module declaration",
+                file=definition_key[0],
+                start=definition_key[1],
+            )
+        record = module_records_by_declaration.get(definition_key)
+        physical_owner = module_owners_by_declaration.get(definition_key)
+        if (
+            record is None
+            or physical_owner is None
+            or record["category"] != "modules"
+            or record["name"] != str(getattr(definition, "name", ""))
+            or record["declaration"] != physical_owner.declaration
+            or record["owner"] != physical_owner.owner_id
+        ):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "semantic module definition does not match its catalog module record",
+                file=definition_key[0],
+                start=definition_key[1],
+            )
+        block_name = getattr(syntax, "blockName", None)
+        if block_name is None:
+            continue
+        token = getattr(block_name, "name", None)
+        if token is None or bool(getattr(token, "isMissing", False)):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_SOURCE_INVALID",
+                "module closing label has no physical identifier token",
+                file=definition_key[0],
+                start=definition_key[1],
+            )
+        add_occurrence(
+            record,
+            _token_source_range(source_catalog, token, record["name"]),
+            "semantic_module_end_label",
+        )
+
     # Type aliases and aggregate fields are bound by TypeAliasType/canonicalType.
     alias_nodes: list[Any] = [
         node for node in nodes if type(node).__name__ == "TypeAliasType"

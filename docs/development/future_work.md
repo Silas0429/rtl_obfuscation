@@ -43,11 +43,12 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
 compile 或 owner/build-input 检查阶段原子停止。但是，“安全拒绝或少加密”不等于“支持成功”；
 strict compile 只能排除语法和绑定错误，不得代替可运行时的 actual-gate Formal。
 
-- `register_interface` 暴露了 quarantined owner 内跨 owner occurrence 仍可能形成半改名的风险；
-  当前案例被 strict compile 拦截。正确性优先级最高的后续项是 **owner occurrence firewall**，
-  即受保护 owner 内不得产生跨 owner rename edit。
-- direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
-  此外，**module end label** 尚未纳入 module rename occurrence。
+- T075 已增加 **owner occurrence firewall**：受保护 owner 内不得产生跨 owner rename edit；
+  `register_interface` 暴露的半改名风险现在会将整条跨 owner symbol 标为 unsupported，并禁止其
+  产生任何 rewrite edit。
+- T076 已支持普通物理 module 的直接 closing label `endmodule : name`，使子 module declaration、
+  实例化引用和 closing label 使用同一个 rename record；selected top 的名称与 label 保留。
+  direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
 - **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
   精确绑定时继续原子失败。
 - 同一 module owner 同时命中 type-parameter、nested-generate 或 macro quarantine 时，
