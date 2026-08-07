@@ -1,7 +1,7 @@
 # T076：module closing label 的语义 occurrence 闭合
 
 - 状态：`READY`
-- 合同版本：1.0
+- 合同版本：1.1
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
 - 实现负责人：代码子 Agent（请求模型：Luna extra high / standard speed；当前执行器无 Luna，实际启动配置必须如实记录）
@@ -52,6 +52,32 @@ conda run -n rtl_obfuscation python -m unittest \
 这是 ABI `modules` 类的 occurrence 不闭合。事务 strict compile 会阻止错误 gate 发布，但这不等于
 支持成功。
 
+### 2.1 合同 1.1 重冻结
+
+合同 1.0 将 mismatched closing label 错写为 semantic diagnostic。子 Agent 按停止条件报告后，
+主 Agent 在未修改 fixture 的前提下独立复现：
+
+```text
+public SourceSet entry:
+  from_filelist(invalid_label.f, top=t076_bad_label)
+  -> SourceSetError
+  -> code=SOURCESET_DISCOVERY_FAILED
+  -> message=strict closure compilation contains parse errors
+
+isolated SourceCatalog entry:
+  use the positive SourceSet immutable fields
+  replace ordered_source_files/top_closure_files/compile_order with rtl/invalid_label.sv
+  replace top with t076_bad_label
+  build_source_catalog(...)
+  -> SourceCatalogError
+  -> code=CATALOG_PARSE_FAILED
+  -> message=catalog view contains parse errors
+```
+
+合同 1.1 只修订 invalid diagnostic 的阶段与错误码，不改变 positive fixture、单一目标、允许文件、
+semantic token 合同、strict/restore/Formal 强度或文档范围。1.0 的阻塞记录保留为历史证据；恢复执行
+从主 Agent 的 1.1 重冻结提交开始，并重新运行 baseline。
+
 ## 3. 主 Agent 冻结的 PySlang 事实
 
 在 Conda `rtl_obfuscation` 环境的 PySlang 11.0.0 中，只读 probe 已确认：
@@ -71,7 +97,7 @@ NamedBlockClauseSyntax:
   name.location is a direct physical SourceLocation
 
 `module child; endmodule : wrong`:
-  PySlang semantic error
+  PySlang parse diagnostic
 ```
 
 `blockName.name` 是 closing label 唯一允许的物理 token 来源。不得从 module syntax span、last token、
@@ -162,8 +188,10 @@ module t076_bad_label;
 endmodule : t076_other_label
 ```
 
-invalid fixture 必须在 `build_source_catalog()` 阶段以
-`SourceCatalogError(code="CATALOG_SEMANTIC_FAILED")` fail-closed，不得进入 SymbolGraph 或 rewrite。
+invalid fixture 必须在正常 public input 阶段以
+`SourceSetError(code="SOURCESET_DISCOVERY_FAILED")` fail-closed，不得进入 SymbolGraph 或 rewrite。
+目标测试还必须用第 2.1 节冻结的等价 immutable `SourceSet` 隔离 SourceCatalog 阶段，并精确得到
+`SourceCatalogError(code="CATALOG_PARSE_FAILED")`。不得把 parse diagnostic 包装为 semantic error。
 
 ## 5. 最小实现合同
 
@@ -215,7 +243,8 @@ location 当成 closing-label rewrite range，也不授权宏生成 module defin
 目标 unittest 必须至少证明：
 
 - positive catalog/top overlay 为 0/0 + 0/0，并复用同一 semantic view；
-- invalid fixture 精确抛出 `CATALOG_SEMANTIC_FAILED`；
+- invalid fixture 正常 `from_filelist()` 精确抛出 `SOURCESET_DISCOVERY_FAILED`；第 2.1 节隔离
+  SourceCatalog probe 精确抛出 `CATALOG_PARSE_FAILED`；
 - child module record 只有一个 declaration，并恰好包含一个 `semantic_hierarchy` 与一个
   `semantic_module_end_label` occurrence；end-label range bytes 等于 `t076_labeled_child`；
 - top module record 为 selected-top preserve，同时包含一个
@@ -271,8 +300,9 @@ docs/development/future_work.md
 
 1. 完整阅读 `AGENTS.md`、本合同、`docs/tasks/README.md`、subagent protocol、T075 合同、
    renaming table、future work 和 Formal 文档；
-2. 确认 starting HEAD、origin/main、clean worktree、唯一 T076 READY；第一次实现编辑前把状态改为
-   `IN_PROGRESS` 并如实记录实际模型；
+2. 确认 starting HEAD、origin/main、clean worktree、唯一 T076 READY；完整保留第 12.1 节 1.0
+   阻塞证据；第一次实现编辑前把状态改为 `IN_PROGRESS`，新增第 12.2 节恢复记录并如实填写实际
+   模型与 v1.1 starting HEAD；
 3. 运行第 10 节 baseline，逐字创建 fixture；
 4. 在产品代码修改前记录第 6 节 pre-fix characterization；
 5. 只实现第 5 节最小 semantic occurrence，并增加目标测试；
@@ -280,7 +310,7 @@ docs/development/future_work.md
 7. 确认只有第 8 节路径变化，设置 `READY_FOR_REVIEW` 后停止；不得 stage、commit、push、设置
    `ACCEPTED` 或创建 T077。
 
-若 PySlang API、token identity、当前 failure code 或 Yosys 行为与合同不符，先在任务记录写明
+若 PySlang API、token identity、v1.1 当前 failure code 或 Yosys 行为与合同不符，先在任务记录写明
 最小复现并停止，不得改 fixture、放宽 oracle 或用 source text 搜索替代语义证据。
 
 ## 10. 唯一验收命令
@@ -337,12 +367,47 @@ negative_result: <unproven / equiv_status -assert summary>
 ## 12. 子 Agent 执行记录
 
 ```text
+status: BLOCKED
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 3b8d75adffb5f0e0d39a0dc14a95c1193c5d3690；origin/main 同提交；worktree clean
+allowed_files_check: PASS；合同第 8 节 11 个允许路径无既有未提交修改；唯一活动实现任务为 T076
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t075_owner_occurrence_firewall tests.test_vnext_category_closure -v`；exit 0；Ran 15 tests；OK
+pre_fix_characterization: PASS；冻结 positive compile 为 0/0 + 0/0；child module declaration range `rtl/labeled_child.sv:7..25` 与 hierarchy occurrence `rtl/top.sv:139..157` 已进入同一 rename record 并产生两个 edits；closing label range `rtl/labeled_child.sv:208..226` 不在 graph/edit；`write_gate_vnext` 精确失败为 `REWRITE_GATE_COMPILE_FAILED`（内部 `CATALOG_PARSE_FAILED`），目标 output path 不存在，未发布错误 gate
+changed_files: docs/tasks/T076_module_end_label_occurrence.md；tests/fixtures/t076_module_end_label/{design.f,invalid_label.f,rtl/labeled_child.sv,rtl/plain_sibling.sv,rtl/top.sv,rtl/invalid_label.sv}；已回撤未验收的 symbol_graph 与两处产品文档改动
+commands: 冻结 baseline；positive pre-fix 只读 probe；invalid fixture 正常 `from_filelist` probe；等价手工 SourceSet 直接 `build_source_catalog` probe
+results: BLOCKED；正常 `from_filelist(invalid_label.f, top=t076_bad_label)` 在进入 `build_source_catalog()` 前即抛出 `SOURCESET_DISCOVERY_FAILED: strict closure compilation contains parse errors`；绕过 discovery、构造同一 invalid compile order 后直接调用 `build_source_catalog()` 精确抛出 `CATALOG_PARSE_FAILED: catalog view contains parse errors`，均不符合冻结 `CATALOG_SEMANTIC_FAILED`
+schema_or_behavior: 未交付产品行为、schema、category、mapping 或 rewrite 变化；发现错误码 oracle 与当前 PySlang/SourceSet 事实冲突后停止
+documentation: 未同步 renaming table 或 future work；未验收的文档补丁已回撤
+boundaries: 不得自行修改 invalid fixture、把 parse failure 改写为 semantic failure、绕过 SourceSet 正常入口或放宽合同错误码；需要主 Agent 根据最小复现重冻 oracle
+cleanup_candidates: none
+formal_verification: BLOCKED；未进入修复后目标 unittest，未运行 T076 Formal；不得在错误码冲突下申请 READY_FOR_REVIEW
+review_request: 请主 Agent复核 invalid-label 最小复现并决定重冻 `SOURCESET_DISCOVERY_FAILED` / `CATALOG_PARSE_FAILED` 边界；子 Agent 未 stage、commit、push、设置 ACCEPTED 或创建 T077
+```
+
+### 12.1 偏差或阻塞
+
+冻结第 4.6/6 节要求 invalid fixture 在 `build_source_catalog()` 阶段精确得到
+`CATALOG_SEMANTIC_FAILED`，但当前环境的实际诊断分类是 parse error：
+
+1. 通过正常 public input `from_filelist()` 时，SourceSet discovery 已经以
+   `SOURCESET_DISCOVERY_FAILED` 停止，无法到达 SourceCatalog；
+2. 为隔离阶段差异，用 positive SourceSet 的不可变字段构造同一 `rtl/invalid_label.sv` compile
+   order 并直接调用 `build_source_catalog()`，稳定结果为 `CATALOG_PARSE_FAILED`；
+3. fixture 保持合同逐字内容，PySlang、SourceSet、SourceCatalog 和测试 oracle 均未修改。
+
+这属于合同明确列出的“当前 failure code 与冻结设计不符”停止条件。子 Agent 未把 parse error
+包装成 semantic error，也未继续实现或运行 Formal。
+
+### 12.2 合同 1.1 恢复执行记录
+
+```text
 status: pending
 actual_model: pending
 starting_head: pending
 allowed_files_check: pending
 baseline: pending
-pre_fix_characterization: pending
+contract_delta_check: pending
+pre_fix_characterization_reused: pending
 changed_files: pending
 commands: pending
 results: pending
