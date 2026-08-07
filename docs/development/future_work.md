@@ -51,8 +51,9 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
 - **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
   精确绑定时继续原子失败。
-- 同一 module owner 同时命中 type-parameter、nested-generate 或 macro quarantine 时，
-  **conflicting quarantine reasons** 仍原子失败，不进行部分改名。
+- T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
+  的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
+  owner/span 证据不一致和未知 reason 仍 fail-closed。
 - **syntax-less implicit typedef conversion** 没有可证明的直接源码 token 时继续 fail-closed。
 - VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
   分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。

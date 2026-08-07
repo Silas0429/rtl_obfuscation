@@ -1,6 +1,6 @@
 # T077：同一 owner 多 quarantine 原因的确定性合并
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -349,38 +349,92 @@ negative_result: <unproven / equiv_status -assert summary>
 ## 12. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model: pending
-starting_head: pending
-allowed_files_check: pending
-baseline: pending
-pre_fix_characterization: pending
-changed_files: pending
-commands: pending
-results: pending
-schema_or_behavior: pending
-documentation: pending
-boundaries: pending
-cleanup_candidates: pending
-formal_verification: pending
-review_request: pending
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 97977ad0e5426d0ea10ab09f8bc0fea774cf37bf；origin/main 同提交；worktree clean
+allowed_files_check: PASS；合同第 8 节九个允许路径无既有未提交修改；唯一活动实现任务为 T077
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t071_type_parameter_defparam tests.test_t072_nested_generate tests.test_t073_macro_owner tests.test_t075_owner_occurrence_firewall tests.test_t076_module_end_label -v`；exit 0；Ran 38 tests；OK
+pre_fix_characterization: PASS；冻结 fixture catalog/top overlay 为 0/0 + 0/0；未改产品代码时 `build_symbol_graph()` 精确抛 `SymbolGraphError(code="SYMBOL_GRAPH_RANGE_CONFLICT")`，文本 `SYMBOL_GRAPH_RANGE_CONFLICT: physical module owner has conflicting quarantine reasons`
+changed_files: docs/tasks/T077_multiple_quarantine_reason_merge.md；rtl_obfuscator/symbol_graph.py；tests/test_t077_multiple_quarantine_reason_merge.py；tests/fixtures/t077_multiple_quarantine/design.f；tests/fixtures/t077_multiple_quarantine/rtl/{parameter_target,combined_owner,sibling,top}.sv；docs/development/future_work.md
+commands: 第 10 节 baseline 一次；实现后目标 unittest 两次（最终证据取第二次）；冻结 38-test 回归首次暴露并修正 future-work 的历史短语兼容断言后最终重跑；目标单项文档测试一次；第 10 节 py_compile；最终 diff/status guard
+results: 目标 unittest 最终 exit 0，Ran 8 tests，OK；T071/T072/T073/T075/T076 回归最终 exit 0，Ran 38 tests，OK；py_compile exit 0；git diff --check HEAD exit 0；READY_FOR_REVIEW guard exit 0
+review_rework: 首次 post-change 38-test 回归仅 T076 文档测试失败，原因是 future-work 删除了历史短语 `conflicting quarantine reasons`；文档改为明确“原边界已由 T077 收敛”并保留历史名词，未改产品代码或 T077 oracle；对应单项与最终 38-test 回归均通过
+schema_or_behavior: 不增加 schema/category/record/report/API；`_apply_owner_quarantine()` 只将四种冻结 owner condition 确定性收集为 set；单 reason 保持历史公开 reason，多 reason 且 ordinary/nested/macro span 完全一致时才统一为 `owner_contains_multiple_unsupported_constructs`；随后复用 T075 whole-symbol firewall，`occurrence_in_quarantined_owner` 不变
+results_oracle: catalog/top overlay 0/0 + 0/0；graph 27/27/35/62；combined span 内 11 个 records 全部 unsupported/multiple reason，含 module、outer/inner genvar、g_outer/g_inner generate block；parameter target 5 个 owner records 全部保持 unsupported/defparam_binding_not_renamed；mapping total/rename/preserve/unsupported 27/8/3/16；actual edits 19，combined/target protected spans 均为 0，sibling module/ports/internal 与 selected-top internal 均有真实 edit；ranges 一对一且无重复/重叠
+span_fail_closed: PASS；unit exact-span audit 证明同 owner 的 defparam+nested 相同 span 可统一，跨 owner eligible occurrence 仍为 occurrence_in_quarantined_owner；同 owner nested/macro span 不同精确 SYMBOL_GRAPH_OWNER_MISMATCH，missing ordinary span 精确 SYMBOL_GRAPH_OWNER_MISMATCH，跨 owner overlapping spans 精确 SYMBOL_GRAPH_RANGE_CONFLICT
+strict_compile: PASS；actual renamed gate catalog/top overlay 0/0 + 0/0；fixed `~` negative gate 同为 0/0 + 0/0
+restore: PASS；actual gate 恢复四个 `.sv` 文件并逐文件 byte-identical
+documentation: PASS；future-work 记录 T077 multiple reason 原子保护、owner/span/未知 reason fail-closed，并保留 expression-sized cast、package-qualified member、syntax-less conversion 与工程输入边界
+boundaries: 只合并四种既有 ordinary-owner quarantine condition；不新增 syntax/category，不自动归并未知 reason，不修改 T075/T076、mapping/rewrite/restore/CLI/Formal；未运行 RISC-V-Vector Formal、blanket discovery 或历史 driver
+cleanup_candidates: none
+formal_verification: PASS
+gold: tests/fixtures/t077_multiple_quarantine
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-positive-79pk8kpe/gate；actual `write_gate_vnext` output，19 个真实 edits
+top: t077_top
+seq: 5
+positive_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t077_multiple_quarantine/design.f --gold-root tests/fixtures/t077_multiple_quarantine --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-positive-79pk8kpe/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-positive-79pk8kpe/gate --top t077_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-positive-79pk8kpe/gate","gold":"tests/fixtures/t077_multiple_quarantine","seq":5,"top":"t077_top"}
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-negative-yqm8h74k/negative；actual gate 副本且只含冻结 `assign data_o = ~` 功能变更
+negative_compile: catalog 0/0；top overlay 0/0
+negative_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t077_multiple_quarantine/design.f --gold-root tests/fixtures/t077_multiple_quarantine --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-negative-yqm8h74k/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-negative-yqm8h74k/negative --top t077_top --seq 5
+negative_exit_code: 1
+negative_result: `equiv_status -assert`；16 unproven cells 初始分组，最终 module equiv 保留 8 unproven cells；ERROR 报告 unproven equivalence
+review_request: 请主 Agent 独立复跑第 10 节、审计 reason set 与 owner/span/action 证据并决定验收；子 Agent 未 stage、commit、push、设置 ACCEPTED 或创建 T078
 ```
 
 ## 13. 主 Agent 验收
 
 ```text
-status: pending
-independent_commands: pending
-allowed_files: pending
-reason_set_review: pending
-owner_span_audit: pending
-documentation: pending
-strict_compile: pending
-restore_byte_identity: pending
-formal_positive: pending
-formal_negative: pending
-decision: pending
-delivery_commit: pending
-push: pending
-successor: pending
+status: ACCEPTED
+accepted_date: 2026-08-07
+accepted_head_before_commit: 97977ad0e5426d0ea10ab09f8bc0fea774cf37bf
+actual_subagent_model: gpt-5.6-sol / xhigh; Luna and standard-speed controls were unavailable and were not claimed
+allowed_files: PASS; exactly the nine section-8 paths changed; no existing fixture, T071–T076
+  test/contract, schema, mapping, rewrite, restore, orchestration, CLI or Formal script changed
+fixture_review: PASS; design.f and four .sv files match the frozen section-4 content exactly
+reason_set_review: PASS; only the four frozen owner conditions are accepted; per-owner set membership is
+  traversal-order independent; size one retains the T071/T072/T073 reason; size greater than one uses only
+  owner_contains_multiple_unsupported_constructs; type_parameter_not_renamed remains for a type-only owner
+  and is unified only when its owner has another frozen condition
+owner_span_review: PASS; ordinary, nested and macro spans must resolve to the same exact source-backed
+  ModuleOwner span before merging; different or missing same-owner spans raise OWNER_MISMATCH; overlapping
+  protected owners and multiple containing owners raise RANGE_CONFLICT
+firewall_review: PASS; owner quarantine completes before T075 whole-symbol occurrence audit; an eligible
+  external symbol crossing the protected span keeps occurrence_in_quarantined_owner rather than the multiple
+  owner reason
+forbidden_implementation_review: PASS; no unknown-reason fallback, reason priority, order-dependent joined
+  string, schema/report field, source scan, new collector, mapping/rewrite special case or syntax expansion
+target_tests: PASS; exact section-10 command exit 0; Ran 8 tests; OK
+regression: PASS; exact T071/T072/T073/T075/T076 command exit 0; Ran 38 tests; OK
+py_compile: PASS; exact section-10 command exit 0
+diff_check: PASS; `git diff --check HEAD` exit 0 with no output
+ready_for_review_guard: PASS; exact guard exit 0 before this ACCEPTED status change
+graph_oracle: PASS; symbols/declarations/occurrences/total_ranges 27/27/35/62; all physical ranges are
+  unique and non-overlapping
+combined_owner: PASS; exact combined module span contains 11 records across module, module-owned and
+  generate-owned categories; every record is unsupported/owner_contains_multiple_unsupported_constructs
+single_reason_regression: PASS; five t077_parameter_target records remain
+  unsupported/defparam_binding_not_renamed; T071/T072/T073 exact single-reason tests remain green
+mapping_oracle: PASS; total/rename/preserve/unsupported 27/8/3/16; actual edits 19; combined and target
+  protected spans contain zero edits; sibling module/ports/internal and selected-top internal symbols
+  produce real edits
+documentation: PASS; future work records the former conflicting quarantine reasons boundary as T077
+  completed while retaining owner/span/unknown-reason fail-closed and all other frozen unresolved phrases
+strict_compile: PASS; Main-Agent actual renamed gate catalog/top overlay diagnostics 0/0 + 0/0
+restore_byte_identity: PASS; all four restored .sv files equal frozen input bytes
+formal_positive: PASS; Main-Agent actual gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-positive-mepc8f43/gate;
+  top=t077_top; seq=5; exit 0; complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative; Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t077-formal-negative-n63jijwj/negative;
+  only the frozen `assign data_o = ~` mutation; strict compile 0/0 + 0/0; exit 1;
+  eight unproven cells remain and output contains `unproven` plus `equiv_status -assert`
+review_rework: PASS; T076 historical phrase remained in future work with an explicit T077 completion
+  statement; no old test or product behavior was weakened
+forbidden_runs: blanket discovery, historical acceptance drivers and RISC-V-Vector Formal were not run
+decision: ACCEPTED; T077 safely converts known multi-reason whole-graph refusal into minimum-owner unsupported
+delivery_commit: current acceptance commit; exact hash is reported after commit and frozen into the successor contract
+push: pending current acceptance commit
+successor: Main Agent will create the next task only after this acceptance commit is pushed
 ```

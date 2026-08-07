@@ -3402,20 +3402,27 @@ def _apply_owner_quarantine(
     macro_module_spans: tuple[_NestedModuleSpan, ...],
     ordinary_module_spans: tuple[_NestedModuleSpan, ...],
 ) -> list[SourceSymbol]:
-    reasons: dict[str, str] = {}
+    known_owner_reasons = frozenset(
+        {
+            "owner_contains_type_parameter",
+            "defparam_binding_not_renamed",
+            "owner_contains_nested_generate",
+            "owner_contains_macro_source",
+        }
+    )
+    reasons_by_owner: dict[str, set[str]] = {}
 
     def add_reason(owner_id: str, reason: str) -> None:
-        previous = reasons.get(owner_id)
-        if previous is not None and previous != reason:
+        if reason not in known_owner_reasons:
             raise SymbolGraphError(
                 "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "physical module owner has conflicting quarantine reasons",
+                "physical module owner has an unknown quarantine reason",
             )
-        reasons[owner_id] = reason
+        reasons_by_owner.setdefault(owner_id, set()).add(reason)
 
-    for owner_id in type_parameter_owner_ids:
+    for owner_id in sorted(type_parameter_owner_ids):
         add_reason(owner_id, "owner_contains_type_parameter")
-    for owner_id in defparam_owner_ids:
+    for owner_id in sorted(defparam_owner_ids):
         add_reason(owner_id, "defparam_binding_not_renamed")
 
     macro_spans_by_owner: dict[str, SourceRange] = {}
@@ -3467,6 +3474,7 @@ def _apply_owner_quarantine(
                 start=nested_span.source_range.start,
             )
         spans_by_owner[nested_span.owner_id] = nested_span.source_range
+        add_reason(nested_span.owner_id, "owner_contains_nested_generate")
     ordered_spans = tuple(
         sorted(
             spans_by_owner.items(),
@@ -3492,116 +3500,6 @@ def _apply_owner_quarantine(
                     start=left.start,
                 )
 
-    for owner_id, _source_range in ordered_spans:
-        if owner_id in macro_spans_by_owner:
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "physical module owner has conflicting quarantine reasons",
-            )
-
-    nested_symbol_ids: set[str] = set()
-    macro_symbol_ids: set[str] = set()
-    for symbol in symbols:
-        containing = [
-            source_range
-            for _owner_id, source_range in ordered_spans
-            if (
-                symbol.declaration.file == source_range.file
-                and source_range.start <= symbol.declaration.start
-                and symbol.declaration.end <= source_range.end
-            )
-        ]
-        if len(containing) > 1:
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "symbol declaration is contained in multiple nested module spans",
-                file=symbol.declaration.file,
-                start=symbol.declaration.start,
-            )
-        macro_containing = [
-            source_range
-            for _owner_id, source_range in ordered_macro_spans
-            if (
-                symbol.declaration.file == source_range.file
-                and source_range.start <= symbol.declaration.start
-                and symbol.declaration.end <= source_range.end
-            )
-        ]
-        if len(macro_containing) > 1:
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "symbol declaration is contained in multiple macro module spans",
-                file=symbol.declaration.file,
-                start=symbol.declaration.start,
-            )
-        if (
-            symbol.owner_module in macro_spans_by_owner
-            and not macro_containing
-        ):
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_OWNER_MISMATCH",
-                "macro quarantine owner does not contain its physical declaration",
-                file=symbol.declaration.file,
-                start=symbol.declaration.start,
-            )
-        if not containing:
-            if not macro_containing:
-                continue
-        if macro_containing:
-            conflicting_owner = (
-                symbol.owner_module in spans_by_owner
-                or symbol.owner_module in type_parameter_owner_ids
-                or symbol.owner_module in defparam_owner_ids
-                or symbol.symbol_id in type_parameter_symbol_ids
-            )
-        elif containing:
-            conflicting_owner = (
-                symbol.symbol_id in type_parameter_symbol_ids
-                or symbol.owner_module in reasons
-            )
-        else:
-            conflicting_owner = False
-        if conflicting_owner:
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "physical module owner has conflicting quarantine reasons",
-                file=symbol.declaration.file,
-                start=symbol.declaration.start,
-            )
-        if containing:
-            nested_symbol_ids.add(symbol.symbol_id)
-        if macro_containing:
-            macro_symbol_ids.add(symbol.symbol_id)
-    for owner_id, _source_range in ordered_spans:
-        if owner_id in reasons:
-            raise SymbolGraphError(
-                "SYMBOL_GRAPH_RANGE_CONFLICT",
-                "physical module owner has conflicting quarantine reasons",
-            )
-
-    quarantined_symbols = [
-        replace(
-            symbol,
-            support="unsupported",
-            reason=(
-                "owner_contains_macro_source"
-                if symbol.symbol_id in macro_symbol_ids
-                else
-                "owner_contains_nested_generate"
-                if symbol.symbol_id in nested_symbol_ids
-                else "type_parameter_not_renamed"
-                if symbol.symbol_id in type_parameter_symbol_ids
-                else reasons[symbol.owner_module]
-            ),
-        )
-        if symbol.symbol_id in nested_symbol_ids
-        or symbol.symbol_id in macro_symbol_ids
-        or symbol.symbol_id in type_parameter_symbol_ids
-        or symbol.owner_module in reasons
-        else symbol
-        for symbol in symbols
-    ]
-
     ordinary_spans_by_owner: dict[str, SourceRange] = {}
     for module_span in ordinary_module_spans:
         previous = ordinary_spans_by_owner.get(module_span.owner_id)
@@ -3614,11 +3512,9 @@ def _apply_owner_quarantine(
             )
         ordinary_spans_by_owner[module_span.owner_id] = module_span.source_range
 
-    protected_owner_ids = (
-        set(reasons) | set(spans_by_owner) | set(macro_spans_by_owner)
-    )
+    protected_owner_ids = set(reasons_by_owner)
     protected_spans_by_owner: dict[str, SourceRange] = {}
-    for owner_id in protected_owner_ids:
+    for owner_id in sorted(protected_owner_ids):
         source_range = ordinary_spans_by_owner.get(owner_id)
         if source_range is None:
             raise SymbolGraphError(
@@ -3665,6 +3561,145 @@ def _apply_owner_quarantine(
                     file=left.file,
                     start=max(left.start, right.start),
                 )
+
+    multiple_owner_ids = {
+        owner_id
+        for owner_id, owner_reasons in reasons_by_owner.items()
+        if len(owner_reasons) > 1
+    }
+    quarantine_reason_by_symbol: dict[str, str] = {}
+    for symbol in symbols:
+        nested_containing = [
+            owner_id
+            for owner_id, source_range in ordered_spans
+            if (
+                symbol.declaration.file == source_range.file
+                and source_range.start <= symbol.declaration.start
+                and symbol.declaration.end <= source_range.end
+            )
+        ]
+        if len(nested_containing) > 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "symbol declaration is contained in multiple nested module spans",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        macro_containing = [
+            owner_id
+            for owner_id, source_range in ordered_macro_spans
+            if (
+                symbol.declaration.file == source_range.file
+                and source_range.start <= symbol.declaration.start
+                and symbol.declaration.end <= source_range.end
+            )
+        ]
+        if len(macro_containing) > 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "symbol declaration is contained in multiple macro module spans",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        multiple_containing = [
+            owner_id
+            for owner_id in sorted(multiple_owner_ids)
+            if (
+                symbol.declaration.file
+                == protected_spans_by_owner[owner_id].file
+                and protected_spans_by_owner[owner_id].start
+                <= symbol.declaration.start
+                and symbol.declaration.end
+                <= protected_spans_by_owner[owner_id].end
+            )
+        ]
+        containing_owner_ids = set(
+            (*nested_containing, *macro_containing, *multiple_containing)
+        )
+        if len(containing_owner_ids) > 1:
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "symbol declaration is contained in multiple quarantined module spans",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+        containing_owner_id = next(iter(containing_owner_ids), None)
+        own_reasons = reasons_by_owner.get(symbol.owner_module)
+        if own_reasons is not None:
+            own_span = protected_spans_by_owner[symbol.owner_module]
+            if not (
+                symbol.declaration.file == own_span.file
+                and own_span.start <= symbol.declaration.start
+                and symbol.declaration.end <= own_span.end
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "quarantine owner does not contain its physical declaration",
+                    file=symbol.declaration.file,
+                    start=symbol.declaration.start,
+                )
+            if (
+                len(own_reasons) > 1
+                and containing_owner_id != symbol.owner_module
+            ):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "multiple-reason quarantine owner does not contain its physical declaration",
+                    file=symbol.declaration.file,
+                    start=symbol.declaration.start,
+                )
+        if (
+            containing_owner_id is not None
+            and symbol.owner_module in protected_owner_ids
+            and symbol.owner_module != containing_owner_id
+        ):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_RANGE_CONFLICT",
+                "physical symbol owner disagrees with its quarantine span owner",
+                file=symbol.declaration.file,
+                start=symbol.declaration.start,
+            )
+
+        if containing_owner_id in multiple_owner_ids:
+            quarantine_reason_by_symbol[symbol.symbol_id] = (
+                "owner_contains_multiple_unsupported_constructs"
+            )
+        elif macro_containing:
+            quarantine_reason_by_symbol[symbol.symbol_id] = (
+                "owner_contains_macro_source"
+            )
+        elif nested_containing:
+            quarantine_reason_by_symbol[symbol.symbol_id] = (
+                "owner_contains_nested_generate"
+            )
+        elif own_reasons is not None:
+            if len(own_reasons) > 1:
+                quarantine_reason_by_symbol[symbol.symbol_id] = (
+                    "owner_contains_multiple_unsupported_constructs"
+                )
+            elif symbol.symbol_id in type_parameter_symbol_ids:
+                quarantine_reason_by_symbol[symbol.symbol_id] = (
+                    "type_parameter_not_renamed"
+                )
+            else:
+                quarantine_reason_by_symbol[symbol.symbol_id] = sorted(
+                    own_reasons
+                )[0]
+        elif symbol.symbol_id in type_parameter_symbol_ids:
+            quarantine_reason_by_symbol[symbol.symbol_id] = (
+                "type_parameter_not_renamed"
+            )
+
+    quarantined_symbols = [
+        replace(
+            symbol,
+            support="unsupported",
+            reason=quarantine_reason_by_symbol[symbol.symbol_id],
+        )
+        if symbol.symbol_id in quarantine_reason_by_symbol
+        else symbol
+        for symbol in symbols
+    ]
 
     firewall_symbol_ids: set[str] = set()
     for symbol in quarantined_symbols:
