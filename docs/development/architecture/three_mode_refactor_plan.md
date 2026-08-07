@@ -223,13 +223,13 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 ### 阶段 R2：统一 SymbolGraph 与 owner/provenance
 
 - 单一目标：在 SourceSet 上生成唯一、无重叠、owner 完整的 SymbolGraph；
-- R2-A 先由 [`T040`](tasks/T040_source_catalog_owner_registry.md) 建立 catalog/top-overlay 双语义视图
+- R2-A 先由 [`T040`](../../tasks/T040_source_catalog_owner_registry.md) 建立 catalog/top-overlay 双语义视图
   共用的 module owner registry，不收集可重命名 symbol；
-- R2-B 由 [`T041`](tasks/T041_symbol_graph_signals.md) 建立 SymbolGraph schema，并只迁移 module
+- R2-B 由 [`T041`](../../tasks/T041_symbol_graph_signals.md) 建立 SymbolGraph schema，并只迁移 module
   内部 `signals` 的 source identity、semantic occurrence 和 provenance；
-- R2-C 由 [`T042`](tasks/T042_symbol_graph_genvars.md) 增加内部 `genvars`，冻结 source genvar、
+- R2-C 由 [`T042`](../../tasks/T042_symbol_graph_genvars.md) 增加内部 `genvars`，冻结 source genvar、
   elaborated iteration parameter 和受控 `LoopGenerateSyntax` provenance 的归一化；
-- R2-D 由 [`T043`](tasks/T043_symbol_graph_parameters.md) 迁移 module value parameter/localparam、
+- R2-D 由 [`T043`](../../tasks/T043_symbol_graph_parameters.md) 迁移 module value parameter/localparam、
   dimension、generate condition 和 named override，并冻结 `internal/module_abi/top_boundary`；
 - 后续 R2 任务只能在 T040 owner registry 上逐步增加 source symbol、occurrence/provenance 和 ABI
   overlay，不得重新建立第二套 module identity；
@@ -242,21 +242,21 @@ T038 继续保留为历史 `BLOCKED / NOT_ACCEPTED` 证据；用户已明确授�
 ### 阶段 R3：统一 rewrite、mapping vNext、audit 与 metrics
 
 - 单一目标：让 single-file 和显式 filelist 共用一条改写流水线；
-- R3-A 先由 [`T044`](tasks/T044_rewrite_policy_selection.md) 只建立纯 RewritePolicy，冻结普通 category
+- R3-A 先由 [`T044`](../../tasks/T044_rewrite_policy_selection.md) 只建立纯 RewritePolicy，冻结普通 category
   与 ABI opt-in、top boundary和preserved reason，不生成mapping或RTL；
-- R3-B 由 [`T045`](tasks/T045_mapping_vnext_naming.md) 冻结 planned mapping vNext core、全局
+- R3-B 由 [`T045`](../../tasks/T045_mapping_vnext_naming.md) 冻结 planned mapping vNext core、全局
   range/name fail-closed 和注入式测试命名器，不生成 rewritten RTL；
-- R3-C 由 [`T046`](tasks/T046_rewrite_vnext_roundtrip.md) 接入一次性文件编辑、strict gate、
+- R3-C 由 [`T046`](../../tasks/T046_rewrite_vnext_roundtrip.md) 接入一次性文件编辑、strict gate、
   decrypt 和 compact Formal 正负例，并增加符合 T045 NameFactory 合同的安全随机命名器；
-- R3-D 由 [`T047`](tasks/T047_mapping_execution_envelope.md) 补齐最终 mapping execution envelope、
+- R3-D 由 [`T047`](../../tasks/T047_mapping_execution_envelope.md) 补齐最终 mapping execution envelope、
   per-file mapping、input/gate/restored manifests；只消费 T046 execution/restore，不重建图或读取 gold；
-- R3-E 由 [`T048`](tasks/T048_metrics_vnext_effective_lines.md) 建立新架构的 effective-line、
+- R3-E 由 [`T048`](../../tasks/T048_metrics_vnext_effective_lines.md) 建立新架构的 effective-line、
   affected-lines、symbol/occurrence coverage 和 plaintext leakage metrics；不实现 rate selection；
-- R3-F 由 [`T049`](tasks/T049_rate_selection_vnext.md) 建立基于 MappingVNext 的
+- R3-F 由 [`T049`](../../tasks/T049_rate_selection_vnext.md) 建立基于 MappingVNext 的
   `greedy_unique_line_v1` rate selector；只输出选择计划，不接入 CLI 或 gate；
-- R3-G 由 [`T050`](tasks/T050_rate_selected_execution.md) 将 selection 计划接入 T046 的 gate/restore
+- R3-G 由 [`T050`](../../tasks/T050_rate_selected_execution.md) 将 selection 计划接入 T046 的 gate/restore
   引擎，验证 selected mapping 的 strict compile、byte-identical restore 和 compact Formal；
-- R3-H 由 [`T051`](tasks/T051_rate_metrics_vnext_adapter.md) 将 rate-selected execution 接入 T047
+- R3-H 由 [`T051`](../../tasks/T051_rate_metrics_vnext_adapter.md) 将 rate-selected execution 接入 T047
   mapping envelope 与 T048 metrics，冻结一个可审计的 rate/metrics vNext 服务对象；不生成新的
   rewrite engine，不接入 CLI；
 - R3-I/T052 将建立 single-file/filelist 的 vNext orchestration service，统一产出 mapping、gate、

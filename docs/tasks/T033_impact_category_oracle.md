@@ -4,7 +4,7 @@
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T032 `ACCEPTED`
-- 计划文档：[`docs/category_profile_normalization_plan.md`](../category_profile_normalization_plan.md)
+- 计划文档：[`docs/category_profile_normalization_plan.md`](../development/architecture/category_profile_normalization_plan.md)
 - Formal verification：`N/A`（本任务只生成 impact/category inventory 和 source-range oracle，不改写 RTL）
 
 ## 1. 单一目标

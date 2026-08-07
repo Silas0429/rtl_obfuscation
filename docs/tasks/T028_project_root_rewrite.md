@@ -5,7 +5,7 @@
 - 实现负责人：子 Agent
 - 前置任务：T027 `ACCEPTED`
 - 起始提交：`d343e26`
-- 路线图：[`docs/project_root_top_roadmap.md`](../project_root_top_roadmap.md)
+- 路线图：[`docs/project_root_top_roadmap.md`](../development/architecture/project_root_top_roadmap.md)
 - Formal verification：必须 `PASS`
 
 ## 1. 单一目标

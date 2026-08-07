@@ -4,7 +4,7 @@
 - 设计负责人：主 Agent
 - 实现负责人：子 Agent
 - 前置任务：T033 `ACCEPTED`
-- 计划文档：[`docs/category_profile_normalization_plan.md`](../category_profile_normalization_plan.md)
+- 计划文档：[`docs/category_profile_normalization_plan.md`](../development/architecture/category_profile_normalization_plan.md)
 - Formal verification：必须 `PASS`；另需一个故意功能变更的 `FAIL` 负例
 
 ## 1. 单一目标

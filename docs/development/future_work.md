@@ -37,6 +37,27 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
   显式改写。
 
+## T073 后真实工程复测边界
+
+本轮真实工程复测没有错误 gate 被发布：不完整或无法证明安全的改写均在 mapping、strict
+compile 或 owner/build-input 检查阶段原子停止。但是，“安全拒绝或少加密”不等于“支持成功”；
+strict compile 只能排除语法和绑定错误，不得代替可运行时的 actual-gate Formal。
+
+- `register_interface` 暴露了 quarantined owner 内跨 owner occurrence 仍可能形成半改名的风险；
+  当前案例被 strict compile 拦截。正确性优先级最高的后续项是 **owner occurrence firewall**，
+  即受保护 owner 内不得产生跨 owner rename edit。
+- direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
+  此外，**module end label** 尚未纳入 module rename occurrence。
+- **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
+  精确绑定时继续原子失败。
+- 同一 module owner 同时命中 type-parameter、nested-generate 或 macro quarantine 时，
+  **conflicting quarantine reasons** 仍原子失败，不进行部分改名。
+- **syntax-less implicit typedef conversion** 没有可证明的直接源码 token 时继续 fail-closed。
+- VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
+  分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。
+
+本小节只记录已观察边界，不授权实现或放宽现有 fail-closed 条件。
+
 ## 工程输入与验证
 
 - 更复杂的 include/define 条件、嵌套 filelist、library/blackbox 和外部消费者需要扩展

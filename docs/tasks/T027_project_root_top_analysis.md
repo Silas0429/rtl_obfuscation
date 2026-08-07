@@ -5,7 +5,7 @@
 - 实现负责人：子 Agent
 - 前置任务：T026 `ACCEPTED`
 - 固定 RISC-V-Vector 仓库提交：`5586a30`
-- 路线图：[`docs/project_root_top_roadmap.md`](../project_root_top_roadmap.md)
+- 路线图：[`docs/project_root_top_roadmap.md`](../development/architecture/project_root_top_roadmap.md)
 - Formal verification：`N/A`，本任务不产生重写 RTL
 
 ## 1. 单一目标

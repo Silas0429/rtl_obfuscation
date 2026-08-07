@@ -496,7 +496,7 @@ conda run -n rtl_obfuscation python -m unittest \
 T029 还必须更新：
 
 - 根目录 `README.md` 的正式使用方式；
-- [`systemverilog_renaming_table.md`](systemverilog_renaming_table.md) 的新输入边界；
+- [`systemverilog_renaming_table.md`](../../systemverilog_renaming_table.md) 的新输入边界；
 - [`formal_verification.md`](../../formal_verification.md) 的 formal-view 规则；
 - [`future_work.md`](../future_work.md) 中仍不支持的外部库、blackbox、复杂宏和顶层 ABI 情况。
 
