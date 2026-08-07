@@ -62,6 +62,9 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
 
 ## 工程输入与验证
 
+- T078 已将 persisted `compile_order`（独立编译单元）与 `included_files`（参与 manifest、hash
+  和逐字节恢复的 header）分开审计，公开 direct restore 可恢复这两类物理文件；pinned Ibex 的
+  `abi_group` 与 `non_abi_group` 仍是独立 strict-compile 边界，不属于该修复。
 - 更复杂的 include/define 条件、嵌套 filelist、library/blackbox 和外部消费者需要扩展
   SourceSet/SourceCatalog 合同。
 - 每项扩展都必须保留 semantic owner、physical range、strict compile、restore byte identity、

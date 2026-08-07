@@ -1,6 +1,6 @@
 # T078：direct restore 区分编译单元与 header 物理清单
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -253,18 +253,75 @@ external_formal: N/A; T078 does not change external gate bytes and Ibex gold is 
 ## 11. 子 Agent 执行记录
 
 ```text
-status: not started
-actual_model:
-starting_head:
-changed_files:
-commands:
-results:
-schema_or_behavior:
-boundaries:
-formal_verification:
-review_request:
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: c13db554a938d7ee566a732cf79c8cd3074bb543；origin/main 同提交；worktree clean
+allowed_files_check: PASS；合同第 7 节七个允许路径无既有未提交修改；唯一活动实现任务为 T078
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_restore_vnext tests.test_public_cli -v`；exit 0；Ran 19 tests；OK
+pre_fix_characterization: PASS；public encrypt exit 0，files=2/mapping_records=4/modified_tokens=3/strict=true/internal restore=true；persisted ordered=[top.sv]、included=[defs.svh]、compile=[top.sv]，五组 manifests 均按 [top.sv, defs.svh]；public decrypt exit 1 且 stderr `error: RESTORE_VNEXT_INPUT_INVALID`、输出不存在；direct API 精确 code=`RESTORE_VNEXT_INPUT_INVALID`、message=`source_set physical order is invalid`
+changed_files: docs/tasks/T078_direct_restore_header_physical_order.md；rtl_obfuscator/restore_vnext.py；tests/test_t078_direct_restore_headers.py；tests/fixtures/t078_direct_restore_headers/{design.f,defs.svh,top.sv}；docs/development/future_work.md
+commands: 第 9 节 baseline 一次；目标测试首次暴露测试自身对既存 TemporaryDirectory 重复 mkdir 后修正；随后目标测试通过；最终逐条执行第 9 节五条验收（外部 replay 命令末尾另打印 replay_root 供记录）
+results: 项目内目标+回归最终 exit 0，Ran 27 tests，OK；external pinned HEAD/ibex HEAD checks 通过，materialize/runner exit 0，冻结 jq 返回 true；py_compile exit 0；git diff --check HEAD exit 0；READY_FOR_REVIEW guard exit 0
+test_rework: 首次目标 unittest 的 7 个行为测试均通过，仅 `test_public_encrypt_persists_compile_and_physical_orders` 因 helper 对已存在 TemporaryDirectory 调用 `mkdir()` 抛 FileExistsError；只将 test helper 改为 exist_ok=True，未修改 fixture、产品行为或 oracle，最终 8/8 与合并 27/27 均通过
+schema_or_behavior: 不改变 report/schema/manifest 字段或顺序；只在 `_load_orchestration_gate_inputs_vnext()` 将 persisted compile-unit order 与 physical order 分离：ordered_source_files 非空无重复、included_files 无重复且不交叉、compile_order 精确等于 ordered_source_files，physical files 精确拼接 ordered+included；后续 gate set、五组 manifests、hash、range 与 restore 审计全部继续复用该 physical 顺序
+compact_oracle: PASS；source_set ordered=[top.sv]、included=[defs.svh]、compile=[top.sv]；五组 manifests=[top.sv,defs.svh]；public encrypt files=2、records=4、signal rename=1、edits=3、strict/internal restore true；public decrypt 无 original source/report exit 0，只发布 byte-identical top.sv/defs.svh 且不发布 design.f；可选 report manifest equality true；direct API/public adapter 均只调用共享 gate audit 且不调用 orchestration regeneration
+tamper_matrix: PASS；persisted compile_order 附加 header、ordered duplicate、included duplicate、source/header 交叉均为 RESTORE_VNEXT_INPUT_INVALID；gate design.f 附加 header、header bytes 篡改、unexpected gate file 均为 RESTORE_VNEXT_GATE_INVALID；所有失败无 traceback、output/report 均不发布
+external_replay: PASS；stability HEAD=b99f5e43128964cc78a5c123a31f84e46df76934，Ibex HEAD=3250d99482f1963891ef1cf19356eeaeeaa71d30；replay_root=/private/tmp/t078-ibex-replay.3wlkF9；abi__modules 与 non_abi__instances 均 PASS_EFFECTIVE/strict true/restore byte-identical/gate published/decrypt exit 0/restore files 45，effective rename 分别 18/37；runner formal-policy none 未描述为等价证明
+documentation: PASS；future-work 记录 compile_order 与 included_files 的持久化审计边界，并明确 Ibex abi_group/non_abi_group strict failure 不属于 T078
+boundaries: 不修改 SourceSet/graph/policy/mapping/rewrite/CLI/Formal，不把 header 加入 design.f，不读取 original source，不修 Ibex group；未运行 RISC-V-Vector Formal、blanket discovery 或历史 driver；外部仓库/pinned input 未修改
+cleanup_candidates: none
+formal_verification: PASS
+gold: tests/fixtures/t078_direct_restore_headers
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-positive-chke4v7s/encrypt/gate；actual public rtl_encrypt output，3 个真实 edits
+top: t078_header_top
+seq: 5
+positive_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t078_direct_restore_headers/design.f --gold-root tests/fixtures/t078_direct_restore_headers --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-positive-chke4v7s/encrypt/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-positive-chke4v7s/encrypt/gate --top t078_header_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-positive-chke4v7s/encrypt/gate","gold":"tests/fixtures/t078_direct_restore_headers","seq":5,"top":"t078_header_top"}
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-negative-bc83nmr_/negative；actual gate 副本且只含冻结 `assign data_o = ~` 功能变更
+negative_compile: catalog 0/0；top overlay 0/0
+negative_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t078_direct_restore_headers/design.f --gold-root tests/fixtures/t078_direct_restore_headers --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-negative-bc83nmr_/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-negative-bc83nmr_/negative --top t078_header_top --seq 5
+negative_exit_code: 1
+negative_result: `equiv_status -assert`；1 unproven cell remains in module equiv；ERROR 报告 unproven equivalence
+external_formal: N/A；T078 不改变外部 gate bytes，Ibex gold 位于 routine compact proof 之外，冻结 replay 使用 formal-policy none
+review_request: 请主 Agent 独立复跑第 9 节、审计 persisted SourceSet/manifest 顺序与 external delta 并决定验收；子 Agent 未 stage、commit、push、设置 ACCEPTED 或创建 T079
 ```
 
 ## 12. 主 Agent 验收
 
-待子 Agent 设置 `READY_FOR_REVIEW` 后，由主 Agent独立执行第 9 节并填写。
+```text
+review_date: 2026-08-07
+reviewer: 主 Agent
+starting_head: c13db554a938d7ee566a732cf79c8cd3074bb543；origin/main 同提交
+allowed_files: PASS；最终 diff 精确为第 7 节七个允许路径，无额外 tracked/untracked 文件
+implementation_review: PASS；产品 diff 只在 persisted gate loader 将 compile units 与 included
+  physical headers 分开，并增加 source/header duplicate/intersection fail-closed；未修改 schema、
+  mapping、rewrite、gate generation、CLI 或 Formal
+target_and_regression: PASS；第 9 节合并 unittest exit 0；Ran 27 tests；OK
+compact_oracle: PASS；files=2、mapping_records=4、1 signals rename、3 edits；source_set
+  ordered=[top.sv]、included=[defs.svh]、compile=[top.sv]；五组 manifests=[top.sv,defs.svh]
+strict_and_restore: PASS；actual gate catalog/top overlay 0/0 + 0/0；公开 direct restore 不读取
+  original source，恢复 top.sv/defs.svh byte-identical 且不发布 design.f
+tamper_review: PASS；非 canonical persisted SourceSet 使用 RESTORE_VNEXT_INPUT_INVALID；design.f、
+  header bytes/hash 和 file-set 篡改使用 RESTORE_VNEXT_GATE_INVALID；所有失败无部分输出/report
+formal_positive: PASS；Main-Agent actual gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-positive-nsuzvhxf/encrypt/gate；
+  top=t078_header_top；seq=5；exit 0；complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative；Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t078-formal-negative-k_40q88u/negative；
+  only frozen `assign data_o = ~` mutation；strict compile 0/0 + 0/0；exit 1；1 unproven cell，
+  output contains `unproven` and `equiv_status -assert`
+external_replay: PASS；stability HEAD=b99f5e43128964cc78a5c123a31f84e46df76934，Ibex
+  HEAD=3250d99482f1963891ef1cf19356eeaeeaa71d30；Main-Agent replay root
+  /private/tmp/t078-ibex-replay.BuKo3Y；abi__modules/non_abi__instances 均 PASS_EFFECTIVE、strict
+  true、restore byte-identical、decrypt exit 0、45 files；rename=18/37，modified_tokens=53/37
+py_compile: PASS；第 9 节命令 exit 0
+diff_check: PASS；git diff --check HEAD exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+documentation: PASS；future work 精确记录 T078，并保留 Ibex groups 与其他工程输入边界
+forbidden_runs: 未运行 RISC-V-Vector Formal、blanket discovery 或历史 acceptance driver；未修改外部仓库
+decision: ACCEPTED；T078 修复公开 direct restore 的 header physical manifest 不变量，且保持 fail-closed
+delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
+push: pending current acceptance commit
+successor: 主 Agent 只在本 acceptance commit 推送后冻结下一任务
+```

@@ -847,9 +847,17 @@ def _load_orchestration_gate_inputs_vnext(
     if set(report) != expected_outer or report.get("format") != "rtl-obfuscation.orchestration-vnext" or report.get("schema_version") != 1 or report.get("state") != "restored":
         _fail("RESTORE_VNEXT_REPORT_INVALID", "orchestration report format, schema, or state is invalid")
     source_set = _parse_source_set(report["source_set"], gate_path)
-    files = tuple(dict.fromkeys((*source_set.ordered_source_files, *source_set.included_files)))
-    if not files or tuple(source_set.compile_order) != files:
+    ordered_source_files = tuple(source_set.ordered_source_files)
+    included_files = tuple(source_set.included_files)
+    if (
+        not ordered_source_files
+        or len(set(ordered_source_files)) != len(ordered_source_files)
+        or len(set(included_files)) != len(included_files)
+        or set(ordered_source_files) & set(included_files)
+        or tuple(source_set.compile_order) != ordered_source_files
+    ):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set physical order is invalid")
+    files = (*ordered_source_files, *included_files)
     _validate_gate_file_set(report_path, gate_path, report, files)
     try:
         if (gate_path / "design.f").read_bytes() != "".join(f"{file}\n" for file in source_set.compile_order).encode("utf-8"):
