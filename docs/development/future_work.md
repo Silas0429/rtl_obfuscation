@@ -81,6 +81,15 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   无 exact callee/formal/owner/range 时继续 fail-closed。Yosys 当前不能解析 named function calls，因此
   named label 由 actual-gate PySlang strict、同 symbol edit 和 source-free restore 验证；Formal 只覆盖
   不启用 named-call 宏的 actual renamed ordered-call branch。
+- T084 已支持普通物理 struct alias 的 direct named assignment-pattern field key：只从 exact semantic
+  `StructuredAssignmentPatternExpression`、`AssignmentPatternExpressionSyntax`/
+  `StructuredAssignmentPatternSyntax`、`TypeAliasType` canonical struct identity，以及同一 alias owner 下
+  唯一同名既有 `struct_fields` record 绑定 direct `IdentifierNameSyntax` 物理 token，并记录
+  `semantic_struct_pattern_key`。union、array/queue、scalar、positional/default/type/literal key、宏 key、
+  anonymous pattern、class property 与 tagged union 仍不支持；无 exact alias/field/owner/range 时继续
+  fail-closed。Yosys 当前不能解析 named assignment pattern，因此 key 的字节正确性由 actual-gate
+  PySlang strict、同 symbol edit 与 source-free restore 证明；Formal 只覆盖不启用 named-pattern 宏的
+  actual renamed concatenation branch。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。

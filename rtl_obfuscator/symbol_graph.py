@@ -2681,6 +2681,106 @@ def _collect_extended_symbols(
                 )
                 field_records_by_alias[(*alias_key, name)] = field_record
 
+    # Direct named assignment-pattern keys are semantic references to fields
+    # owned by the expression's exact physical struct alias.  Accept only the
+    # fixed typed path; unsupported pattern shapes are not traversed or guessed.
+    for node in nodes:
+        if type(node).__name__ != "StructuredAssignmentPatternExpression":
+            continue
+        syntax = getattr(node, "syntax", None)
+        if type(syntax) is not pyslang.syntax.AssignmentPatternExpressionSyntax:
+            continue
+        pattern = getattr(syntax, "pattern", None)
+        if type(pattern) is not pyslang.syntax.StructuredAssignmentPatternSyntax:
+            continue
+        semantic_type = getattr(node, "type", None)
+        canonical_type = getattr(semantic_type, "canonicalType", None)
+        if (
+            type(semantic_type).__name__ != "TypeAliasType"
+            or not bool(getattr(canonical_type, "isStruct", False))
+            or bool(getattr(canonical_type, "isPackedUnion", False))
+        ):
+            continue
+        alias_declaration = _record_range(source_catalog, semantic_type)
+        alias_record = record_for_target(semantic_type)
+        if (
+            alias_record is None
+            or alias_record["category"] != "struct_types"
+            or alias_record["declaration"] != alias_declaration
+        ):
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "structured assignment pattern does not match one physical struct alias record",
+                file=alias_declaration.file,
+                start=alias_declaration.start,
+            )
+        items = tuple(getattr(pattern, "items", ()))
+        if any(
+            (
+                type(item).__name__ == "Token"
+                and str(getattr(item, "rawText", "")) != ","
+            )
+            or (
+                type(item).__name__ != "Token"
+                and type(item) is not pyslang.syntax.AssignmentPatternItemSyntax
+            )
+            for item in items
+        ):
+            continue
+        for item in items:
+            if type(item).__name__ == "Token":
+                continue
+            key = getattr(item, "key", None)
+            if type(key) is not pyslang.syntax.IdentifierNameSyntax:
+                continue
+            token = getattr(key, "identifier", None)
+            if token is None or bool(getattr(token, "isMissing", False)):
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_SOURCE_INVALID",
+                    "structured assignment pattern key has no physical identifier token",
+                    file=alias_declaration.file,
+                    start=alias_declaration.start,
+                )
+            name = str(getattr(token, "rawText", ""))
+            if not name:
+                file, offset = _location_start(
+                    source_catalog, getattr(token, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_SOURCE_INVALID",
+                    "structured assignment pattern key has empty spelling",
+                    file=file,
+                    start=offset,
+                )
+            field_record = field_records_by_alias.get(
+                (
+                    alias_declaration.file,
+                    alias_declaration.start,
+                    alias_declaration.end,
+                    name,
+                )
+            )
+            if (
+                field_record is None
+                or field_record["category"] != "struct_fields"
+                or field_record["owner"] != alias_record["owner"]
+                or field_record["name"] != name
+            ):
+                file, offset = _location_start(
+                    source_catalog, getattr(token, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "structured assignment pattern key does not match one field in its alias owner",
+                    file=file,
+                    start=offset,
+                )
+            add_occurrence(
+                field_record,
+                _token_source_range(source_catalog, token, name),
+                "semantic_struct_pattern_key",
+            )
+
     aliases_by_name: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
     for alias_node, alias_record in alias_records:
         aliases_by_name.setdefault(str(alias_node.name), []).append(

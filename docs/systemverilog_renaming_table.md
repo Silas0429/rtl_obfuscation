@@ -17,7 +17,7 @@
 | `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
 | `typedefs` | 普通 typedef 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
 | `struct_types` | struct 和 union 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
-| `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
+| `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员；普通物理 struct alias 的 direct named assignment-pattern key 会按 exact alias owner 与字段名一致改写 | 跨 module 使用的成员及引用会一致改名；union/array/default/type/literal/宏或 anonymous pattern key 不在此闭包内 |
 | `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
 | `modules` | module 名称 | 否 | 保留 | 一致加密子 module 声明、实例化引用和直接 closing label `endmodule : name`；top module 名称及 closing label 保留 |
 | `ports` | module 端口名称 | 否 | 保留 | 加密子 module 端口和连接引用；top module 对外端口保留 |
