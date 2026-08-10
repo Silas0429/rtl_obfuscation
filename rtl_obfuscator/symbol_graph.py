@@ -1590,6 +1590,75 @@ def _collect_parameter_symbols(
             continue
         add_sized_cast_occurrence(token, target)
 
+    # An overridden parameter's elaborated value no longer exposes references
+    # from its source default. Recover only direct typed identifier tokens from
+    # the exact declarator initializer and bind them in that declaration's
+    # semantic parent scope to an existing module parameter record.
+    for node in nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Parameter:
+            continue
+        node_key = _parameter_source_key(source_catalog, node)
+        if node_key not in records:
+            continue
+        syntax = getattr(node, "syntax", None)
+        if type(syntax).__name__ != "DeclaratorSyntax":
+            continue
+        initializer = getattr(syntax, "initializer", None)
+        if type(initializer).__name__ != "EqualsValueClauseSyntax":
+            continue
+        scope = getattr(node, "parentScope", None)
+        if getattr(scope, "lookupName", None) is None:
+            continue
+        syntax_nodes: list[Any] = []
+        initializer.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            if type(syntax_node).__name__ != "IdentifierNameSyntax":
+                continue
+            token = getattr(syntax_node, "identifier", None)
+            name = str(getattr(token, "rawText", ""))
+            location = getattr(token, "location", None)
+            if not name or location is None:
+                continue
+            target = _scope_lookup_target(scope, token)
+            target_key = _parameter_source_key(source_catalog, target)
+            if target_key is None or target_key in genvar_keys:
+                continue
+            record = records.get(target_key)
+            if record is None:
+                continue
+            if _reject_macro_location(source_catalog, location):
+                continue
+            source_range = _range_from_location(source_catalog, location, name)
+            if source_range == record.declaration:
+                continue
+            for other_key, other_record in records.items():
+                if other_key == target_key:
+                    continue
+                if other_record.declaration == source_range or any(
+                    occurrence.source_range == source_range
+                    for occurrence in occurrences[other_key].values()
+                ):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_RANGE_CONFLICT",
+                        "physical parameter default range maps to multiple parameters",
+                        file=source_range.file,
+                        start=source_range.start,
+                    )
+            if any(
+                occurrence.source_range == source_range
+                for occurrence in occurrences[target_key].values()
+            ):
+                continue
+            occurrence = SymbolOccurrence(source_range, "parameter_default")
+            occurrences[target_key][
+                (
+                    source_range.file,
+                    source_range.start,
+                    source_range.end,
+                    occurrence.provenance,
+                )
+            ] = occurrence
+
     # Dimensions whose semantic expressions are not exposed by PySlang have
     # no bound target evidence. Do not recover them through syntax scanning or
     # owner/name lookup; they remain fail-closed and uncollected.

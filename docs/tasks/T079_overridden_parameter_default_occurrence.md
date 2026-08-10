@@ -1,6 +1,6 @@
 # T079：被实例覆盖的参数默认值引用精确绑定
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -373,73 +373,97 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' \
 ## 11. Formal verification 记录
 
 ```text
-formal_verification: PASS | FAIL | BLOCKED
+formal_verification: PASS
 gold: tests/fixtures/t079_parameter_default
-gate: <actual public rtl_encrypt output>
+gate: /private/tmp/t079-compact-evidence.tfih2Q/gate（actual public rtl_encrypt output）
 top: t079_top
 seq: 5
-positive_command: <exact command>
-positive_exit_code: <integer>
-positive_result: <complete stdout JSON>
-negative_gate: <actual gate copy with only frozen top assign mutation>
-negative_compile: <catalog/top overlay counts>
-negative_command: <exact command>
-negative_exit_code: <nonzero integer>
-negative_result: <unproven / equiv_status -assert summary>
-external_gold: <fresh materialized pinned SERV source>
-external_gate: <category_matrix_runner actual abi__parameters gate>
+positive_command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t079_parameter_default/design.f --gold-root tests/fixtures/t079_parameter_default --gate-filelist /private/tmp/t079-compact-evidence.tfih2Q/gate/design.f --gate-root /private/tmp/t079-compact-evidence.tfih2Q/gate --top t079_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence": "pass", "gate": "/private/tmp/t079-compact-evidence.tfih2Q/gate", "gold": "tests/fixtures/t079_parameter_default", "seq": 5, "top": "t079_top"}
+negative_gate: /private/tmp/t079-compact-evidence.tfih2Q/negative（actual gate copy；只在 top.sv 唯一 `assign data_o = ` 后增加 `~`）
+negative_compile: catalog 0/0；top overlay 0/0
+negative_command: conda run -n rtl_obfuscation python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t079_parameter_default/design.f --gold-root tests/fixtures/t079_parameter_default --gate-filelist /private/tmp/t079-compact-evidence.tfih2Q/negative/design.f --gate-root /private/tmp/t079-compact-evidence.tfih2Q/negative --top t079_top --seq 5
+negative_exit_code: 1
+negative_result: `Found 8 unproven $equiv cells in 'equiv_status -assert'`；未弱化 `equiv_status -assert`
+external_gold: /private/tmp/t079-serv-replay.1rZFr6/source（fresh materialized pinned SERV source）
+external_gate: /private/tmp/t079-serv-replay.1rZFr6/matrix/abi__parameters/gate
 external_top: serv_rf_top
 external_seq: 5
-external_command: <exact runner/formal command from log>
+external_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation_realworld_stability/projects/serv/prepared/design.f --gold-root /private/tmp/t079-serv-replay.1rZFr6/source --gate-filelist /private/tmp/t079-serv-replay.1rZFr6/matrix/abi__parameters/gate/design.f --gate-root /private/tmp/t079-serv-replay.1rZFr6/matrix/abi__parameters/gate --top serv_rf_top --seq 5
 external_exit_code: 0
-external_result: FORMAL_PASS + complete JSON result
+external_result: FORMAL_PASS；{"formal_equivalence": "pass", "gate": "/private/tmp/t079-serv-replay.1rZFr6/matrix/abi__parameters/gate", "gold": "/private/tmp/t079-serv-replay.1rZFr6/source", "seq": 5, "top": "serv_rf_top"}
 ```
 
 ## 12. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model:
-starting_head:
-allowed_files_check:
-baseline:
-pre_fix_characterization:
-changed_files:
-commands:
-results:
-schema_or_behavior:
-compact_oracle:
-strict_and_restore:
-external_replay:
-documentation:
-boundaries:
-cleanup_candidates:
-formal_verification:
-review_request:
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh; 当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: e402cdfb3c7fa31c9096bd50b01ee84342b174d5; origin/main 同提交；branch main；worktree clean；start_time 2026-08-07T15:43:58+0800
+allowed_files_check: PASS; 合同第 8 节八个允许路径无既有未提交修改；唯一活动任务为 T079 READY；无 staged/unstaged/untracked 文件
+baseline: PASS; `conda run -n rtl_obfuscation python -m unittest tests.test_symbol_graph_parameters tests.test_t069_sized_cast_parameter tests.test_t071_type_parameter_defparam -v`; exit 0; Ran 36 tests; OK
+pre_fix_characterization: PASS; frozen fixture bytes/SHA-256 all match section 3; catalog/top overlay 0/0 + 0/0; graph 19/19/25/44; six parameter records/seven occurrences; `child.sv:88..98` absent; mapping 19/6/13/0 with 13 planned edits; public encrypt exit 1 `CLI_VNEXT_ORCHESTRATION_INVALID`, gate absent
+changed_files: 第 8 节八个允许路径；`rtl_obfuscator/symbol_graph.py`、T079 target unittest、四个冻结 fixture、`docs/development/future_work.md` 与本任务记录；允许列表外零修改
+commands: baseline 见上；实现后严格执行第 10 节恰好五条验收：四模块 unittest；pinned SERV 单 `abi__parameters` replay + jq oracle；py_compile；`git diff --check HEAD`；精确 READY_FOR_REVIEW guard；未运行 blanket discovery、历史 driver 或 RISC-V-Vector Formal
+results: PASS；目标+回归 exit 0，Ran 41 tests，OK；py_compile exit 0；diff check exit 0；READY_FOR_REVIEW guard exit 0；finish_time 2026-08-07T15:55:36+0800
+schema_or_behavior: 只在既有 `_collect_parameter_symbols()` 内增加 exact `DeclaratorSyntax` / `EqualsValueClauseSyntax` initializer typed-token recovery；使用当前 declaration `parentScope.lookupName()` 与 `_parameter_source_key()` 精确绑定已有 module value/local parameter record；same-target range 保留既有 provenance，other-target range `SYMBOL_GRAPH_RANGE_CONFLICT`；无 API/schema/category/policy/rewrite/CLI 变化
+compact_oracle: PASS；graph 19/19/26/45；parameter 6 symbols/8 occurrences；唯一 `parameter_default` 为 `child.sv:88..98`，target `COMPRESSED` declaration `41..51`；DOUBLE_WIDTH/sibling DERIVED 的 WIDTH 仍为 `semantic_expression`；T069 `sized_cast_type` 回归通过；mapping 19/6/13/0，actual edits 14
+strict_and_restore: PASS；public encrypt exit 0，summary files=3/mapping_records=19/modified_tokens=14/strict=true/internal restore=true；gate catalog/top overlay 0/0 + 0/0；COMPRESSED declaration/default/body 与 ALIGN declaration/body/named override 各同 record 一致改名；public decrypt 不读 original source，exit 0，恢复三个 `.sv` 逐字节一致且无 `design.f`
+external_replay: PASS；stability `b99f5e43128964cc78a5c123a31f84e46df76934` 与 SERV `41e8aeedfd1e9ad5f95902c5b0dfc83d1c99e5d2` replay 前后 clean；output `/private/tmp/t079-serv-replay.1rZFr6/matrix`；`abi__parameters`=`PASS_EFFECTIVE`，rename=59，files=17，records=726，edits=421，strict/gate/decrypt/restore all pass，restore.files=17，Formal PASS exit 0
+documentation: `future_work.md` 记录 T079 已支持的 exact default initializer direct identifier 与仍不支持的 type/package/class、macro、hierarchical/scoped/text-recovery 边界
+boundaries: 不支持 type/package/class parameter、macro default、hierarchical/scoped name、expression-sized cast 或文本扫描；不宣称其他 SERV profile/工程/ABI/non-ABI 类别支持；不能证明 binding/location/record 时不增加 occurrence，同 range 多 target 原子失败
+cleanup_candidates: none
+formal_verification: PASS；compact actual renamed gate seq=5 正例 exit 0 完整 JSON pass；固定单处 `~` 负例 strict 0/0 + 0/0、exit 1、8 unproven 且命中 `equiv_status -assert`；pinned SERV actual gate seq=5 FORMAL_PASS，完整证据见第 11 节与 `/private/tmp/t079-serv-replay.1rZFr6/matrix/abi__parameters/formal.log`
+review_request: READY_FOR_REVIEW；请主 Agent 独立执行第 10 节五条命令与 actual-gate Formal 后决定是否 ACCEPTED；子 Agent 未 stage/commit/push，未设置 ACCEPTED，未创建 T080
 ```
 
 ## 13. 主 Agent 验收
 
 ```text
-review_date: pending
+review_date: 2026-08-07
 reviewer: 主 Agent
-starting_head:
-allowed_files:
-implementation_review:
-target_and_regression:
-compact_oracle:
-strict_and_restore:
-formal_positive:
-formal_negative:
-external_replay:
-external_formal:
-py_compile:
-diff_check:
-ready_for_review_guard:
-documentation:
-forbidden_runs:
-decision: pending
-delivery_commit: pending
-push: pending
-successor: pending
+starting_head: e402cdfb3c7fa31c9096bd50b01ee84342b174d5；origin/main 同提交
+allowed_files: PASS；最终变更精确为第 8 节八个允许路径，无额外 tracked/untracked 文件
+implementation_review: PASS；产品 diff 只在既有 `_collect_parameter_symbols()` 中从 exact
+  DeclaratorSyntax/EqualsValueClauseSyntax initializer 提取 direct IdentifierNameSyntax token，经当前
+  declaration parentScope.lookupName 与 `_parameter_source_key()` 绑定已有 module value/local parameter
+  record；same-target range 保留既有 provenance，other-target range 原子报
+  SYMBOL_GRAPH_RANGE_CONFLICT；无 schema/category/policy/rewrite/CLI 变化
+target_and_regression: PASS；第 10 节合并 unittest exit 0；Ran 41 tests；OK
+compact_oracle: PASS；graph 19/19/26/45，parameter 6 symbols/8 occurrences；唯一新增
+  parameter_default 为 child.sv:88..98，target COMPRESSED declaration 41..51；mapping
+  19/6/13/0，actual edits=14；T069 sized_cast_type 与既有 semantic_expression provenance 保持
+strict_and_restore: PASS；public encrypt files=3/mapping_records=19/modified_tokens=14；actual gate
+  catalog/top overlay 0/0 + 0/0；公开 decrypt 不读取 original source，恢复三个 `.sv` byte-identical，
+  不发布 design.f
+formal_positive: PASS；Main-Agent target unittest actual gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t079-formal-positive-1h2auqjm/encrypt/gate；
+  top=t079_top；seq=5；exit 0；complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative；Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t079-formal-negative-6lmhab6i/negative；
+  only frozen `assign data_o = ~` mutation；strict compile 0/0 + 0/0；exit 1；target assertion
+  independently matched `unproven` and `equiv_status -assert`
+external_replay: PASS；stability HEAD=b99f5e43128964cc78a5c123a31f84e46df76934，SERV
+  HEAD=41e8aeedfd1e9ad5f95902c5b0dfc83d1c99e5d2；Main-Agent replay root
+  /private/tmp/t079-main-serv-replay.y9ciVg；abi__parameters=PASS_EFFECTIVE，rename=59，
+  files=17，mapping_records=726，modified_tokens=421，strict/gate/decrypt/restore 全通过；
+  restore.files=17；两个只读仓库重放前后 clean
+external_formal: PASS；actual SERV gate；top=serv_rf_top；seq=5；exit 0；FORMAL_PASS；complete
+  JSON formal_equivalence=pass，timed_out=false
+py_compile: PASS；第 10 节命令 exit 0
+diff_check: PASS；git diff --check HEAD exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+documentation: PASS；future work 精确记录已支持的 default initializer direct identifier 及仍不支持的
+  type/package/class、macro、hierarchical/scoped/text-recovery 边界
+forbidden_runs: 未运行 RISC-V-Vector Formal、blanket discovery 或历史 acceptance driver；未修改外部仓库
+delivery_resume_recheck: PASS；2026-08-10 从未暂存 ACCEPTED 工作区恢复，HEAD/origin/main 仍为
+  e402cdfb3c7fa31c9096bd50b01ee84342b174d5；重新运行 41 tests exit 0，compact actual-gate Formal
+  正例 exit 0/负例 exit 1；fresh SERV replay=/private/tmp/t079-resume-serv.Q4g3BE，59 rename、421 edits、
+  restore byte-identical、FORMAL_PASS；git diff --check HEAD 通过，无用户或外部仓库漂移
+decision: ACCEPTED；T079 在不减少 rename 范围的前提下补齐被 override 默认值的物理 parameter
+  reference，compact 与 pinned SERV 均 strict/restore/Formal 闭环
+delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
+push: pending current acceptance commit
+successor: 主 Agent 只在本 acceptance commit 推送后决定下一任务
 ```
