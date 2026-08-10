@@ -1,6 +1,6 @@
 # T080：`$clog2(identifier)` expression-sized cast 参数引用精确绑定
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0
 - 设计日期：2026-08-10
 - 设计负责人：主 Agent
@@ -395,47 +395,67 @@ external_formal: N/A; pinned riscv-dbg gold is blocked by documented Yosys front
 ## 13. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model:
-starting_head:
-allowed_files_check:
-baseline:
-pre_fix_characterization:
-changed_files:
-commands:
-results:
-typed_path_contract:
-compact_oracle:
-shadow_and_no_go:
-riscv_dbg_replay:
-formal_verification:
-documentation:
-boundaries:
-review_request:
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 6d4b8025ef1a7b8f826a9a47cf1e47adfcb92f0e；parent/origin/main=d3072b56f86969936441927efdb5dffedcef67ee；branch main；start_time=2026-08-10T11:07:38+0800
+allowed_files_check: PASS；启动 worktree clean；唯一活动任务 T080 READY；允许路径精确为本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t080_expression_sized_cast_parameter.py`、两个 T080 fixture 和 `docs/development/future_work.md`
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t069_sized_cast_parameter tests.test_t070_keyword_cast tests.test_t071_type_parameter_defparam tests.test_t079_parameter_default_occurrence -v`；exit 0；Ran 32 tests；OK；四组既有 compact actual-gate Formal 正例 exit 0、固定功能负例 exit 1
+pre_fix_characterization: PASS；fixture 精确为 10/199 bytes 且两个 SHA-256 匹配第 3 节；catalog/top overlay 0/0 + 0/0；typed path、candidate `169..176`、operand `179..186` 与第 5 节一致；现产品 graph 4/4/3/7，`RomSize` 仅有 operand `semantic_expression`；mapping 4/1/3/0、2 planned edits；目标测试实现前 Ran 10，2项 NO-GO/macro 安全边界通过，8项因缺少 `expression_sized_cast_type`、public strict 原子失败或相关 oracle 未满足而失败；public encrypt exit 1 `CLI_VNEXT_ORCHESTRATION_INVALID`，正式 gate absent
+changed_files: `docs/tasks/T080_expression_sized_cast_parameter.md`；`rtl_obfuscator/symbol_graph.py`；`tests/test_t080_expression_sized_cast_parameter.py`；`tests/fixtures/t080_expression_sized_cast/design.f`；`tests/fixtures/t080_expression_sized_cast/design.sv`；`docs/development/future_work.md`；允许列表外零修改
+commands: 目标开发测试 `conda run -n rtl_obfuscation python -m unittest tests.test_t080_expression_sized_cast_parameter -v` exit 0、Ran 10、OK；第 11 节实现后第 1 条完整命令 exit 0、Ran 42、OK；第 2 条 pinned riscv-dbg shell block exit 0；第 3 条 `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_t080_expression_sized_cast_parameter.py` exit 0；最终第 4/5 条见本记录后只读 guard
+results: PASS；fixture 10/199 bytes 与冻结 SHA-256 一致；target 10/10、相关回归 32/32；compact strict、source-free restore、Formal 正负和 external strict/restore oracle 全部满足；未运行 blanket discovery、RISC-V-Vector Formal 或历史 driver
+typed_path_contract: PASS；新增独立 `_expression_sized_cast_identifier_token()`，只接受 exact `CastExpressionSyntax.right=ParenthesizedExpressionSyntax` 与无 attributes 的 `$clog2`/单 `OrderedArgumentSyntax`/固定 property-sequence wrapper/direct `IdentifierNameSyntax`；T069 `_sized_cast_identifier_token()` 定义未改；body 复用 `_sized_cast_target_from_scopes()`，default 复用 declaration `parentScope.lookupName()`；现有同 range/conflict/firewall 逻辑只增加显式 provenance 参数
+compact_oracle: PASS；catalog/top overlay `0/0 + 0/0`；graph `4/4/4/8`；`RomSize` declaration `design.sv:121..128`，cast-left `169..176 expression_sized_cast_type`，operand `179..186 semantic_expression`；mapping `4 total / 1 rename / 3 preserve / 0 unsupported`，3 edits；public summary 1 file/4 records/3 modified tokens，strict true；decrypt 只从 gate+mapping 恢复 `design.sv`，逐字节一致且不生成 `design.f`
+shadow_and_no_go: PASS；module parameter 与 generate localparam 同名时两个 fixed cast 分别绑定不同 declaration record；`$bits(P)'(P)`、`$clog2(P + 1)'(P)` 均无新 provenance，选择 rename 后 `REWRITE_GATE_COMPILE_FAILED` 且 output absent；macro token 无 occurrence/edit；other-target 同物理 range 固定 `SYMBOL_GRAPH_RANGE_CONFLICT`
+riscv_dbg_replay: PASS；证据根 `/private/tmp/t080-riscv-dbg-replay.4ZUqnm`；stability `b99f5e43128964cc78a5c123a31f84e46df76934` 与 riscv-dbg `3d1205d8364fb49a2a97517d5d7029a991a82b8c` 前后 clean；`PASS_EFFECTIVE`，8 files，667 records，36 rename/604 preserve/27 unsupported，259 edits，strict/gate/decrypt true，restore 8 files byte-identical，`FORMAL_NOT_RUN`；唯一新 occurrence 为 symbol declaration `debug_rom/debug_rom.sv:963..970` 的 `2013..2020 expression_sized_cast_type`
+formal_verification: PASS；gold `/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t080_expression_sized_cast`；actual public gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-positive-6pz2qped/encrypt/gate`；top `t080_expression_sized_cast`；seq 5；positive command `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t080_expression_sized_cast/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t080_expression_sized_cast --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-positive-6pz2qped/encrypt/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-positive-6pz2qped/encrypt/gate --top t080_expression_sized_cast --seq 5`；exit 0；complete JSON `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-positive-6pz2qped/encrypt/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t080_expression_sized_cast","seq":5,"top":"t080_expression_sized_cast"}`；negative gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-negative-3zu6o2i2/negative` 为 actual gate copy 且只增加冻结 `assign hit_o = ~`，catalog/top `0/0 + 0/0`；negative 同参数 Formal command exit 1，combined diagnostic 包含 `unproven` 与 `equiv_status -assert`；external Formal N/A，pinned riscv-dbg 受冻结 Yosys frontend 边界阻挡且本任务 formal-policy none
+documentation: PASS；`future_work.md` 只把本任务 exact `$clog2(<direct IdentifierName>)'(...)`、lexical binding、新 provenance 与其他 expression-sized cast 保持 fail-closed 的边界写明
+boundaries: 未支持第 7 节其他 system/user/scoped/compound/nested/named/multiple/attribute/repetition/macro expression-sized cast；不扩 category/API/schema/policy/mapping/rewrite/restore；非 parameter、records 外 target、ambiguous scope 与证据不足继续 fail-closed；external `FORMAL_NOT_RUN` 未描述为等价证明
+review_request: 请主 Agent 仅按第 11 节五条命令独立验收 actual public gate、Formal 正负、pinned riscv-dbg oracle、py_compile、diff 与 READY_FOR_REVIEW guard；子 Agent 未 stage、commit、push、设置 ACCEPTED 或创建 T081
 ```
 
 ## 14. 主 Agent 验收
 
 ```text
-review_date: pending
+review_date: 2026-08-10
 reviewer: 主 Agent
-starting_head:
-allowed_files:
-implementation_review:
-target_and_regression:
-compact_oracle:
-shadow_and_no_go:
-riscv_dbg_replay:
-formal_positive:
-formal_negative:
-external_formal:
-py_compile:
-diff_check:
-ready_for_review_guard:
-documentation:
-forbidden_runs:
-decision: pending
-delivery_commit: pending
-push: pending explicit user authorization for future shared-branch mutation
-successor: forbidden before T080 acceptance and delivery
+starting_head: 6d4b8025ef1a7b8f826a9a47cf1e47adfcb92f0e；parent/origin/main=
+  d3072b56f86969936441927efdb5dffedcef67ee；branch main
+allowed_files: PASS；最终 worktree 精确为第 9 节六个路径；两个 fixture 仅含 design.f/design.sv，
+  10/199 bytes 与冻结 SHA-256 完全匹配；允许列表外零修改
+implementation_review: PASS；新增独立 fixed-path helper，只接受无 attributes 的
+  `$clog2(<direct IdentifierName>)`、单 OrderedArgument 和固定 property/sequence wrapper；T069 direct
+  helper 未改；body 复用最小 source-backed lexical scope 与 exact parameter declaration identity，default
+  复用声明 parentScope lookup；range/macro/conflict 防火墙不变；无 category/API/schema/policy/mapping/
+  rewrite/restore/CLI/Formal 分支或通用 expression traversal
+target_and_regression: PASS；合同第 11 节第 1 条 exit 0；Ran 42 tests；OK
+compact_oracle: PASS；graph 4/4/4/8；mapping 4 total、1 rename、3 preserve、0 unsupported；3 edits；
+  strict compile 0/0 + 0/0；public gate 发布；decrypt 仅由 gate+mapping 恢复 design.sv 且逐字节一致
+shadow_and_no_go: PASS；module/generate 同名参数分别绑定各自 declaration record；`$bits(P)` 与
+  `$clog2(P + 1)` 不产生新 provenance，选择 rename 后严格编译原子失败且 output absent；macro 无
+  occurrence/edit；other-target 同范围仍抛 SYMBOL_GRAPH_RANGE_CONFLICT
+riscv_dbg_replay: PASS；Main-Agent fresh root=/private/tmp/t080-main-riscv-dbg.w64lmd；stability
+  b99f5e43128964cc78a5c123a31f84e46df76934、riscv-dbg
+  3d1205d8364fb49a2a97517d5d7029a991a82b8c 前后 clean；abi__parameters=PASS_EFFECTIVE，8 files、
+  667 records、36 rename/604 preserve/27 unsupported、259 edits；strict/gate/decrypt/restore 全通过；
+  唯一 expression_sized_cast_type 为 debug_rom/debug_rom.sv:2013..2020
+formal_positive: PASS；Main-Agent compact actual public gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-positive-750ea9c5/encrypt/gate；
+  top=t080_expression_sized_cast；seq=5；exit 0；complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative；Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t080-formal-negative-yjz9e4nd/negative；只含冻结
+  `assign hit_o = ~` 变更；strict compile 0/0 + 0/0；exit 1；目标断言匹配 `unproven` 与
+  `equiv_status -assert`
+external_formal: N/A；pinned riscv-dbg 按合同 formal-policy none，结果 FORMAL_NOT_RUN，未描述为等价证明
+py_compile: PASS；合同第 11 节命令 exit 0
+diff_check: PASS；`git diff --check HEAD` exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+documentation: PASS；future_work 只记录本任务 exact 支持边界，并保留其他 expression-sized cast 与
+  enum/base dimension fail-closed
+forbidden_runs: 未运行 blanket discovery、历史 acceptance driver 或 RISC-V-Vector Formal
+decision: ACCEPTED；只加密由 fixed typed path、最小语义作用域和 exact declaration identity 共同证明的
+  参数引用，证据不足继续 fail-closed，符合“宁可少加密、不能加密错误”
+delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
+push: NOT_RUN；等待对本次新交付的明确授权
+successor: Main Agent 仅在本地交付提交完成后冻结下一任务
 ```

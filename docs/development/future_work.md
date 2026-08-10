@@ -48,7 +48,10 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   产生任何 rewrite edit。
 - T076 已支持普通物理 module 的直接 closing label `endmodule : name`，使子 module declaration、
   实例化引用和 closing label 使用同一个 rename record；selected top 的名称与 label 保留。
-  direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
+  direct identifier sized-cast 已支持；T080 进一步只支持 exact typed path
+  `$clog2(<direct IdentifierName>)'(...)`，通过 lexical scope 绑定已有 module value/local parameter
+  record，并记录 `expression_sized_cast_type`。其他 expression-sized cast 以及 enum/base dimension
+  仍可能漏收集，保持 fail-closed。
 - T079 已支持被 instance override 替换 semantic value 的 module value/local parameter 默认
   initializer direct identifier：只遍历精确 `DeclaratorSyntax.initializer` typed subtree，并用
   declaration `parentScope.lookupName()` 绑定到已有 parameter record。v1.1 仅凭 direct parent、

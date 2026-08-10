@@ -571,6 +571,55 @@ def _sized_cast_identifier_token(syntax: Any) -> Any | None:
     return token
 
 
+def _expression_sized_cast_identifier_token(syntax: Any) -> Any | None:
+    """Return the identifier from one fixed $clog2 expression-sized cast."""
+
+    if type(syntax).__name__ != "CastExpressionSyntax":
+        return None
+    if type(getattr(syntax, "right", None)).__name__ != "ParenthesizedExpressionSyntax":
+        return None
+    invocation = getattr(syntax, "left", None)
+    if type(invocation).__name__ != "InvocationExpressionSyntax":
+        return None
+    attributes = getattr(invocation, "attributes", None)
+    if attributes is None or len(attributes) != 0:
+        return None
+    system_name = getattr(invocation, "left", None)
+    if type(system_name).__name__ != "SystemNameSyntax":
+        return None
+    system_identifier = getattr(system_name, "systemIdentifier", None)
+    if str(getattr(system_identifier, "rawText", "")) != "$clog2":
+        return None
+    arguments = getattr(invocation, "arguments", None)
+    if type(arguments).__name__ != "ArgumentListSyntax":
+        return None
+    parameters = getattr(arguments, "parameters", None)
+    if type(parameters) is not list or len(parameters) != 1:
+        return None
+    argument = parameters[0]
+    if type(argument).__name__ != "OrderedArgumentSyntax":
+        return None
+    property_expression = getattr(argument, "expr", None)
+    if type(property_expression).__name__ != "SimplePropertyExprSyntax":
+        return None
+    sequence_expression = getattr(property_expression, "expr", None)
+    if type(sequence_expression).__name__ != "SimpleSequenceExprSyntax":
+        return None
+    if getattr(sequence_expression, "repetition", None) is not None:
+        return None
+    identifier = getattr(sequence_expression, "expr", None)
+    if type(identifier).__name__ != "IdentifierNameSyntax":
+        return None
+    token = getattr(identifier, "identifier", None)
+    if (
+        token is None
+        or not getattr(token, "rawText", "")
+        or getattr(token, "location", None) is None
+    ):
+        return None
+    return token
+
+
 def _is_builtin_keyword_cast_conversion(node: Any) -> bool:
     """Recognize only PySlang's typed built-in keyword-cast syntax."""
 
@@ -1522,7 +1571,9 @@ def _collect_parameter_symbols(
             )
             occurrences[target_key][occurrence_key] = occurrence
 
-    def add_sized_cast_occurrence(token: Any, target: Any) -> None:
+    def add_sized_cast_occurrence(
+        token: Any, target: Any, provenance: str
+    ) -> None:
         name = str(getattr(token, "rawText", ""))
         if not name:
             return
@@ -1555,7 +1606,7 @@ def _collect_parameter_symbols(
             if occurrence.source_range != source_range:
                 continue
             del occurrences[target_key][occurrence_key]
-        occurrence = SymbolOccurrence(source_range, "sized_cast_type")
+        occurrence = SymbolOccurrence(source_range, provenance)
         occurrences[target_key][(*range_key, occurrence.provenance)] = occurrence
         special_ranges.add((target_key, range_key))
 
@@ -1573,7 +1624,29 @@ def _collect_parameter_symbols(
             if token is None:
                 continue
             target = _scope_lookup_target(getattr(node, "parentScope", None), token)
-            add_sized_cast_occurrence(token, target)
+            add_sized_cast_occurrence(token, target, "sized_cast_type")
+
+    # Recover only the fixed $clog2(direct_identifier)'(...) type expression
+    # from a parameter declaration's exact source-backed default initializer.
+    for node in nodes:
+        if getattr(node, "kind", None) != pyslang.ast.SymbolKind.Parameter:
+            continue
+        syntax = getattr(node, "syntax", None)
+        if type(syntax).__name__ != "DeclaratorSyntax":
+            continue
+        initializer = getattr(syntax, "initializer", None)
+        if type(initializer).__name__ != "EqualsValueClauseSyntax":
+            continue
+        syntax_nodes: list[Any] = []
+        initializer.visit(syntax_nodes.append)
+        for syntax_node in syntax_nodes:
+            token = _expression_sized_cast_identifier_token(syntax_node)
+            if token is None:
+                continue
+            target = _scope_lookup_target(getattr(node, "parentScope", None), token)
+            add_sized_cast_occurrence(
+                token, target, "expression_sized_cast_type"
+            )
 
     # Body conversions expose a typed CastExpressionSyntax but not a direct
     # semantic target.  Bind their direct identifier through the smallest
@@ -1588,7 +1661,24 @@ def _collect_parameter_symbols(
         target = _sized_cast_target_from_scopes(source_catalog, nodes, token)
         if target is None:
             continue
-        add_sized_cast_occurrence(token, target)
+        add_sized_cast_occurrence(token, target, "sized_cast_type")
+
+    # Body conversions use the same fixed typed expression path, then reuse
+    # the existing smallest lexical-scope binding proof and range firewall.
+    for node in nodes:
+        if type(node).__name__ != "ConversionExpression":
+            continue
+        token = _expression_sized_cast_identifier_token(
+            getattr(node, "syntax", None)
+        )
+        if token is None:
+            continue
+        target = _sized_cast_target_from_scopes(source_catalog, nodes, token)
+        if target is None:
+            continue
+        add_sized_cast_occurrence(
+            token, target, "expression_sized_cast_type"
+        )
 
     # An overridden parameter's elaborated value no longer exposes references
     # from its source default. Recover only direct typed identifier tokens from
