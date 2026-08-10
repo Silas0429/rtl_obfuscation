@@ -3190,11 +3190,98 @@ def _collect_extended_symbols(
                 source_range = _token_source_range(
                     source_catalog, token, call_record["name"]
                 )
-                if source_range is None:
-                    continue
-                key = (source_range.file, source_range.start, source_range.end)
-                if key not in call_record["occurrence_ranges"]:
-                    add_occurrence(call_record, source_range, "semantic_call")
+                if source_range is not None:
+                    key = (source_range.file, source_range.start, source_range.end)
+                    if key not in call_record["occurrence_ranges"]:
+                        add_occurrence(call_record, source_range, "semantic_call")
+            if (
+                call_record is None
+                or call_record["category"] != "functions"
+                or not isinstance(
+                    getattr(subroutine, "syntax", None),
+                    pyslang.syntax.FunctionDeclarationSyntax,
+                )
+                or not isinstance(
+                    syntax, pyslang.syntax.InvocationExpressionSyntax
+                )
+            ):
+                continue
+            argument_list = getattr(syntax, "arguments", None)
+            if not isinstance(
+                argument_list, pyslang.syntax.ArgumentListSyntax
+            ):
+                continue
+            parameters = tuple(getattr(argument_list, "parameters", ()))
+            argument_nodes = tuple(
+                parameter
+                for parameter in parameters
+                if type(parameter).__name__ != "Token"
+            )
+            named_arguments = tuple(
+                parameter
+                for parameter in argument_nodes
+                if isinstance(parameter, pyslang.syntax.NamedArgumentSyntax)
+            )
+            if not named_arguments:
+                continue
+            if len(named_arguments) != len(argument_nodes) or any(
+                type(parameter).__name__ == "Token"
+                and str(getattr(parameter, "rawText", "")) != ","
+                for parameter in parameters
+            ):
+                continue
+            for named_argument in named_arguments:
+                named_token = getattr(named_argument, "name", None)
+                if named_token is None or bool(
+                    getattr(named_token, "isMissing", False)
+                ):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_SOURCE_INVALID",
+                        "named function argument has no physical identifier token",
+                        file=call_record["declaration"].file,
+                        start=call_record["declaration"].start,
+                    )
+                token_name = str(getattr(named_token, "rawText", ""))
+                formals = tuple(
+                    formal
+                    for formal in getattr(subroutine, "arguments", ())
+                    if str(getattr(formal, "name", "")) == token_name
+                )
+                if len(formals) != 1:
+                    file, offset = _location_start(
+                        source_catalog, getattr(named_token, "location", None)
+                    )
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_OWNER_MISMATCH",
+                        "named function argument does not bind one exact formal",
+                        file=file,
+                        start=offset,
+                    )
+                formal = formals[0]
+                argument_record = record_for_target(formal)
+                formal_declaration = _record_range(source_catalog, formal)
+                if (
+                    argument_record is None
+                    or argument_record["category"] != "arguments"
+                    or argument_record["declaration"] != formal_declaration
+                    or argument_record["owner"] != call_record["owner"]
+                    or argument_record["name"] != token_name
+                ):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_OWNER_MISMATCH",
+                        "named function argument formal does not match its record",
+                        file=formal_declaration.file,
+                        start=formal_declaration.start,
+                    )
+                add_occurrence(
+                    argument_record,
+                    _token_source_range(
+                        source_catalog,
+                        named_token,
+                        argument_record["name"],
+                    ),
+                    "semantic_named_argument",
+                )
         if node_type == "MemberAccessExpression":
             member = getattr(node, "member", None)
             member_name = str(getattr(member, "name", ""))

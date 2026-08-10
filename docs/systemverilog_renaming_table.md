@@ -12,7 +12,7 @@
 | `genvars` | generate-for 使用的 genvar | 是 | 加密 | 加密 |
 | `functions` | function 名称 | 是 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 |
 | `tasks` | task 名称 | 是 | 加密 | 加密 |
-| `arguments` | function 和 task 的参数 | 是 | 加密 | 加密 |
+| `arguments` | function 和 task 的参数 | 是 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 |
 | `instances` | module 实例名称 | 是 | 加密 | 加密 |
 | `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
 | `typedefs` | 普通 typedef 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |

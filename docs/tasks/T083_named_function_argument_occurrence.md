@@ -1,6 +1,6 @@
 # T083：named function argument label 的语义 occurrence 闭合
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.0（2026-08-10）
 - 设计日期：2026-08-10
 - 设计负责人：主 Agent
@@ -494,64 +494,64 @@ formal-policy none，不运行 RISC-V-Vector Formal或 blanket discovery。
 ## 14. Formal verification 记录
 
 ```text
-formal_verification: PASS | FAIL | BLOCKED
+formal_verification: PASS
 gold: tests/fixtures/t083_named_function_argument
-gate: <actual public rtl_encrypt output>
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-positive-3l3jp8rc/encrypt/gate（目标 unittest 生成的 actual public gate）
 top: t083_top
 seq: 5
 public_define: T083_NAMED_ARGUMENT
 positive_yosys_define: none（对称选择 Yosys-supported ordered-call branch）
-positive_command: <exact command>
-positive_exit_code: <integer>
-positive_result: <complete stdout JSON>
-actual_gate_non_identity: lhs/rhs declarations and body references are renamed and parsed by Yosys
-negative_gate: <actual gate copy with only frozen macro-outside `assign base = ~` mutation>
-negative_compile_with_public_define: <catalog/top overlay counts>
-negative_command: <exact command>
-negative_exit_code: <nonzero integer>
-negative_result: <unproven / equiv_status -assert summary>
-named_label_boundary: Yosys cannot parse named function calls; exact labels checked by PySlang strict/edit/restore
+positive_command: `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t083_named_function_argument/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t083_named_function_argument --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-positive-3l3jp8rc/encrypt/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-positive-3l3jp8rc/encrypt/gate --top t083_top --seq 5`
+positive_exit_code: 0
+positive_result: `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-positive-3l3jp8rc/encrypt/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t083_named_function_argument","seq":5,"top":"t083_top"}`
+actual_gate_non_identity: PASS；宏外 lhs/rhs declarations 与 body references 均实际改名，Yosys 读取的是该 actual public gate；每个 renamed argument 在完整 gate source 中出现 3 次
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-negative-jsvk23r2/negative；从 actual gate copy，仅把宏外 `assign base = data_i;` 固定改为 `assign base = ~data_i;`
+negative_compile_with_public_define: catalog 0/0；top overlay 0/0
+negative_command: `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t083_named_function_argument/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t083_named_function_argument --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-negative-jsvk23r2/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-negative-jsvk23r2/negative --top t083_top --seq 5`
+negative_exit_code: 1
+negative_result: PASS；`Found 1 unproven $equiv cells`，`ERROR: Found 1 unproven $equiv cells in 'equiv_status -assert'.`
+named_label_boundary: Yosys cannot parse named function calls；actual public gate 保留并改名 named labels，其 exact identity 由 PySlang strict、同 symbol edits 与 source-free restore 验证
 external_formal: N/A; pinned Ibex uses formal-policy none
 ```
 
 ## 15. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model: pending；不得声称使用当前执行器没有提供的 Luna / standard speed
-starting_head: pending
-allowed_files_check: pending
-baseline: pending
-pre_fix_characterization: pending
-changed_files: pending
-commands: pending
-results: pending
-typed_identity_contract: pending
-compact_oracle: pending
-ibex_replay: pending
-formal_verification: pending
-documentation: pending
-boundaries: pending
-review_request: pending
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前执行器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 0247af98a710c0ea55c030439ea4af3a65d60052；parent=e6db7d7386bc46e69c4fc0220588cf09d784293c；origin/main=d3072b56f86969936441927efdb5dffedcef67ee；branch main ahead 7；start_time=2026-08-10T13:03:13+08:00；启动 worktree clean；唯一活动任务 T083 READY
+allowed_files_check: PASS；允许路径精确为本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t083_named_function_argument.py`、两个 T083 fixture、`docs/systemverilog_renaming_table.md` 与 `docs/development/future_work.md`，启动时无用户修改重叠
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t082_function_end_label tests.test_t076_module_end_label tests.test_vnext_category_closure tests.test_t079_parameter_default_occurrence tests.test_t080_expression_sized_cast_parameter tests.test_t081_enum_lexical_completeness_firewall -v`；exit 0；Ran 49 tests；OK；T076/T079/T080/T081/T082 actual-gate Formal 正例 exit 0、固定功能负例 exit 1
+pre_fix_characterization: PASS；fixture `design.f`=10 bytes/SHA-256 `2bd824b8fab1c3ebc159191ce9f58bbaadd30a5ddbea38fa8a4fcfc4b94d1aea`，`design.sv`=351 bytes/SHA-256 `64a6a7fa56e53a0e65da21530b0a367cd5929051b8de4198acd4f998d5063db0`；compile=0/0+0/0；graph=7/7/8/15；`lhs`=declaration 112..115/body 148..151，`rhs`=declaration 129..132/body 154..157；mapping=7/2/5/0、planned edits=4；exact call API 为 `CallExpression`→`SubroutineSymbol choose`/`FunctionDeclarationSyntax`→`InvocationExpressionSyntax.arguments`=`ArgumentListSyntax`，parameters 是 list `[NamedArgumentSyntax rhs@266, Token comma, NamedArgumentSyntax lhs@278]`，formal declarations 为 lhs@112、rhs@129；public root `/private/tmp/t083-pre-fix.BwcfvA`，encrypt exit 1=`CLI_VNEXT_ORCHESTRATION_INVALID`，gate absent
+changed_files: PASS；仅修改合同第 12 节七个允许路径：本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t083_named_function_argument.py`、两个冻结 fixture、renaming table、future work；无允许列表外修改
+commands: PASS；执行冻结 baseline、fixture/API/pre-fix probes、目标 unittest；按第 13 节逐条执行实现后五项验收，其中 external block 使用 fresh `/private/tmp/t083-ibex-replay.yWoWIU`；未运行 blanket discovery、历史 driver 或 RISC-V-Vector Formal
+results: PASS；最终 target+regression exit 0，Ran 58 tests，OK；`py_compile` exit 0；external 两条 `jq -e` 均输出 true；`git diff --check HEAD` exit 0；精确 READY_FOR_REVIEW guard exit 0 并输出唯一匹配状态行
+typed_identity_contract: PASS；仅在现有 semantic `CallExpression` pass 内处理 exact function record、`FunctionDeclarationSyntax`、`InvocationExpressionSyntax`、`ArgumentListSyntax` 和 direct `NamedArgumentSyntax`；按 token rawText 在 exact `subroutine.arguments` 中要求唯一 formal，再由 formal declaration identity 命中同 owner 的既有 `arguments` record；未使用 actual expression、syntax position、scope/global lookup 或文本扫描；call-name macro/None 分支不再提前跳过 named-label 审计
+compact_oracle: PASS；compile=0/0+0/0；graph=7 symbols/7 declarations/10 occurrences/17 total ranges；mapping=7 total/2 rename/5 preserve/0 unsupported；6 actual edits；lhs=112..115/148..151/278..281，rhs=129..132/154..157/266..269，各自 declaration/body/`semantic_named_argument` 三个 edits 同 symbol_id/renamed_name；public summary files=1/mapping=7/modified_tokens=6/strict=true/restore=true；source-free restore 仅输出 `design.sv` 且逐字节一致
+ibex_replay: PASS；证据根 `/private/tmp/t083-ibex-replay.yWoWIU`；stability=`b99f5e43128964cc78a5c123a31f84e46df76934`、Ibex=`3250d99482f1963891ef1cf19356eeaeeaa71d30`，前后均 clean；`non_abi__arguments`=`PASS_EFFECTIVE`，45 files/3129 records/236 rename/2384 preserve/509 unsupported/1378 modified tokens，34 个 `semantic_named_argument`，strict=true、gate published、decrypt exit 0、45-file restore byte-identical；Formal=`FORMAL_NOT_RUN`；rlist labels=2420..2425/4809..4814，spimm labels=2435..2440/4824..4829，两个 `mapping_execution` records 均含 declaration、existing reference、两个 named labels，所有 ranges 使用各自同一 renamed name
+formal_verification: PASS；完整 gold/gate/top/seq/命令/exit/JSON 与固定负例见第 14 节；正例 actual renamed gate exit 0/`formal_equivalence=pass`；固定 `~` 负例带 public define strict 0/0+0/0 后 Formal exit 1，1 个 unproven，`equiv_status -assert` 生效
+documentation: PASS；`arguments` 行说明 ordinary physical function declaration/body/named-call label 同名改写及 task/method/macro 边界；future work 记录 exact semantic binding、Yosys named-call 边界和 task/method/macro/DPI/system 未支持形状；README 未修改
+boundaries: ordered calls 不制造 label occurrence；task/system 路径不进入 T083；class/method 仍停在现有 catalog/source-owner 边界；macro label 不产生物理 occurrence/edit且由现有 quarantine 保护；DPI/import/export/randomize/constructor、mixed/unknown syntax、generic resolver、name/position/text fallback 均未扩展；Yosys 不解析 named calls，label 一致性只由 actual-gate PySlang strict、exact edit identity 与 byte-identical restore 证明；Ibex formal-policy none，未声称 external Formal 等价
+review_request: READY_FOR_REVIEW；等待主 Agent 独立复验，不得由子 Agent 设置 ACCEPTED
 ```
 
 ## 16. 主 Agent 验收
 
 ```text
-review_date: pending
+review_date: 2026-08-10
 reviewer: 主 Agent
-allowed_files: pending
-implementation_review: pending
-target_and_regression: pending
-compact_oracle: pending
-ibex_replay: pending
-formal_positive: pending
-formal_negative: pending
+allowed_files: PASS；`git status --porcelain=v1 -uall` 精确只有合同第 12 节七个允许路径，无 staged 或允许列表外修改
+implementation_review: PASS；产品只在现有 semantic CallExpression pass 内，从 exact function record、FunctionDeclarationSyntax、direct NamedArgumentSyntax 和 exact FormalArgumentSymbol declaration/owner identity 绑定既有 arguments record；无 positional zip、scope/global lookup、raw text resolver、task/method 或 policy/mapping/rewrite 特例
+target_and_regression: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t083_named_function_argument tests.test_t082_function_end_label tests.test_t076_module_end_label tests.test_vnext_category_closure tests.test_t079_parameter_default_occurrence tests.test_t080_expression_sized_cast_parameter tests.test_t081_enum_lexical_completeness_firewall -v`；exit 0；Ran 58 tests；OK
+compact_oracle: PASS；graph=7/7/10/17，mapping=7 total/2 rename/5 preserve/0 unsupported，6 actual edits；lhs/rhs 各 declaration、body reference、named label 使用同一 symbol_id/renamed_name；public strict 0/0+0/0，source-free restore 1 file byte-identical
+ibex_replay: PASS；主 Agent fresh root `/private/tmp/t083-main-ibex-replay.4gebRj`；stability/Ibex pin 前后 clean；non_abi__arguments=PASS_EFFECTIVE，45 files、3129 records、236 rename/2384 preserve/509 unsupported、1378 modified tokens、34 个 semantic_named_argument；strict/gate/decrypt/45-file byte restore 全通过；两条冻结 jq oracle=true
+formal_positive: PASS；主 Agent actual renamed public gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-positive-ekntarhu/encrypt/gate`；top=t083_top，seq=5，exit 0，完整 JSON `formal_equivalence=pass`；宏外 lhs/rhs declaration/body references 均实际改名，不是 identity/copy-gold
+formal_negative: PASS as expected negative；主 Agent actual-gate copy `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t083-formal-negative-qs083gw8/negative`；只把冻结 `assign base = data_i;` 改为 `assign base = ~data_i;`；public strict compile 0/0+0/0，Formal exit 1，1 个 unproven，`equiv_status -assert` 生效
 external_formal: N/A; formal-policy none
-py_compile: pending
-diff_check: pending
-ready_for_review_guard: pending
-decision: pending
-delivery_commit: pending
-push: forbidden without a new explicit user authorization beyond d3072b5
+py_compile: PASS；合同第 13 节命令 exit 0
+diff_check: PASS；`git diff --check HEAD` exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+decision: ACCEPTED；只改名由 exact semantic callee、唯一 formal declaration/owner identity 与 direct physical label token 共同证明的 function argument；证据不足继续 fail-closed，符合“宁可少加密、不能加密错误”
+delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
+push: NOT_RUN；此前授权只覆盖 b97b323..d3072b5，等待对本次新交付的明确授权
 ```

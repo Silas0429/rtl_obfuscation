@@ -73,6 +73,14 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   checker/generate closing label、宏生成 label、extern/DPI/prototype 和 source-text recovery 仍不支持；
   Yosys 当前无法读取合法的 function closing-label 语法，因此该 label 的字节正确性由 PySlang strict、
   同 symbol edit 与 source-free restore 证明，Formal 只覆盖不启用 label 宏的 actual renamed gate。
+- T083 已支持普通物理 function call 的 direct named-argument label：只从 exact semantic
+  `CallExpression.subroutine`、该 function 的唯一同名 `FormalArgumentSymbol` declaration identity 和
+  direct `InvocationExpressionSyntax.arguments`/`NamedArgumentSyntax.name` 共同绑定既有 `arguments`
+  record，并记录 `semantic_named_argument`；不会把 actual expressions、syntax position 或全局同名对象
+  当作 formal。task/method/class/DPI/system/randomize、宏生成或 mixed/unknown named-call 形状仍不支持，
+  无 exact callee/formal/owner/range 时继续 fail-closed。Yosys 当前不能解析 named function calls，因此
+  named label 由 actual-gate PySlang strict、同 symbol edit 和 source-free restore 验证；Formal 只覆盖
+  不启用 named-call 宏的 actual renamed ordered-call branch。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。
