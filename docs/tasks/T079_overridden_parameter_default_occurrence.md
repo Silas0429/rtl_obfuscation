@@ -1,6 +1,6 @@
 # T079：被实例覆盖的参数默认值引用精确绑定
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 合同版本：1.1（2026-08-10 post-acceptance rework）
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
@@ -704,44 +704,62 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' \
 ### 14.8 v1.1 子 Agent rework 记录
 
 ```text
-status: pending
-actual_model:
-starting_head:
-allowed_files_check:
-baseline:
-pre_fix_pattern_key:
-changed_files:
-commands:
-results:
-syntax_role_contract:
-compact_oracle:
-ibex_replay:
-serv_replay:
-formal_verification:
-boundaries:
-review_request:
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 8c56971c5a7dcf3f22cb8fabb57f2fbb8304b56c；parent=b97b323ed1438870f60c92df5cdb08d661627dc0；origin/main=e402cdfb3c7fa31c9096bd50b01ee84342b174d5；branch main ahead 2；start_time=2026-08-10T10:20:59+0800
+allowed_files_check: PASS；worktree clean；唯一活动任务 T079 READY；v1.1 只允许任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t079_parameter_default_occurrence.py`、`docs/development/future_work.md` 四个路径；第 3 节 fixture 只读
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t079_parameter_default_occurrence tests.test_symbol_graph_parameters tests.test_t069_sized_cast_parameter tests.test_t071_type_parameter_defparam -v`；exit 0；Ran 41 tests；OK；compact/T069/T071 actual-gate Formal 正例 exit 0、固定负例 exit 1
+pre_fix_pattern_key: PASS；临时 source `/private/tmp/t079-v11-prefx.10Aug2026-1024`；catalog/top overlay 0/0 + 0/0；`RESET` 是 `ParameterSymbol -> DeclaratorSyntax -> EqualsValueClauseSyntax`；candidate `mie` 是 `IdentifierNameSyntax`，direct parent=`AssignmentPatternItemSyntax`，parent.key=`IdentifierNameSyntax`，candidate/key token buffer 相同、offset=140 相同、rawText=`mie` 相同；parent.expr=`IdentifierNameSyntax(WIDTH)`；`RESET.parentScope.lookupName("mie") is None`；现产品 graph 原子失败 `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE: scope-bound identifier has no semantic target`
+changed_files: 仅第 14.4 节四个路径：本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t079_parameter_default_occurrence.py`、`docs/development/future_work.md`；第 3 节 fixture 与其他仓库文件零修改
+commands: 开始 baseline 见上；产品修改前临时 typed API/root-cause probe；开发期目标 unittest；实现后严格执行第 14.7 节五条验收：43-test target+parameter regression、同一 external block 内 pinned Ibex+SERV replay、py_compile、`git diff --check HEAD`、精确 READY_FOR_REVIEW guard；未运行 blanket discovery、历史 driver、RISC-V-Vector Formal 或 riscv-dbg expression-sized cast
+results: PASS；目标+回归 exit 0，Ran 43 tests，OK；Ibex/SERV jq oracle 均 true；py_compile exit 0；diff check exit 0；READY_FOR_REVIEW guard exit 0；finish_time=2026-08-10T10:27:47+0800
+syntax_role_contract: 仅当 candidate direct parent 精确为 `AssignmentPatternItemSyntax`、`parent.key` 精确为 `IdentifierNameSyntax`，且 key/candidate identifier token 的 buffer、offset、rawText 全部一致时跳过并不调用 `_scope_lookup_target()`；value-side WIDTH 仍调用 exact lookup，唯一 occurrence 保持 `semantic_expression`，key 不进入 parameter range/edit；构造的非-key lookup failure 仍原样抛出 `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE`
+compact_oracle: PASS 且 v1.0 不变；fixture bytes/hash 全部通过；graph 19/19/26/45，parameter 6 records/8 occurrences，唯一新增 default `child.sv:88..98 -> COMPRESSED 41..51`；mapping 19/6/13/0、14 edits；public strict/restore pass；T069 sized-cast 与 T071 type-parameter/defparam 回归通过
+ibex_replay: PASS；fresh root `/private/tmp/t079-v11-replay.16vWU3`；stability b99f5e43128964cc78a5c123a31f84e46df76934、Ibex 3250d99482f1963891ef1cf19356eeaeeaa71d30 前后 clean；`abi__parameters=PASS_EFFECTIVE`，150 rename、3129 records、817 edits、45 files，strict=true、gate published、decrypt exit 0、restore 45 files byte-identical；formal-policy none，`FORMAL_NOT_RUN`，未声称等价
+serv_replay: PASS；同一 fresh root；SERV 41e8aeedfd1e9ad5f95902c5b0dfc83d1c99e5d2 前后 clean；`abi__parameters=PASS_EFFECTIVE`，59 rename、726 records、421 edits、17 files，strict/gate/decrypt/restore pass；actual-gate Formal top=serv_rf_top seq=5 exit 0，`{"formal_equivalence":"pass","gate":"/private/tmp/t079-v11-replay.16vWU3/serv-matrix/abi__parameters/gate","gold":"/private/tmp/t079-v11-replay.16vWU3/serv-source","seq":5,"top":"serv_rf_top"}`
+formal_verification: PASS；目标 unittest 内 compact actual public gate top=t079_top seq=5 正例 exit 0，`{"formal_equivalence":"pass","gate":".../t079-formal-positive-hvym2mwo/encrypt/gate","gold":"tests/fixtures/t079_parameter_default","seq":5,"top":"t079_top"}`；固定单处 `assign data_o = ~` 负例 strict 0/0 + 0/0、Formal exit 1 且含 `unproven` 与 `equiv_status -assert`；未使用 identity/copy-gold，未降低证明强度
+boundaries: 这只排除 parameter initializer 内 exact assignment-pattern key 语法角色，不增加 `struct_fields` occurrence，不修 enum/function/argument、CV32E40P/AXI 或 riscv-dbg expression-sized cast；非-key unresolved identifier、owner/range conflict 与其他无法证明形状仍 fail-closed；API/schema/category/policy/mapping/rewrite/restore/CLI/Formal 均不变
+review_request: READY_FOR_REVIEW；请主 Agent 独立执行第 14.7 节五条验收并审查 exact typed identity；子 Agent 未 stage/commit/push，未设置 ACCEPTED，未创建 T080
 ```
 
 ### 14.9 v1.1 主 Agent重新验收
 
 ```text
-review_date: pending
+review_date: 2026-08-10
 reviewer: 主 Agent
-starting_head:
-allowed_files:
-implementation_review:
-target_and_regression:
-compact_oracle:
-ibex_replay:
-serv_replay:
-formal_positive:
-formal_negative:
-external_formal:
-py_compile:
-diff_check:
-ready_for_review_guard:
-decision: pending
-delivery_commit: pending
+starting_head: 8c56971c5a7dcf3f22cb8fabb57f2fbb8304b56c；parent=b97b323；origin/main=e402cdf；worktree 在 rework 前 clean
+allowed_files: PASS；最终 diff 精确为第 14.4 节四个路径；第 3 节 fixture 与允许列表外文件零修改
+implementation_review: PASS；产品新增 13 行 exact syntax-role guard：candidate direct parent 必须为
+  AssignmentPatternItemSyntax、parent.key 必须为 IdentifierNameSyntax，且 key/candidate token 的
+  buffer/offset/rawText 全相同才跳过；没有捕获或放松其他 lookup failure，无 schema/category/policy/
+  mapping/rewrite/restore/CLI/Formal 变化
+target_and_regression: PASS；第 14.7 节合并 unittest exit 0；Ran 43 tests；OK
+compact_oracle: PASS；assignment-pattern key 不调用 parameter lookup、无 parameter range/edit；value-side
+  WIDTH 继续 exact lookup 且唯一 provenance=semantic_expression；人工 non-key lookup failure 仍为
+  SYMBOL_GRAPH_UNSUPPORTED_REFERENCE；v1.0 compact 19/19/26/45、mapping 19/6/13/0、14 edits、
+  strict/restore 不变；T069/T071 回归通过
+ibex_replay: PASS；Main-Agent fresh root=/private/tmp/t079-v11-main-replay.T8ZUgV；stability
+  b99f5e43128964cc78a5c123a31f84e46df76934，Ibex
+  3250d99482f1963891ef1cf19356eeaeeaa71d30；abi__parameters=PASS_EFFECTIVE，150 rename、3129
+  records、817 edits、45 files，strict/gate/decrypt/restore 全通过；FORMAL_NOT_RUN，未声称等价
+serv_replay: PASS；同一 fresh root；SERV 41e8aeedfd1e9ad5f95902c5b0dfc83d1c99e5d2；
+  abi__parameters=PASS_EFFECTIVE，59 rename、726 records、421 edits、17 files，strict/gate/decrypt/
+  restore 全通过；三个只读仓库 replay 前后 clean
+formal_positive: PASS；Main-Agent compact actual public gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t079-formal-positive-0hqah9i4/encrypt/gate；
+  top=t079_top；seq=5；exit 0；complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative；Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t079-formal-negative-x8udf6t1/negative；只含冻结
+  `assign data_o = ~` 变更；strict compile 0/0 + 0/0；exit 1；目标断言匹配 `unproven` 与
+  `equiv_status -assert`
+external_formal: PASS；SERV actual gate；top=serv_rf_top；seq=5；exit 0；FORMAL_PASS；complete JSON
+  formal_equivalence=pass；timed_out=false
+py_compile: PASS；第 14.7 节命令 exit 0
+diff_check: PASS；git diff --check HEAD exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+decision: ACCEPTED；v1.1 精确消除 T079 assignment-pattern key 回归，同时保持“只改可证明参数引用、
+  其余 fail-closed”的稳健加密边界
+delivery_commit: current corrective acceptance commit；必须与本地 b97b323、8c56971 一并交付
 push: blocked until explicit user authorization
 successor: forbidden before corrected T079 delivery
 ```

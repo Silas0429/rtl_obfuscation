@@ -51,9 +51,11 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   direct identifier sized-cast 已支持；enum/base dimension 与 **expression-sized cast** 仍可能漏收集。
 - T079 已支持被 instance override 替换 semantic value 的 module value/local parameter 默认
   initializer direct identifier：只遍历精确 `DeclaratorSyntax.initializer` typed subtree，并用
-  declaration `parentScope.lookupName()` 绑定到已有 parameter record。type/package/class parameter、
-  macro default、hierarchical/scoped name 和普通 syntax text recovery 仍不支持；同一物理 range 若绑定
-  到不同 parameter target 则继续原子失败。
+  declaration `parentScope.lookupName()` 绑定到已有 parameter record。v1.1 仅凭 direct parent、
+  `parent.key` 及 token buffer/offset/rawText identity 排除 structured assignment-pattern member key；
+  value-side identifier 仍走精确 parameter binding，这不代表支持 `struct_fields` 改名。type/package/class
+  parameter、macro default、hierarchical/scoped name 和普通 syntax text recovery 仍不支持；同一物理
+  range 若绑定到不同 parameter target 则继续原子失败。
 - **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
   精确绑定时继续原子失败。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner

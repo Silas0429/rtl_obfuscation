@@ -17,6 +17,7 @@ from rtl_obfuscator import source_catalog as source_catalog_module
 from rtl_obfuscator import symbol_graph as symbol_graph_module
 from rtl_obfuscator.mapping_vnext import build_mapping_vnext
 from rtl_obfuscator.rewrite_policy import build_rewrite_policy
+from rtl_obfuscator.rewrite_vnext import write_gate_vnext
 from rtl_obfuscator.source_catalog import build_source_catalog
 from rtl_obfuscator.source_set import from_filelist
 from rtl_obfuscator.symbol_graph import SymbolGraphError, build_symbol_graph
@@ -45,6 +46,48 @@ def _deterministic_factory(
 
 
 class T079ParameterDefaultOccurrenceTests(unittest.TestCase):
+    @staticmethod
+    def _write_pattern_key_source(root: Path):
+        source = b"""module t079_pattern_key;
+    typedef struct packed { logic mie; } status_t;
+    localparam int WIDTH = 1;
+    localparam status_t RESET = '{mie: WIDTH};
+    logic sink;
+    assign sink = RESET.mie;
+endmodule
+"""
+        (root / "pattern_key.sv").write_bytes(source)
+        (root / "design.f").write_bytes(b"pattern_key.sv\n")
+        source_set = from_filelist(
+            filelist=root / "design.f",
+            source_root=root,
+            top="t079_pattern_key",
+        )
+        catalog = build_source_catalog(source_set)
+        nodes = []
+        catalog.catalog_root.visit(nodes.append)
+        reset = next(
+            node
+            for node in nodes
+            if getattr(node, "kind", None) == pyslang.ast.SymbolKind.Parameter
+            and str(getattr(node, "name", "")) == "RESET"
+        )
+        initializer_nodes = []
+        reset.syntax.initializer.visit(initializer_nodes.append)
+        key = next(
+            node
+            for node in initializer_nodes
+            if type(node).__name__ == "IdentifierNameSyntax"
+            and str(node.identifier.rawText) == "mie"
+        )
+        value = next(
+            node
+            for node in initializer_nodes
+            if type(node).__name__ == "IdentifierNameSyntax"
+            and str(node.identifier.rawText) == "WIDTH"
+        )
+        return source, source_set, catalog, key, value
+
     @staticmethod
     def _source_set(root: Path = FIXTURE_ROOT, top: str = "t079_top"):
         return from_filelist(
@@ -400,6 +443,146 @@ endmodule
             self.assertGreaterEqual(hits, 2)
             self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_RANGE_CONFLICT")
             self.assertEqual((raised.exception.file, raised.exception.start), ("conflict.sv", token_offset))
+
+    def test_assignment_pattern_key_skips_lookup_and_value_binding_remains_exact(self):
+        with tempfile.TemporaryDirectory(prefix="t079-pattern-key-") as temporary:
+            root = Path(temporary)
+            source_root = root / "source"
+            source_root.mkdir()
+            source, _source_set, catalog, key, value = self._write_pattern_key_source(source_root)
+            parent = key.parent
+            parent_key = parent.key
+            self.assertEqual(type(parent).__name__, "AssignmentPatternItemSyntax")
+            self.assertEqual(type(parent_key).__name__, "IdentifierNameSyntax")
+            self.assertEqual(type(parent.expr).__name__, "IdentifierNameSyntax")
+            self.assertEqual(parent.expr.identifier.rawText, "WIDTH")
+            self.assertEqual(
+                (
+                    parent_key.identifier.location.buffer,
+                    int(parent_key.identifier.location.offset),
+                    str(parent_key.identifier.rawText),
+                ),
+                (
+                    key.identifier.location.buffer,
+                    int(key.identifier.location.offset),
+                    str(key.identifier.rawText),
+                ),
+            )
+            key_range = (
+                "pattern_key.sv",
+                int(key.identifier.location.offset),
+                int(key.identifier.location.offset) + len(b"mie"),
+            )
+            value_range = (
+                "pattern_key.sv",
+                int(value.identifier.location.offset),
+                int(value.identifier.location.offset) + len(b"WIDTH"),
+            )
+            original_lookup = symbol_graph_module._scope_lookup_target
+            lookup_tokens = []
+
+            def observed_lookup(scope, token):
+                lookup_tokens.append(
+                    (
+                        str(getattr(token, "rawText", "")),
+                        int(getattr(token.location, "offset", -1)),
+                    )
+                )
+                return original_lookup(scope, token)
+
+            with mock.patch.object(
+                symbol_graph_module,
+                "_scope_lookup_target",
+                side_effect=observed_lookup,
+            ):
+                graph = build_symbol_graph(catalog)
+            self.assertNotIn(("mie", key_range[1]), lookup_tokens)
+            self.assertIn(("WIDTH", value_range[1]), lookup_tokens)
+
+            parameters = [
+                symbol for symbol in graph.symbols
+                if symbol.category == "parameters"
+            ]
+            parameter_ranges = [
+                (
+                    symbol.declaration.file,
+                    symbol.declaration.start,
+                    symbol.declaration.end,
+                    "declaration",
+                )
+                for symbol in parameters
+            ] + [
+                (
+                    occurrence.source_range.file,
+                    occurrence.source_range.start,
+                    occurrence.source_range.end,
+                    occurrence.provenance,
+                )
+                for symbol in parameters
+                for occurrence in symbol.occurrences
+            ]
+            self.assertFalse(any(item[:3] == key_range for item in parameter_ranges))
+            value_occurrences = [
+                item for item in parameter_ranges if item[:3] == value_range
+            ]
+            self.assertEqual(value_occurrences, [(*value_range, "semantic_expression")])
+
+            policy = build_rewrite_policy(
+                graph,
+                categories=("parameters",),
+                abi_categories=("parameters",),
+            )
+            mapping = build_mapping_vnext(
+                policy,
+                name_length=16,
+                name_factory=_deterministic_factory,
+            )
+            execution = write_gate_vnext(mapping, output_dir=root / "gate")
+            self.assertFalse(
+                any(
+                    (
+                        edit.source_range.file,
+                        edit.source_range.start,
+                        edit.source_range.end,
+                    ) == key_range
+                    for edit in execution.edits
+                )
+            )
+            self.assertEqual(source[key_range[1]:key_range[2]], b"mie")
+
+    def test_non_key_initializer_lookup_failure_remains_fail_closed(self):
+        with tempfile.TemporaryDirectory(prefix="t079-pattern-value-failure-") as temporary:
+            root = Path(temporary)
+            _source, _source_set, catalog, key, value = self._write_pattern_key_source(root)
+            original_lookup = symbol_graph_module._scope_lookup_target
+
+            def unresolved_value(scope, token):
+                raw = str(getattr(token, "rawText", ""))
+                if raw == "mie":
+                    raise AssertionError("assignment-pattern key reached lexical lookup")
+                if (
+                    raw == "WIDTH"
+                    and int(getattr(token.location, "offset", -1))
+                    == int(value.identifier.location.offset)
+                ):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE",
+                        "scope-bound identifier has no semantic target",
+                    )
+                return original_lookup(scope, token)
+
+            with mock.patch.object(
+                symbol_graph_module,
+                "_scope_lookup_target",
+                side_effect=unresolved_value,
+            ), self.assertRaises(SymbolGraphError) as raised:
+                build_symbol_graph(catalog)
+            self.assertEqual(type(key.parent).__name__, "AssignmentPatternItemSyntax")
+            self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_REFERENCE")
+            self.assertEqual(
+                raised.exception.message,
+                "scope-bound identifier has no semantic target",
+            )
 
 
 if __name__ == "__main__":

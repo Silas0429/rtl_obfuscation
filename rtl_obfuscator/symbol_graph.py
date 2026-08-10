@@ -1619,6 +1619,19 @@ def _collect_parameter_symbols(
             location = getattr(token, "location", None)
             if not name or location is None:
                 continue
+            parent = getattr(syntax_node, "parent", None)
+            parent_key = getattr(parent, "key", None)
+            key_token = getattr(parent_key, "identifier", None)
+            key_location = getattr(key_token, "location", None)
+            if (
+                type(parent).__name__ == "AssignmentPatternItemSyntax"
+                and type(parent_key).__name__ == "IdentifierNameSyntax"
+                and key_location is not None
+                and key_location.buffer == location.buffer
+                and int(key_location.offset) == int(location.offset)
+                and str(getattr(key_token, "rawText", "")) == name
+            ):
+                continue
             target = _scope_lookup_target(scope, token)
             target_key = _parameter_source_key(source_catalog, target)
             if target_key is None or target_key in genvar_keys:
