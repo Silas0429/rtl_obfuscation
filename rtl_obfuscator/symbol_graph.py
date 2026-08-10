@@ -2858,6 +2858,27 @@ def _collect_extended_symbols(
         )
         add_target(node, function_record)
         add_target(getattr(node, "returnValVar", None), function_record)
+        syntax = getattr(node, "syntax", None)
+        if category == "functions" and isinstance(
+            syntax, pyslang.syntax.FunctionDeclarationSyntax
+        ):
+            end_block_name = getattr(syntax, "endBlockName", None)
+            if end_block_name is not None:
+                token = getattr(end_block_name, "name", None)
+                if token is None or bool(getattr(token, "isMissing", False)):
+                    raise SymbolGraphError(
+                        "SYMBOL_GRAPH_SOURCE_INVALID",
+                        "function closing label has no physical identifier token",
+                        file=declaration.file,
+                        start=declaration.start,
+                    )
+                add_occurrence(
+                    function_record,
+                    _token_source_range(
+                        source_catalog, token, function_record["name"]
+                    ),
+                    "semantic_function_end_label",
+                )
         prototype = getattr(getattr(node, "syntax", None), "prototype", None)
         return_type = getattr(prototype, "returnType", None)
         return_token = getattr(

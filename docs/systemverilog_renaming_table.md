@@ -10,7 +10,7 @@
 | `parameters` | parameter、localparam 和 generate 参数 | 是 | 加密只在 module 内部使用的参数 | 跨 module 使用的参数及引用会一致改名 |
 | `enum_values` | 枚举值；仅在原始词法 token 与语义 ranges 完整一致时加密，覆盖不完整的单条枚举值保留 | 是 | 加密 | 加密 |
 | `genvars` | generate-for 使用的 genvar | 是 | 加密 | 加密 |
-| `functions` | function 名称 | 是 | 加密 | 加密 |
+| `functions` | function 名称 | 是 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 |
 | `tasks` | task 名称 | 是 | 加密 | 加密 |
 | `arguments` | function 和 task 的参数 | 是 | 加密 | 加密 |
 | `instances` | module 实例名称 | 是 | 加密 | 加密 |

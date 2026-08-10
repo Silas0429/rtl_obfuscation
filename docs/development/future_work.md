@@ -66,6 +66,13 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   覆盖不完整的单条 record 使用 `enum_lexical_coverage_incomplete` 原子禁用全部 edit。raw inventory
   故意包含 comments、strings、宏与 disabled text，可能保守减少加密，但不会据此猜测语义 target 或
   补 lexical occurrence；generic enum reference recovery 仍不支持。
+- T082 已支持普通物理 function 的直接 closing label `endfunction : name`：只从同一 semantic
+  `SubroutineSymbol` 的 exact `FunctionDeclarationSyntax.endBlockName.name` 取得非 missing 物理 token，
+  并以 `semantic_function_end_label` 加入既有 `functions` record；没有 label 不新增 occurrence，名称、
+  range 或 record ownership 证据不完整时继续 fail-closed。task、method、class/interface/package/program/
+  checker/generate closing label、宏生成 label、extern/DPI/prototype 和 source-text recovery 仍不支持；
+  Yosys 当前无法读取合法的 function closing-label 语法，因此该 label 的字节正确性由 PySlang strict、
+  同 symbol edit 与 source-free restore 证明，Formal 只覆盖不启用 label 宏的 actual renamed gate。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。
