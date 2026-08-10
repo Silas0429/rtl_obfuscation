@@ -1,7 +1,7 @@
 # T079：被实例覆盖的参数默认值引用精确绑定
 
-- 状态：`ACCEPTED`
-- 合同版本：1.0
+- 状态：`READY`
+- 合同版本：1.1（2026-08-10 post-acceptance rework）
 - 设计日期：2026-08-07
 - 设计负责人：主 Agent
 - 实现负责人：代码子 Agent（请求模型：Luna extra high / standard speed；当前执行器无 Luna，实际配置必须如实记录）
@@ -461,9 +461,287 @@ delivery_resume_recheck: PASS；2026-08-10 从未暂存 ACCEPTED 工作区恢复
   e402cdfb3c7fa31c9096bd50b01ee84342b174d5；重新运行 41 tests exit 0，compact actual-gate Formal
   正例 exit 0/负例 exit 1；fresh SERV replay=/private/tmp/t079-resume-serv.Q4g3BE，59 rename、421 edits、
   restore byte-identical、FORMAL_PASS；git diff --check HEAD 通过，无用户或外部仓库漂移
-decision: ACCEPTED；T079 在不减少 rename 范围的前提下补齐被 override 默认值的物理 parameter
-  reference，compact 与 pinned SERV 均 strict/restore/Formal 闭环
+decision: WITHDRAWN 2026-08-10；第 14 节扩大 category-neutral Ibex 复测证明 v1.0 initializer
+  traversal 错把 assignment-pattern key 当成参数引用；不得推送当前实现，必须完成 v1.1 rework
 delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
-push: pending current acceptance commit
-successor: 主 Agent 只在本 acceptance commit 推送后决定下一任务
+push: NOT_RUN；本地提交 b97b323ed1438870f60c92df5cdb08d661627dc0 未推送且不得单独推送
+successor: 禁止创建；必须先完成第 14 节、重新验收并形成纠正提交
+```
+
+## 14. v1.1 post-acceptance rework：assignment-pattern key 语法角色防火墙
+
+### 14.1 否决依据与起始状态
+
+2026-08-10 主 Agent 在推送前扩大 category-neutral 真实工程复测，推翻第 13 节完成判断：
+
+```text
+local HEAD: b97b323ed1438870f60c92df5cdb08d661627dc0
+origin/main: e402cdfb3c7fa31c9096bd50b01ee84342b174d5
+branch: main ahead 1
+worktree: clean
+remote push: never performed
+active implementation tasks: T079 v1.1 is the only READY task
+```
+
+Ibex 任意 profile 在 category/policy/mapping 之前共享失败：
+
+```text
+error: SYMBOL_GRAPH_UNSUPPORTED_REFERENCE
+message: scope-bound identifier has no semantic target
+file/range: rtl/ibex_cs_registers.sv:34842..34845
+token: mie
+source shape: localparam status_t MSTATUS_RST_VAL = '{mie: 1'b0, ...};
+semantic parameter: MSTATUS_RST_VAL, isLocalParam=true
+parentScope.lookupName("mie"): None
+record/action/edit: N/A; SymbolGraph 未发布
+```
+
+`mie` 不是参数 expression reference，而是 structured assignment pattern 的 member key。v1.0 对
+initializer subtree 中所有 `IdentifierNameSyntax` 无条件调用 `_scope_lookup_target()`，因此引入了
+category-neutral graph regression。
+
+冻结 PySlang typed API：
+
+```text
+IdentifierNameSyntax(token=mie)
+  parent -> AssignmentPatternItemSyntax
+  parent.key -> IdentifierNameSyntax(token=mie)
+  parent.colon -> Token
+  parent.expr -> IntegerVectorExpressionSyntax
+parent chain:
+  AssignmentPatternItemSyntax
+  -> StructuredAssignmentPatternSyntax
+  -> AssignmentPatternExpressionSyntax
+  -> EqualsValueClauseSyntax
+  -> DeclaratorSyntax
+  -> ParameterDeclarationSyntax
+```
+
+`parent.key.identifier.location` 与 candidate token 的 buffer/offset/rawText 精确相同。只读 runtime
+模拟仅跳过这种 exact key 后，Ibex `abi__parameters` 得到：
+
+```text
+graph symbols/declarations/occurrences/total_ranges: 3129/3129/11391/14520
+mapping total/rename/preserve/unsupported: 3129/150/2556/423
+parameter records: 213
+modified_tokens: 817
+strict compile: catalog/top overlay 0/0 + 0/0
+physical files: 45
+```
+
+这不是 `struct_fields` 支持证据。Ibex `struct_fields`、`enum_values`、`functions`、`arguments` 仍有各自
+独立 reference 缺口，必须留给后继任务；v1.1 只消除 T079 自身错误解析。
+
+### 14.2 唯一修复目标
+
+在 T079 initializer recovery 内，只有同时满足以下 typed identity 时，跳过 candidate 且绝不调用
+lexical parameter lookup：
+
+1. candidate 是 `IdentifierNameSyntax`；
+2. candidate 的 direct parent 精确为 `AssignmentPatternItemSyntax`；
+3. `parent.key` 精确为 `IdentifierNameSyntax`；
+4. `parent.key.identifier` 与 candidate identifier 的 physical buffer、offset、rawText 精确一致。
+
+同一 `AssignmentPatternItemSyntax.expr` 中的 `IdentifierNameSyntax` 不是 key，必须继续走 T079 exact
+`parentScope.lookupName()`、module value/local parameter record、macro/location/range/conflict 审计。例如：
+
+```systemverilog
+localparam int WIDTH = 1;
+localparam status_t RESET = '{mie: WIDTH};
+```
+
+`mie` 必须零 parameter occurrence；`WIDTH` 必须保持/新增 exact parameter occurrence。除上述 exact
+key 角色外，unresolved initializer identifier 必须维持现有 fail-closed，不得把 lookup failure 全局改为
+`continue`，不得按名称、拼写或 `lookupName(None)` 猜测 member。
+
+### 14.3 明确不包含
+
+- 不为 `struct_fields` 建立 assignment-pattern key occurrence，不改写 `mie/uie`；
+- 不修 Ibex enum closing/reference、function end label、named call argument；
+- 不修 CV32E40P package-qualified typedef/member 或 AXI type-parameter actual；
+- 不修 riscv-dbg `$clog2(RomSize)'(...)` expression-sized cast；
+- 不改变 API/schema/category/policy/mapping/rewrite/restore/CLI/Formal；
+- 不修改第 3 节冻结 fixture bytes/hash；
+- 不运行 RISC-V-Vector Formal、blanket discovery 或历史 acceptance driver。
+
+### 14.4 v1.1 允许修改
+
+```text
+docs/tasks/T079_overridden_parameter_default_occurrence.md
+rtl_obfuscator/symbol_graph.py
+tests/test_t079_parameter_default_occurrence.py
+docs/development/future_work.md
+```
+
+第 3 节四个 fixture 只读，其他仓库文件、stability repo、Ibex/SERV checkout 全部不得修改。所有临时
+source、gate、restore、matrix 和 log 只能写入新 `/private/tmp` 或测试临时目录。
+
+### 14.5 v1.1 machine oracle
+
+目标测试必须新增最小 typed pattern：
+
+```systemverilog
+typedef struct packed { logic mie; } status_t;
+localparam int WIDTH = 1;
+localparam status_t RESET = '{mie: WIDTH};
+```
+
+并证明：
+
+- `mie` exact key 不调用 `_scope_lookup_target()`，不进入任何 parameter declaration/occurrence/edit；
+- value-side `WIDTH` 继续精确绑定其 parameter declaration，既有 same-target provenance 去重不变；
+- 非 key 的 unresolved initializer identifier 继续
+  `SYMBOL_GRAPH_UNSUPPORTED_REFERENCE` fail-closed；
+- 第 5 节 compact oracle、14 edits、strict/restore、actual-gate Formal 正负例全部不变；
+- T069 sized-cast 与 T071 type-parameter/defparam regression 不变；
+- pinned Ibex `abi__parameters` 为 `PASS_EFFECTIVE`：150 rename、3129 records、817 edits、45 files、
+  strict=true、gate published、decrypt exit 0、restore byte-identical；Formal policy none，不宣称等价；
+- pinned SERV `abi__parameters` 仍为 `PASS_EFFECTIVE`：59 rename、726 records、421 edits、17 files、
+  strict/restore true，actual-gate Formal `FORMAL_PASS`。
+
+### 14.6 v1.1 子 Agent 执行顺序
+
+1. 完整重读 AGENTS、T079 第 14 节、task workflow、subagent protocol、T069/T071 target tests 和 Formal
+   文档；确认本地 HEAD 是 parent=b97b323 的 v1.1 contract commit、origin=e402cdf、除本任务合同外
+   clean、唯一 T079 READY；执行记录必须填写 exact starting HEAD；
+2. 第一次实现/测试编辑前设置 `IN_PROGRESS`，记录实际模型与第 14.4 节四个允许路径；
+3. 运行第 14.7 节 baseline，并在产品修改前用临时 source 精确复现 `mie` root cause；
+4. 先新增 syntax-role 黑盒测试，再只实现第 14.2 节 exact key skip；
+5. 严格执行五条验收，记录 compact、Ibex、SERV、Formal 和 repo clean 证据；
+6. 设置 `READY_FOR_REVIEW` 后停止；不得 stage、commit、push、设置 `ACCEPTED` 或创建 T080。
+
+任何 parent/key API、Ibex frozen count、fixture oracle、外部 pin 或允许路径冲突都必须记录并停止，不得
+扩大到 field/member binding 或放松 lookup failure。
+
+### 14.7 v1.1 唯一验收命令
+
+Baseline（实现前一次）：
+
+```sh
+conda run -n rtl_obfuscation python -m unittest \
+  tests.test_t079_parameter_default_occurrence \
+  tests.test_symbol_graph_parameters \
+  tests.test_t069_sized_cast_parameter \
+  tests.test_t071_type_parameter_defparam -v
+```
+
+实现后五条：
+
+```sh
+conda run -n rtl_obfuscation python -m unittest \
+  tests.test_t079_parameter_default_occurrence \
+  tests.test_symbol_graph_parameters \
+  tests.test_t069_sized_cast_parameter \
+  tests.test_t071_type_parameter_defparam -v
+
+external_root=/Users/lufengchi/Desktop/workspace/rtl_obfuscation_realworld_stability
+test "$(git -C "$external_root" rev-parse HEAD)" = b99f5e43128964cc78a5c123a31f84e46df76934
+test "$(git -C "$external_root/repos/ibex" rev-parse HEAD)" = 3250d99482f1963891ef1cf19356eeaeeaa71d30
+test "$(git -C "$external_root/repos/serv" rev-parse HEAD)" = 41e8aeedfd1e9ad5f95902c5b0dfc83d1c99e5d2
+test -z "$(git -C "$external_root" status --short)"
+test -z "$(git -C "$external_root/repos/ibex" status --short)"
+test -z "$(git -C "$external_root/repos/serv" status --short)"
+replay_root=$(mktemp -d /private/tmp/t079-v11-replay.XXXXXX)
+sh "$external_root/projects/ibex/commands/materialize.sh" "$external_root" "$replay_root/ibex-source"
+conda run -n rtl_obfuscation python "$external_root/category_matrix_runner.py" \
+  --study-root "$external_root" --project ibex \
+  --source-root "$replay_root/ibex-source" \
+  --filelist "$external_root/projects/ibex/prepared/design.f" --top ibex_top \
+  --include-dir vendor/lowrisc_ip/ip/prim/rtl \
+  --include-dir vendor/lowrisc_ip/dv/sv/dv_utils --include-dir rtl --define SYNTHESIS \
+  --output-root "$replay_root/ibex-matrix" \
+  --profiles abi__parameters --formal-policy none
+sh "$external_root/projects/serv/commands/materialize.sh" "$external_root" "$replay_root/serv-source"
+conda run -n rtl_obfuscation python "$external_root/category_matrix_runner.py" \
+  --study-root "$external_root" --project serv \
+  --source-root "$replay_root/serv-source" \
+  --filelist "$external_root/projects/serv/prepared/design.f" --top serv_rf_top \
+  --output-root "$replay_root/serv-matrix" \
+  --profiles abi__parameters --formal-policy effective
+jq -e '
+  (.results | length) == 1 and
+  .results[0].classification == "PASS_EFFECTIVE" and
+  .results[0].effective_renamed_records == 150 and
+  .results[0].cli_summary.summary.files == 45 and
+  .results[0].cli_summary.summary.mapping_records == 3129 and
+  .results[0].cli_summary.summary.modified_tokens == 817 and
+  .results[0].strict_compile_passed == true and
+  .results[0].gate_published == true and
+  .results[0].decrypt_exit_code == 0 and
+  .results[0].restore_byte_identical == true and
+  .results[0].restore.files == 45 and
+  .results[0].formal.status == "FORMAL_NOT_RUN"
+' "$replay_root/ibex-matrix/matrix.json"
+jq -e '
+  (.results | length) == 1 and
+  .results[0].classification == "PASS_EFFECTIVE" and
+  .results[0].effective_renamed_records == 59 and
+  .results[0].cli_summary.summary.files == 17 and
+  .results[0].cli_summary.summary.mapping_records == 726 and
+  .results[0].cli_summary.summary.modified_tokens == 421 and
+  .results[0].strict_compile_passed == true and
+  .results[0].restore_byte_identical == true and
+  .results[0].restore.files == 17 and
+  .results[0].formal.status == "FORMAL_PASS" and
+  .results[0].formal.exit_code == 0
+' "$replay_root/serv-matrix/matrix.json"
+test -z "$(git -C "$external_root" status --short)"
+test -z "$(git -C "$external_root/repos/ibex" status --short)"
+test -z "$(git -C "$external_root/repos/serv" status --short)"
+
+conda run -n rtl_obfuscation python -m py_compile \
+  rtl_obfuscator/symbol_graph.py tests/test_t079_parameter_default_occurrence.py
+
+git diff --check HEAD
+
+rg -x -- '- 状态：`READY_FOR_REVIEW`' \
+  docs/tasks/T079_overridden_parameter_default_occurrence.md
+```
+
+目标 unittest 内继续负责 compact actual-gate strict/restore/Formal 正负例；Ibex external
+`formal-policy none` 只证明 strict/restore，SERV `formal-policy effective` 才是 external equivalence 证据。
+
+### 14.8 v1.1 子 Agent rework 记录
+
+```text
+status: pending
+actual_model:
+starting_head:
+allowed_files_check:
+baseline:
+pre_fix_pattern_key:
+changed_files:
+commands:
+results:
+syntax_role_contract:
+compact_oracle:
+ibex_replay:
+serv_replay:
+formal_verification:
+boundaries:
+review_request:
+```
+
+### 14.9 v1.1 主 Agent重新验收
+
+```text
+review_date: pending
+reviewer: 主 Agent
+starting_head:
+allowed_files:
+implementation_review:
+target_and_regression:
+compact_oracle:
+ibex_replay:
+serv_replay:
+formal_positive:
+formal_negative:
+external_formal:
+py_compile:
+diff_check:
+ready_for_review_guard:
+decision: pending
+delivery_commit: pending
+push: blocked until explicit user authorization
+successor: forbidden before corrected T079 delivery
 ```
