@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import re
 from typing import Any
 
 import pyslang
@@ -148,6 +149,61 @@ def _range_report(source_range: SourceRange) -> dict[str, object]:
 def _physical_files(source_catalog: SourceCatalog) -> set[str]:
     source_set = source_catalog.source_set
     return set(source_set.ordered_source_files) | set(source_set.included_files)
+
+
+_ENUM_LEXICAL_IDENTIFIER = re.compile(rb"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def _apply_enum_lexical_completeness_firewall(
+    source_catalog: SourceCatalog,
+    symbols: list[SourceSymbol],
+) -> list[SourceSymbol]:
+    """Quarantine enum records whose physical identifier inventory is incomplete."""
+
+    source_set = source_catalog.source_set
+    physical_files = sorted(
+        set(source_set.ordered_source_files) | set(source_set.included_files)
+    )
+    observed_by_name: dict[str, set[tuple[str, int, int]]] = {}
+    for file in physical_files:
+        source = (source_set.source_root / file).read_bytes()
+        for match in _ENUM_LEXICAL_IDENTIFIER.finditer(source):
+            name = match.group().decode("ascii")
+            observed_by_name.setdefault(name, set()).add(
+                (file, match.start(), match.end())
+            )
+
+    result: list[SourceSymbol] = []
+    for symbol in symbols:
+        if symbol.category != "enum_values" or symbol.support != "eligible":
+            result.append(symbol)
+            continue
+        known_ranges = {
+            (
+                symbol.declaration.file,
+                symbol.declaration.start,
+                symbol.declaration.end,
+            ),
+            *(
+                (
+                    occurrence.source_range.file,
+                    occurrence.source_range.start,
+                    occurrence.source_range.end,
+                )
+                for occurrence in symbol.occurrences
+            ),
+        }
+        if observed_by_name.get(symbol.name, set()) == known_ranges:
+            result.append(symbol)
+            continue
+        result.append(
+            replace(
+                symbol,
+                support="unsupported",
+                reason="enum_lexical_coverage_incomplete",
+            )
+        )
+    return result
 
 
 def _range_from_location(
@@ -4215,6 +4271,9 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
         nested_module_spans=nested_module_spans,
         macro_module_spans=macro_module_spans,
         ordinary_module_spans=macro_evidence.module_spans,
+    )
+    symbols_list = _apply_enum_lexical_completeness_firewall(
+        source_catalog, symbols_list
     )
 
     symbols = tuple(

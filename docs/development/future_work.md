@@ -61,6 +61,11 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   range 若绑定到不同 parameter target 则继续原子失败。
 - **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
   精确绑定时继续原子失败。
+- T081 已为 `enum_values` 增加 record 级词法覆盖完整性防火墙：只有 declaration 与已有 semantic
+  occurrences 的 ranges 和全部物理输入中的同名 plain identifier ranges 精确相等时才允许改名；
+  覆盖不完整的单条 record 使用 `enum_lexical_coverage_incomplete` 原子禁用全部 edit。raw inventory
+  故意包含 comments、strings、宏与 disabled text，可能保守减少加密，但不会据此猜测语义 target 或
+  补 lexical occurrence；generic enum reference recovery 仍不支持。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。

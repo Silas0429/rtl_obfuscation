@@ -1,7 +1,7 @@
 # T081：枚举值词法覆盖完整性防火墙
 
-- 状态：`READY`
-- 合同版本：1.0
+- 状态：`ACCEPTED`
+- 合同版本：1.1（2026-08-10 public mapping evidence path correction；行为与范围不变）
 - 设计日期：2026-08-10
 - 设计负责人：主 Agent
 - 实现负责人：代码子 Agent（请求模型：Luna extra high / standard speed；当前执行器无 Luna，实际配置必须如实记录）
@@ -204,10 +204,12 @@ strict compile 通过。该 simulation 是选择保守 record quarantine 的 GO 
    owner、impact、abi、symbol_id，不新增或删除 occurrence；
 7. 同名 enum records 位于不同 scope 时，若任一 record 无法单独证明完整覆盖，保守地将相关 record
    unsupported；不得 name-only 合并或选择最近 owner；
-8. 非 `enum_values` records 完全不变；already preserved/unsupported enum records 不得被恢复为 eligible；
+8. 防火墙只处理 `category == "enum_values" and support == "eligible"` 的 records；非 `enum_values`
+   records 完全不变，already preserved/unsupported enum records 的原 support/reason/ranges 必须逐项保持；
 9. 防火墙必须非真空：compact `MODE_SAFE` 和 Ibex 268 个完整 record 继续 rename；不得整类 unsupported；
-10. 不新增公开 API/schema/category/reason 枚举、命令选项或依赖；建议新增一个小型内部 helper，并在
-    `_collect_extended_symbols()` 返回前应用。
+10. 不新增公开 API/schema/category/reason 枚举、命令选项或依赖；使用一个小型内部 helper，并在现有
+    owner quarantine 已确定原 support/reason 后、最终 SymbolGraph 排序与 RewritePolicy 前只处理仍为
+    `eligible` 的 enum records。
 
 ## 7. NO-GO 与测试边界
 
@@ -352,11 +354,9 @@ jq -e '
     | select(
         .action == "unsupported" and
         .reason == "enum_lexical_coverage_incomplete" and
+        .renamed_name == null and
         .declaration == {"file":"rtl/ibex_pkg.sv","start":1285,"end":1299})]
-    | length) == 1 and
-  ([.edits[]
-    | select(.symbol_id == "symbol:enum_values:rtl/ibex_pkg.sv:1285:1299")]
-    | length) == 0
+    | length) == 1
 ' "$replay_root/matrix/non_abi__enum_values/gate/mapping.json"
 test -z "$(git -C "$external_root" status --short)"
 test -z "$(git -C "$external_root/repos/ibex" status --short)"
@@ -371,71 +371,97 @@ rg -x -- '- 状态：`READY_FOR_REVIEW`' \
 ```
 
 目标 unittest 必须从 actual public gate 执行 strict compile、source-free restore、Formal 正例和固定
-`assign data_o = ~(` 负例；不得 identity/copy-gold。external 只验证 strict/restore。
+`assign data_o = ~(` 负例；不得 identity/copy-gold。目标 unittest 还必须从内部 RewriteExecution 精确断言
+目标 unsupported symbol_id 的 edit 数为 0；public gate `mapping.json` 不含顶层 `.edits`。external 只验证
+strict/restore。
 
 ## 12. Formal verification 记录
 
 ```text
-formal_verification: PASS | FAIL | BLOCKED
-gold: tests/fixtures/t081_enum_lexical_firewall
-gate: <actual public rtl_encrypt output>
+formal_verification: PASS
+gold: /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-positive-shkmz7kk/encrypt/gate（actual public rtl_encrypt output）
 top: t081_top
 seq: 5
-positive_command: <exact command>
-positive_exit_code: <integer>
-positive_result: <complete stdout JSON>
-negative_gate: <actual gate copy with only frozen `assign data_o = ~(` mutation>
-negative_compile: <catalog/top overlay counts>
-negative_command: <exact command>
-negative_exit_code: <nonzero integer>
-negative_result: <unproven / equiv_status -assert summary>
+positive_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-positive-shkmz7kk/encrypt/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-positive-shkmz7kk/encrypt/gate --top t081_top --seq 5
+positive_exit_code: 0
+positive_result: {"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-positive-shkmz7kk/encrypt/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall","seq":5,"top":"t081_top"}
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-negative-3pmu66s1/negative（actual gate copy；只增加冻结 `assign data_o = ~(` mutation）
+negative_compile: catalog/top overlay 0/0 + 0/0
+negative_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t081_enum_lexical_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-negative-3pmu66s1/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-negative-3pmu66s1/negative --top t081_top --seq 5
+negative_exit_code: 1
+negative_result: combined diagnostic 包含 `unproven` 与 `equiv_status -assert`；未降低证明强度
 external_formal: N/A; pinned Ibex uses formal-policy none
 ```
 
 ## 13. 子 Agent 执行记录
 
 ```text
-status: pending
-actual_model:
-starting_head:
-allowed_files_check:
-baseline:
-pre_fix_characterization:
-changed_files:
-commands:
-results:
-inventory_contract:
-compact_oracle:
-no_go_and_non_vacuous:
-ibex_replay:
-formal_verification:
-documentation:
-boundaries:
-review_request:
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前调度器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 8c0222e220ff4d86e833a692353be074d5b102cf；parent=8e01a1ebbcd2ddfa724f6743e15adaac1945e176；origin/main=d3072b56f86969936441927efdb5dffedcef67ee；branch main ahead 3；start_time=2026-08-10T11:53:12+0800
+allowed_files_check: PASS；启动 worktree clean；唯一活动任务 T081 READY；允许路径精确为本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t081_enum_lexical_completeness_firewall.py`、两个 T081 fixture、`docs/systemverilog_renaming_table.md` 与 `docs/development/future_work.md`
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_vnext_category_closure tests.test_t079_parameter_default_occurrence tests.test_t080_expression_sized_cast_parameter -v`；exit 0；Ran 25 tests；OK；T079/T080 compact actual-gate Formal 正例 exit 0、固定功能负例 exit 1
+contract_evidence_correction: v1.1；主 Agent 确认 public gate `mapping.json` 无顶层 `.edits`；external record oracle 改为 action/reason/`renamed_name == null`/精确 declaration，并保留 modified_tokens=753；目标测试改由内部 RewriteExecution 直接证明该 symbol_id zero edit；产品行为与允许范围不变
+pre_fix_characterization: PASS；fixture 精确为 10/491 bytes 且 SHA-256 匹配第 3 节；catalog/top overlay 0/0 + 0/0；graph 11/11/12/23；`MODE_SAFE` declaration `95..104`、occurrence `286..295 semantic_reference`；`MODE_GAP` declaration `110..118`、无 occurrence，而 raw ranges 为 `110..118,156..164,181..189`；mapping 11/2/9/0、3 planned edits；public encrypt exit 1 `CLI_VNEXT_ORCHESTRATION_INVALID`，gate absent；目标测试实现前 Ran 8，所有防火墙/public-flow 断言按预期失败，未新增产品行为
+changed_files: 精确为第 9 节七个路径：本任务单、`rtl_obfuscator/symbol_graph.py`、T081 target unittest、两个冻结 fixture、`docs/systemverilog_renaming_table.md`、`docs/development/future_work.md`；允许列表外零修改
+commands: baseline 见上；开发期目标测试与 pre-fix probe；实现后最终执行第 11 节五条：四模块 unittest exit 0/Ran 33/OK；fresh pinned Ibex replay + 两个 corrected jq oracle 均 true；py_compile exit 0；本记录后最终 `git diff --check HEAD` 与 READY_FOR_REVIEW guard；未运行 blanket discovery、历史 driver 或 RISC-V-Vector Formal
+results: PASS；target 8/8、相关 baseline 25/25；fixture hashes、compact mapping/execution、strict/source-free restore、actual-gate Formal 正负、Ibex 86/268/753 oracle 均满足；finish_time=2026-08-10T12:08:45+0800
+inventory_contract: PASS；固定 byte regex `[A-Za-z_][A-Za-z0-9_$]*`；`ordered_source_files + included_files` 去重后按 file 排序并一次读取 raw bytes，inventory 为 exact `(file,start,end)` sets；owner quarantine 后只对仍为 `eligible` 的 enum record 比较 observed 与 declaration+occurrences known set；不补 occurrence、不猜 target、不改非 enum 或既有 preserved/unsupported record
+compact_oracle: PASS；catalog/top overlay 0/0 + 0/0；graph ranges 保持 11/11/12/23；`MODE_SAFE` declaration `95..104` 与 occurrence `286..295` 完整，继续 eligible/rename；`MODE_GAP` raw `110..118,156..164,181..189` 对 known 不完整，整 record unsupported/reason exact；mapping 11/1/9/1；内部 RewriteExecution 2 edits，`symbol:enum_values:design.sv:110:118` exact 0 edits；public summary 1 file/11 records/2 modified tokens、strict true，source-free restore 仅恢复 `design.sv` 且 byte-identical
+no_go_and_non_vacuous: PASS；comments、strings、unused macro 中单独出现同名 token 均保守 quarantine；两个 scope 同名 enum 不合并且两 record 均 zero rename；完整 `MODE_SAFE` 继续实际改名，未整类禁用；构造的 preserved/unsupported enum 即使 lexical mismatch 也保持原 support/reason/ranges，非 enum record identity 不变；既有 duplicate physical range audit 仍 `SYMBOL_GRAPH_RANGE_CONFLICT`
+ibex_replay: PASS；fresh root `/private/tmp/t081-ibex-replay.2ebGm4`；stability `b99f5e43128964cc78a5c123a31f84e46df76934` 与 Ibex `3250d99482f1963891ef1cf19356eeaeeaa71d30` 前后 clean；`non_abi__enum_values=PASS_EFFECTIVE`，45 files、3129 records、268 rename/2352 preserve/509 unsupported、753 edits、86 records reason=`enum_lexical_coverage_incomplete`；目标 `symbol:enum_values:rtl/ibex_pkg.sv:1285:1299` action unsupported/reason exact/renamed_name null/declaration `1285..1299`；strict/gate/decrypt true，restore 45 files byte-identical；formal-policy none，`FORMAL_NOT_RUN` 未描述为等价证明
+formal_verification: PASS；compact actual public renamed gate top=`t081_top`, seq=5，正例 exit 0 且 complete JSON `formal_equivalence=pass`；actual-gate copy 只增加冻结 `assign data_o = ~(`，strict 0/0 + 0/0，负例 exit 1 并命中 `unproven`/`equiv_status -assert`；完整命令与路径见第 12 节；external Formal N/A
+documentation: PASS；renaming table 写明 enum 仅在原始 lexical token 与 semantic ranges 完整一致时改名；future work 写明 record quarantine、raw comments/strings/macro/disabled-text 保守边界与不做 generic recovery
+boundaries: 不从 raw token、parameter default、generate/inactive branch、macro 或同名 scope 猜 semantic target；不补 lexical occurrence，不新增 enum resolver；raw false positive 允许少加密；不改 API/schema/category/policy/mapping/rewrite/restore/CLI/Formal；existing owner quarantine reason 优先保持
+review_request: READY_FOR_REVIEW；请主 Agent 独立执行 v1.1 第 11 节五条验收并审查 owner-quarantine-after ordering、eligible-only identity 与 zero-edit 证据；子 Agent 未 stage/commit/push、未设置 ACCEPTED、未创建 T082
 ```
 
 ## 14. 主 Agent 验收
 
 ```text
-review_date: pending
+review_date: 2026-08-10
 reviewer: 主 Agent
-starting_head:
-allowed_files:
-implementation_review:
-target_and_regression:
-compact_oracle:
-inventory_and_zero_edit:
-ibex_replay:
-formal_positive:
-formal_negative:
-external_formal:
-py_compile:
-diff_check:
-ready_for_review_guard:
-documentation:
-forbidden_runs:
-decision: pending
-delivery_commit: pending
-push: pending explicit user authorization for future shared-branch mutation
-successor: forbidden before T081 acceptance and delivery
+starting_head: 8c0222e220ff4d86e833a692353be074d5b102cf；parent=
+  8e01a1ebbcd2ddfa724f6743e15adaac1945e176；origin/main=
+  d3072b56f86969936441927efdb5dffedcef67ee；branch main
+allowed_files: PASS；最终 worktree 精确为第 9 节七个路径；两个 fixture 仅含 design.f/design.sv，
+  10/491 bytes 与冻结 SHA-256 完全匹配；允许列表外零修改
+implementation_review: PASS；只新增一次 raw byte identifier inventory 与 record-level helper；固定 regex
+  `[A-Za-z_][A-Za-z0-9_$]*`，物理文件去重排序；应用点在 existing owner quarantine 后，且只处理仍为
+  eligible 的 enum；set equality 不成立时整 record unsupported/reason exact，不增加 occurrence、不猜 target；
+  非 enum 与既有 preserved/unsupported support/reason/ranges identity 不变；无 policy/mapping/rewrite/
+  restore/CLI/Formal 特例
+target_and_regression: PASS；v1.1 第 11 节第 1 条 exit 0；Ran 33 tests；OK
+compact_oracle: PASS；graph 11/11/12/23 不变；MODE_SAFE 保持 eligible/rename；MODE_GAP 为
+  unsupported/enum_lexical_coverage_incomplete；mapping 11 total、1 rename、9 preserve、1 unsupported；
+  strict compile 0/0 + 0/0；public gate 发布；source-free restore 仅恢复 design.sv 且逐字节一致
+inventory_and_zero_edit: PASS；MODE_GAP raw ranges 110..118/156..164/181..189 与 known set 不相等；
+  internal RewriteExecution 共 2 edits，`symbol:enum_values:design.sv:110:118` exact 0 edits；comments、
+  strings、macro 和双 scope 同名 token 均只触发保守 quarantine；complete enum 继续实际 edit
+ibex_replay: PASS；Main-Agent fresh root=/private/tmp/t081-main-ibex.g0MxSG；stability
+  b99f5e43128964cc78a5c123a31f84e46df76934、Ibex
+  3250d99482f1963891ef1cf19356eeaeeaa71d30 前后 clean；non_abi__enum_values=PASS_EFFECTIVE，45 files、
+  3129 records、268 rename/2352 preserve/509 unsupported、753 edits、86 条新 reason；目标
+  `symbol:enum_values:rtl/ibex_pkg.sv:1285:1299` action unsupported/reason exact/renamed_name null；
+  strict/gate/decrypt/45-file byte restore 全通过
+formal_positive: PASS；Main-Agent compact actual public gate
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-positive-2ng9altn/encrypt/gate；
+  top=t081_top；seq=5；exit 0；complete JSON formal_equivalence=pass
+formal_negative: PASS as expected negative；Main-Agent actual-gate copy
+  /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t081-formal-negative-ofa7kxy5/negative；只含冻结
+  `assign data_o = ~(` 变更；strict compile 0/0 + 0/0；exit 1；断言匹配 `unproven` 与
+  `equiv_status -assert`
+external_formal: N/A；pinned Ibex 按合同 formal-policy none，结果 FORMAL_NOT_RUN，未描述为等价证明
+py_compile: PASS；v1.1 第 11 节命令 exit 0
+diff_check: PASS；`git diff --check HEAD` exit 0
+ready_for_review_guard: PASS；精确 guard 在本次 ACCEPTED 状态变更前 exit 0
+documentation: PASS；renaming table 与 future work 明确 raw inventory、单 record quarantine、false-positive
+  只减少加密和不做 generic enum recovery 的边界
+forbidden_runs: 未运行 blanket discovery、历史 acceptance driver 或 RISC-V-Vector Formal
+decision: ACCEPTED；无法证明完整引用闭包的 enum record 提前 zero-edit，覆盖完整 record 继续实际改名，
+  满足“宁可少加密、不能加密错误”
+delivery_commit: current acceptance commit；exact hash 在提交后报告并冻结进后继合同
+push: NOT_RUN；等待对本次新交付的明确授权
+successor: Main Agent 仅在本地交付提交完成后决定下一任务
 ```
