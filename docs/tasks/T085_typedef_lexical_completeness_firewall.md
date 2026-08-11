@@ -1,6 +1,7 @@
 # T085：typedef 词法覆盖完整性防火墙
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
+- 合同版本：1.1（2026-08-10 修正 compact pre-fix edit 计数；行为、范围与 post-fix oracle 不变）
 - 创建日期：2026-08-10
 - 起始分支：`main`
 - 起始 HEAD：`46014d5489cc77dae899a154fd4fcbef47d36acc`
@@ -126,7 +127,7 @@ word_t known semantic use: design.sv:265..271
 word_t missing raw use: design.sv:301..307 in $bits(word_t)
 safe_t declaration/use: design.sv:186..192 / 196..202
 mapping total/rename/preserve/unsupported: 12/2/10/0
-planned edits: 5
+planned edits: 4
 public encrypt: exit 1, CLI_VNEXT_ORCHESTRATION_INVALID
 gate: absent
 ```
@@ -436,67 +437,68 @@ edit数为0；public `mapping.json`不假设存在顶层 edits。external runner
 ## 14. Formal verification 记录
 
 ```text
-formal_verification: PENDING
-gold: tests/fixtures/t085_typedef_lexical_firewall
-gate: actual public rtl_encrypt output; PENDING
+formal_verification: PASS；actual public renamed gate 正例通过，固定功能负例按预期失败
+gold: /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall
+gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-public-jcop2ccl/encrypt/gate（actual public rtl_encrypt output）
 top: t085_top
 seq: 5
 public_define: T085_TYPEDEF_QUERY
 positive_yosys_define: none
-positive_command: PENDING
-positive_exit_code: PENDING
-positive_result: PENDING; require complete JSON formal_equivalence=pass
-actual_gate_non_identity: PENDING; safe_t declaration/use must be genuinely renamed
-negative_gate: PENDING; actual-gate copy with only frozen macro-outside logic inversion
-negative_compile_with_public_define: PENDING; require 0/0 + 0/0
-negative_command: PENDING
-negative_exit_code: PENDING; require 1
-negative_result: PENDING; require unproven and equiv_status -assert
+positive_command: `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-public-jcop2ccl/encrypt/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-public-jcop2ccl/encrypt/gate --top t085_top --seq 5`
+positive_exit_code: 0
+positive_result: `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-public-jcop2ccl/encrypt/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall","seq":5,"top":"t085_top"}`
+actual_gate_non_identity: PASS；public define 下 `word_t` 三处全部保留原名；`safe_t` declaration/use 使用同一非原名，共1个 rename record/2 actual edits，不是 identity/copy-gold
+negative_gate: /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-formal-negative-rc0szhqo/negative；从 actual gate copy 后只将冻结宏外 `assign data_o = (safe_value == SafeOne);` 改为逻辑取反
+negative_compile_with_public_define: PASS；catalog/top overlay 0/0 + 0/0
+negative_command: `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python /Users/lufengchi/Desktop/workspace/rtl_obfuscation/scripts/formal_equivalence.py --gold-filelist /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall/design.f --gold-root /Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t085_typedef_lexical_firewall --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-formal-negative-rc0szhqo/negative/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-formal-negative-rc0szhqo/negative --top t085_top --seq 5`
+negative_exit_code: 1
+negative_result: PASS（固定负例按预期被拒绝）；包含 `equiv_status -assert`，最终1个 unproven `$equiv` cell
 external_formal: N/A; pinned Ibex uses formal-policy none
 ```
 
 ## 15. 子 Agent 执行记录
 
 ```text
-status: PENDING
-actual_model: PENDING；必须如实记录
-starting_head: PENDING；必须记录 contract commit、parent、origin/main、branch ahead、clean、唯一活动任务
-allowed_files_check: PENDING
-baseline: PENDING
-pre_fix_characterization: PENDING
-changed_files: PENDING
-commands: PENDING
-results: PENDING
-inventory_contract: PENDING
-compact_oracle: PENDING
-no_go_and_non_vacuous: PENDING
-ibex_replay: PENDING
-formal_verification: PENDING
-documentation: PENDING
-boundaries: PENDING
-review_request: PENDING
+status: READY_FOR_REVIEW
+actual_model: gpt-5.6-sol / xhigh；当前执行器未提供 Luna 模型或 standard speed 参数，未声称使用 Luna
+starting_head: 777cbb06c20a578b672a3bae85717a86648b6eff；parent=46014d5489cc77dae899a154fd4fcbef47d36acc；origin/main=d3072b56f86969936441927efdb5dffedcef67ee；branch main ahead 11；start_time=2026-08-10T14:30:39+08:00；启动 worktree clean；唯一活动任务 T085 READY
+allowed_files_check: PASS；允许路径精确为本任务单、`rtl_obfuscator/symbol_graph.py`、`tests/test_t085_typedef_lexical_completeness_firewall.py`、两个 T085 fixture、`docs/systemverilog_renaming_table.md` 与 `docs/development/future_work.md`；启动时无用户修改重叠
+baseline: PASS；`conda run -n rtl_obfuscation python -m unittest tests.test_t084_struct_pattern_field tests.test_t083_named_function_argument tests.test_t082_function_end_label tests.test_t076_module_end_label tests.test_vnext_category_closure tests.test_t079_parameter_default_occurrence tests.test_t080_expression_sized_cast_parameter tests.test_t081_enum_lexical_completeness_firewall -v`；exit 0，Ran 68 tests，OK；相关 actual renamed-gate Formal 正例 exit 0、固定功能负例 exit 1
+pre_fix_characterization: PASS（冻结失败已复现）；fixture 10/522 bytes 与两条 SHA-256 精确匹配；catalog/top overlay 0/0 + 0/0；graph=12/12/15/27；`word_t` declaration `59..65`、known semantic use `265..271`、raw ranges=`59..65,265..271,301..307`，缺口为 `$bits(word_t)`；`safe_t` declaration/use=`186..192/196..202` 且 raw==known；mapping=12 total / 2 rename / 10 preserve / 0 unsupported，planned edits=4；public exit 1 `CLI_VNEXT_ORCHESTRATION_INVALID` 且 gate absent；internal `REWRITE_GATE_COMPILE_FAILED` / `CATALOG_SEMANTIC_FAILED` 且 output absent；fresh pinned Ibex root `/private/tmp/t085-ibex-prefix.eXnjnC`，`abi__typedefs=FAIL_STRICT`、effective rename 0、strict=false、gate=false、restore=false、Formal=`FORMAL_NOT_RUN`，stability/Ibex 前后 clean
+changed_files: 精确为第 11 节七个路径：本任务单、`rtl_obfuscator/symbol_graph.py`、T085 target unittest、两个冻结 fixture、`docs/systemverilog_renaming_table.md` 与 `docs/development/future_work.md`；允许列表外零修改
+commands: 冻结 68-test baseline；compact pre-fix graph/mapping/internal/public probe；fresh pinned Ibex pre-fix replay；开发期 target tests；第 13 节五条验收：`conda run -n rtl_obfuscation python -m unittest tests.test_t085_typedef_lexical_completeness_firewall tests.test_t084_struct_pattern_field tests.test_t083_named_function_argument tests.test_t082_function_end_label tests.test_t076_module_end_label tests.test_vnext_category_closure tests.test_t079_parameter_default_occurrence tests.test_t080_expression_sized_cast_parameter tests.test_t081_enum_lexical_completeness_firewall -v`，fresh pinned Ibex materialize/runner 与两条 exact `jq -e`，`conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/symbol_graph.py tests/test_t085_typedef_lexical_completeness_firewall.py`，`git diff --check HEAD`，exact READY_FOR_REVIEW guard
+results: PASS；v1.1 目标9 tests + 冻结68回归合计 Ran 77 tests，OK；compact public strict/source-free restore、actual-gate Formal正负、fresh Ibex、py_compile全部通过；finish_time=2026-08-10T14:43:52+08:00。v1.0 planned-edit count blocker已由主 Agent独立复核并在v1.1更正为4，原始 blocker/RESOLVED 与恢复证据完整保留
+resume_re_freeze: PASS；2026-08-10T14:38:00+08:00 恢复；主 Agent已用独立 internal mapping probe确认 pre-fix summary=12/2/10/0、`word_t`/`safe_t` 各2 ranges、总 planned edits=4，并以 apply_patch发布合同 v1.1；顶部状态由 READY→IN_PROGRESS；保留原始 blocker/resolution 证据；行为、允许路径、post-fix compact 与 pinned Ibex 10/19/79 oracle不变
+inventory_contract: PASS；复用一次 `_physical_identifier_inventory()`：固定 byte regex `[A-Za-z_][A-Za-z0-9_$]*`，`ordered_source_files + included_files` 去重后按 file 排序读取 raw bytes，inventory 为 exact `(file,start,end)` sets；build中只读取一次并依次供 typedef与T081 enum firewall使用；owner quarantine 后、enum firewall前仅处理仍 eligible typedef；不补 occurrence、不猜 target/scope/package/owner，不改非 typedef或既有preserved/unsupported record
+compact_oracle: PASS；fixture 10/522 bytes与冻结SHA-256一致；catalog/top overlay 0/0 + 0/0；graph ranges保持12/12/15/27；`word_t` raw比known多301..307，整record unsupported/reason exact，内部RewriteExecution中`symbol:typedefs:design.sv:59:65` edits精确为0；`safe_t`继续eligible/rename；mapping=12 total/1 rename/10 preserve/1 unsupported；2 actual edits；public strict=true，source-free restore 1 file byte-identical
+no_go_and_non_vacuous: PASS；comments、string、unused macro中的额外同名token均保守quarantine；两个scope同名typedef不做name-only合并且两条均zero edit；complete `safe_t`保持identity/ranges并实际rename；构造的existing preserved/unsupported typedef support/reason/ranges逐项不变，非typedef records完全不变；T081 MODE_SAFE/MODE_GAP graph/action/reason/ranges及2/0 edit oracle完全不变；duplicate/overlap继续`SYMBOL_GRAPH_RANGE_CONFLICT`，nonphysical evidence只会被unsupported且不改range
+ibex_replay: PASS；fresh root `/private/tmp/t085-ibex-replay.hVmcST`；stability `b99f5e43128964cc78a5c123a31f84e46df76934` 与Ibex `3250d99482f1963891ef1cf19356eeaeeaa71d30`前后clean；`abi__typedefs=PASS_EFFECTIVE`，45 files、3129 records、19 rename/2591 preserve/519 unsupported、79 modified tokens、10条reason=`typedef_lexical_coverage_incomplete`；`csr_num_e`/`ibex_mubi_t`/`prim_secded_type_e` action unsupported/reason exact/renamed_name null；`csr_op_e` action rename且renamed_name非null；strict/gate/decrypt通过，restore45 files byte-identical；formal-policy none，`FORMAL_NOT_RUN`未描述为等价证明
+formal_verification: PASS；完整actual public gate正负证据见第14节
+documentation: PASS；renaming table补充typedef raw lexical ranges与declaration+semantic ranges exact equality门槛；future work记录false-positive只减少加密、generic type-reference recovery未实现及`$bits`/qualified/cast/uninstantiated-module等未知缺口继续fail-closed；README/API/schema/category不变
+boundaries: 不给`$bits`、qualified name、cast、uninstantiated module或其他缺口补semantic occurrence；不从raw token推断identity；不跳过comments/string/macro/disabled text；不整类disable typedef；owner quarantine原reason优先且T081 enum reason/counts逐项保持；不改policy/mapping/rewrite/restore/orchestration/CLI/Formal；未运行blanket discovery、历史driver或RISC-V-Vector Formal
+review_request: READY_FOR_REVIEW；请主 Agent独立执行v1.1第13节五条验收并审查single-inventory、owner→typedef→enum ordering、eligible-only identity及zero-edit证据；子 Agent未stage/commit/push、未设置ACCEPTED、未创建T086
 ```
 
 ## 16. 主 Agent 验收
 
 ```text
-review_date: PENDING
+review_date: 2026-08-10
 reviewer: 主 Agent
-allowed_files: PENDING
-implementation_review: PENDING
-target_and_regression: PENDING
-compact_oracle: PENDING
-inventory_and_zero_edit: PENDING
-ibex_replay: PENDING
-formal_positive: PENDING
-formal_negative: PENDING
+allowed_files: PASS；最终 worktree精确为第11节七个允许路径；fixture仅为design.f/design.sv，10/522 bytes与冻结SHA-256完全匹配；无staged或允许列表外修改
+implementation_review: PASS；只抽取一次raw physical identifier inventory；固定byte regex与去重排序physical files；owner quarantine后仅处理eligible typedef，再把同一inventory传给T081 enum firewall；set equality不成立时只replace support/reason，不补occurrence、不猜identity，不改policy/mapping/rewrite/CLI/Formal
+target_and_regression: PASS；主Agent独立运行第13节第一条，exit0，Ran77 tests，OK
+compact_oracle: PASS；graph=12/12/15/27不变；mapping=12 total/1 rename/10 preserve/1 unsupported；safe_t保持真实rename并产生2 edits；word_t为unsupported/reason exact且zero edit；public strict 0/0+0/0，source-free restore 1 file byte-identical
+inventory_and_zero_edit: PASS；word_t raw ranges=59..65/265..271/301..307，known仅前两条；internal RewriteExecution中`symbol:typedefs:design.sv:59:65` exact 0 edits；comments/string/macro/双scope同名均只触发保守quarantine；existing support/reason/ranges、非typedef records与T081 enum oracle不变
+ibex_replay: PASS；主Agent fresh root `/private/tmp/t085-main-ibex-replay.vi7sbU`；stability b99f5e43128964cc78a5c123a31f84e46df76934与Ibex 3250d99482f1963891ef1cf19356eeaeeaa71d30前后clean；abi__typedefs=PASS_EFFECTIVE，45 files、3129 records、19 rename/2591 preserve/519 unsupported、79 modified tokens、10条new reason；三个冻结unsafe record unsupported/null rename，csr_op_e继续rename；strict/gate/decrypt/45-file byte restore全通过
+formal_positive: PASS；主Agent actual public renamed gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-public-7gzxdvcp/encrypt/gate`；top=t085_top，seq=5，exit0，完整JSON `formal_equivalence=pass`；safe_t declaration/use实际改名，不是identity/copy-gold
+formal_negative: PASS as expected negative；主Agent actual-gate copy `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t085-formal-negative-7la3_00u/negative`；只把冻结宏外比较改为逻辑取反；public strict compile 0/0+0/0，Formal exit1，最终1个unproven，`equiv_status -assert`生效
 external_formal: N/A; formal-policy none
-py_compile: PENDING
-diff_check: PENDING
-ready_for_review_guard: PENDING
-documentation: PENDING
-forbidden_runs: PENDING
-decision: PENDING
-delivery_commit: PENDING
+py_compile: PASS；第13节命令exit0
+diff_check: PASS；`git diff --check HEAD` exit0
+ready_for_review_guard: PASS；精确guard在本次ACCEPTED状态变更前exit0
+documentation: PASS；renaming table与future work准确记录exact completeness门槛、false-positive只减少加密、generic type-reference recovery未实现及owner/enum reason优先级
+forbidden_runs: 未运行blanket discovery、历史acceptance driver或RISC-V-Vector Formal
+decision: ACCEPTED；无法证明完整词法闭包的typedef在RewritePolicy前整条zero-edit，覆盖完整record继续实际改名，满足“宁可少加密、不能加密错误”
+delivery_commit: current acceptance commit；exact hash在提交后报告并冻结进后继合同
 push: NOT_RUN；此前授权只覆盖 b97b323..d3072b5，等待对本次新交付的明确授权
 ```

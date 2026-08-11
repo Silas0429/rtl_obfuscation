@@ -15,7 +15,7 @@
 | `arguments` | function 和 task 的参数 | 是 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 |
 | `instances` | module 实例名称 | 是 | 加密 | 加密 |
 | `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
-| `typedefs` | 普通 typedef 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
+| `typedefs` | 普通 typedef 类型名称；只有原始词法 token ranges 与 declaration 加已有语义 references ranges 精确相等时才允许改名，覆盖不完整的单条 typedef 保留 | 是 | 加密只在 module 内部使用且覆盖完整的类型 | 跨 module 使用且覆盖完整的类型及引用会一致改名；证据不足时整条 typedef 不产生 edit |
 | `struct_types` | struct 和 union 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
 | `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员；普通物理 struct alias 的 direct named assignment-pattern key 会按 exact alias owner 与字段名一致改写 | 跨 module 使用的成员及引用会一致改名；union/array/default/type/literal/宏或 anonymous pattern key 不在此闭包内 |
 | `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |

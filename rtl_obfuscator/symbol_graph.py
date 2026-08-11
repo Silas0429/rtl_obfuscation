@@ -154,11 +154,10 @@ def _physical_files(source_catalog: SourceCatalog) -> set[str]:
 _ENUM_LEXICAL_IDENTIFIER = re.compile(rb"[A-Za-z_][A-Za-z0-9_$]*")
 
 
-def _apply_enum_lexical_completeness_firewall(
+def _physical_identifier_inventory(
     source_catalog: SourceCatalog,
-    symbols: list[SourceSymbol],
-) -> list[SourceSymbol]:
-    """Quarantine enum records whose physical identifier inventory is incomplete."""
+) -> dict[str, set[tuple[str, int, int]]]:
+    """Collect exact raw identifier ranges from every physical input file."""
 
     source_set = source_catalog.source_set
     physical_files = sorted(
@@ -172,6 +171,60 @@ def _apply_enum_lexical_completeness_firewall(
             observed_by_name.setdefault(name, set()).add(
                 (file, match.start(), match.end())
             )
+    return observed_by_name
+
+
+def _apply_typedef_lexical_completeness_firewall(
+    source_catalog: SourceCatalog,
+    symbols: list[SourceSymbol],
+    observed_by_name: dict[str, set[tuple[str, int, int]]] | None = None,
+) -> list[SourceSymbol]:
+    """Quarantine typedef records whose physical identifier inventory is incomplete."""
+
+    if observed_by_name is None:
+        observed_by_name = _physical_identifier_inventory(source_catalog)
+    result: list[SourceSymbol] = []
+    for symbol in symbols:
+        if symbol.category != "typedefs" or symbol.support != "eligible":
+            result.append(symbol)
+            continue
+        known_ranges = {
+            (
+                symbol.declaration.file,
+                symbol.declaration.start,
+                symbol.declaration.end,
+            ),
+            *(
+                (
+                    occurrence.source_range.file,
+                    occurrence.source_range.start,
+                    occurrence.source_range.end,
+                )
+                for occurrence in symbol.occurrences
+            ),
+        }
+        if observed_by_name.get(symbol.name, set()) == known_ranges:
+            result.append(symbol)
+            continue
+        result.append(
+            replace(
+                symbol,
+                support="unsupported",
+                reason="typedef_lexical_coverage_incomplete",
+            )
+        )
+    return result
+
+
+def _apply_enum_lexical_completeness_firewall(
+    source_catalog: SourceCatalog,
+    symbols: list[SourceSymbol],
+    observed_by_name: dict[str, set[tuple[str, int, int]]] | None = None,
+) -> list[SourceSymbol]:
+    """Quarantine enum records whose physical identifier inventory is incomplete."""
+
+    if observed_by_name is None:
+        observed_by_name = _physical_identifier_inventory(source_catalog)
 
     result: list[SourceSymbol] = []
     for symbol in symbols:
@@ -4480,8 +4533,12 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
         macro_module_spans=macro_module_spans,
         ordinary_module_spans=macro_evidence.module_spans,
     )
+    identifier_inventory = _physical_identifier_inventory(source_catalog)
+    symbols_list = _apply_typedef_lexical_completeness_firewall(
+        source_catalog, symbols_list, identifier_inventory
+    )
     symbols_list = _apply_enum_lexical_completeness_firewall(
-        source_catalog, symbols_list
+        source_catalog, symbols_list, identifier_inventory
     )
 
     symbols = tuple(

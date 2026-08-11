@@ -90,6 +90,14 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   fail-closed。Yosys 当前不能解析 named assignment pattern，因此 key 的字节正确性由 actual-gate
   PySlang strict、同 symbol edit 与 source-free restore 证明；Formal 只覆盖不启用 named-pattern 宏的
   actual renamed concatenation branch。
+- T085 已为仍 eligible 的 `typedefs` 增加 record 级词法覆盖完整性防火墙：在 owner quarantine 后复用
+  T081 的同一份 raw physical identifier inventory，只有 declaration 加已有 semantic occurrences ranges
+  与全部原始输入中的同名 plain identifier ranges 集合精确相等时才允许改名；覆盖不完整的单条 record
+  使用 `typedef_lexical_coverage_incomplete` 禁用全部 edit。raw inventory 故意包含 comments、strings、宏、
+  disabled branch 与未 elaborated syntax，false positive 只会减少加密，不会被用来猜 target、scope、package
+  或 owner。当前未实现 `$bits(type)`、package-qualified、cast、未实例化 module 等缺口的 generic
+  type-reference recovery；未知缺口语境继续 fail-closed，既有 owner quarantine 与 T081 enum reason 优先级
+  保持不变。
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。
