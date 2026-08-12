@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SINGLE_ROOT = ROOT / "rtl_samples"
 FIFO_ROOT = SINGLE_ROOT / "example_fifo"
 FORMAL_ROOT = ROOT / "tests" / "fixtures" / "refactor_symbol_graph_parameters"
+TYPEDEF_FIREWALL_ROOT = ROOT / "tests" / "fixtures" / "t085_typedef_lexical_firewall"
 PUBLIC_SCRIPTS = {
     "rtl_encrypt": ROOT / "rtl_encrypt.py",
     "rtl_decrypt": ROOT / "rtl_decrypt.py",
@@ -115,6 +116,10 @@ class PublicCliTests(unittest.TestCase):
         report = json.loads(mapping.read_text(encoding="utf-8"))
         metrics_report = json.loads(metrics.read_text(encoding="utf-8"))
         self.assertEqual(stdout["format"], "rtl-obfuscation.cli-vnext")
+        action_counts = {"rename": 0, "preserve": 0, "unsupported": 0}
+        for record in report["mapping"]["records"]:
+            action_counts[record["action"]] += 1
+        self.assertEqual(stdout["action_counts"], action_counts)
         self.assertEqual(stdout["summary"], report["summary"])
         self.assertEqual(metrics_report, report["metrics"])
         self.assertTrue(report["summary"]["strict_compile_passed"])
@@ -152,10 +157,16 @@ class PublicCliTests(unittest.TestCase):
         self.assertIn("[--map MAP_FILE]", encrypt_help)
         self.assertIn("[--metrics METRICS_FILE]", encrypt_help)
         self.assertIn("--encryption-rate ENCRYPTION_RATE", encrypt_help)
+        self.assertIn("输入模式（三选一）", encrypt_help)
+        self.assertIn("project-root：--source-root DIR --top TOP", encrypt_help)
+        self.assertIn("建议真实工程从少量类型开始", encrypt_help)
+        self.assertIn("加密输出目录；运行前必须不存在", encrypt_help)
         self.assertNotIn("--abi-category", encrypt_help)
         self.assertNotIn("--project-root", encrypt_help)
         decrypt_help = self._run_public("rtl_decrypt", "--help").stdout
         self.assertIn("[--report REPORT]", decrypt_help)
+        self.assertIn("加密时生成的 mapping.json", decrypt_help)
+        self.assertIn("恢复输出目录；运行前必须不存在", decrypt_help)
         self.assertNotIn("--source-root", decrypt_help)
 
     def test_public_removed_options_and_incomplete_project_mode_fail_cleanly(self):
@@ -172,7 +183,12 @@ class PublicCliTests(unittest.TestCase):
             )
             self.assertNotEqual(removed_project.returncode, 0)
             self.assertEqual(removed_project.stdout, "")
-            self.assertNotIn("Traceback", removed_project.stderr)
+            self.assertEqual(
+                removed_project.stderr,
+                "error: CLI_VNEXT_INPUT_INVALID\n"
+                "hint: 请检查三种输入模式、必要参数和路径；project-root 模式需要 "
+                "--source-root 与 --top。\n",
+            )
             self.assertFalse((root / "project-gate").exists())
 
             incomplete = self._run_public(
@@ -184,7 +200,12 @@ class PublicCliTests(unittest.TestCase):
             )
             self.assertNotEqual(incomplete.returncode, 0)
             self.assertEqual(incomplete.stdout, "")
-            self.assertEqual(incomplete.stderr, "error: CLI_VNEXT_INPUT_INVALID\n")
+            self.assertEqual(
+                incomplete.stderr,
+                "error: CLI_VNEXT_INPUT_INVALID\n"
+                "hint: 请检查输入模式和路径；project-root 模式必须同时提供 "
+                "--source-root 与 --top。\n",
+            )
             self.assertFalse((root / "incomplete-gate").exists())
 
             removed_source = self._run_public(
@@ -200,7 +221,11 @@ class PublicCliTests(unittest.TestCase):
             )
             self.assertNotEqual(removed_source.returncode, 0)
             self.assertEqual(removed_source.stdout, "")
-            self.assertNotIn("Traceback", removed_source.stderr)
+            self.assertEqual(
+                removed_source.stderr,
+                "error: RESTORE_VNEXT_INPUT_INVALID\n"
+                "hint: 请同时提供 --map、--gate-dir 和尚不存在的 --output-dir。\n",
+            )
             self.assertFalse((root / "restore").exists())
 
     def test_default_categories_follow_single_filelist_and_project_modes(self):
@@ -530,7 +555,7 @@ class PublicCliTests(unittest.TestCase):
                 )
                 metrics_report = json.loads(metrics.read_text(encoding="utf-8"))
                 self.assertEqual(
-                    summary_lines[0],
+                    summary_lines[4],
                     f"加密率：{metrics_report['affected_lines']['rate']}",
                 )
                 renamed_categories = [
@@ -545,6 +570,10 @@ class PublicCliTests(unittest.TestCase):
                 self.assertEqual(
                     summary_lines,
                     [
+                        f"改名对象（rename）：{sum(record['action'] == 'rename' for record in report['mapping']['records'])}",
+                        f"保留对象（preserve）：{sum(record['action'] == 'preserve' for record in report['mapping']['records'])}",
+                        f"不支持对象（unsupported）：{sum(record['action'] == 'unsupported' for record in report['mapping']['records'])}",
+                        f"修改 token 数：{report['summary']['modified_tokens']}",
                         f"加密率：{metrics_report['affected_lines']['rate']}",
                         f"实际加密行数：{metrics_report['affected_lines']['changed']}",
                         f"总代码行数：{metrics_report['effective_lines']['total']}",
@@ -557,6 +586,58 @@ class PublicCliTests(unittest.TestCase):
                         (restored / relative).read_bytes(),
                         (FORMAL_ROOT / relative).read_bytes(),
                     )
+
+    def test_typedef_firewall_public_action_feedback_is_exact(self):
+        with tempfile.TemporaryDirectory(prefix="t086-public-feedback-") as temporary:
+            root = Path(temporary)
+            gate = root / "gate"
+            encrypted = self._run_public(
+                "rtl_encrypt",
+                "--filelist",
+                "design.f",
+                "--source-root",
+                str(TYPEDEF_FIREWALL_ROOT),
+                "--top",
+                "t085_top",
+                "--category",
+                "typedefs",
+                "--output-dir",
+                str(gate),
+            )
+            self.assertEqual(encrypted.returncode, 0, encrypted.stderr)
+            stdout = json.loads(encrypted.stdout)
+            self.assertEqual(
+                stdout["action_counts"],
+                {"rename": 1, "preserve": 6, "unsupported": 3},
+            )
+            self.assertEqual(stdout["summary"]["modified_tokens"], 2)
+            self.assertEqual(
+                (gate / "encryption_summary.txt").read_text(encoding="utf-8").splitlines()[:4],
+                [
+                    "改名对象（rename）：1",
+                    "保留对象（preserve）：6",
+                    "不支持对象（unsupported）：3",
+                    "修改 token 数：2",
+                ],
+            )
+
+            restored = root / "restored"
+            decrypted = self._run_public(
+                "rtl_decrypt",
+                "--map",
+                str(gate / "mapping.json"),
+                "--gate-dir",
+                str(gate),
+                "--output-dir",
+                str(restored),
+            )
+            self.assertEqual(decrypted.returncode, 0, decrypted.stderr)
+            report = json.loads((gate / "mapping.json").read_text(encoding="utf-8"))
+            for relative in self._physical_files(report):
+                self.assertEqual(
+                    (restored / relative).read_bytes(),
+                    (TYPEDEF_FIREWALL_ROOT / relative).read_bytes(),
+                )
 
     def test_direct_restore_tampering_and_legacy_fail_closed(self):
         with tempfile.TemporaryDirectory(prefix="t061-direct-tamper-") as temporary:
@@ -705,7 +786,8 @@ class PublicCliTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(
                 result.stderr,
-                "error: RESTORE_VNEXT_OUTPUT_INVALID\n",
+                "error: RESTORE_VNEXT_OUTPUT_INVALID\n"
+                "hint: 请改用尚不存在且不与输入重叠的恢复目录或报告路径。\n",
             )
             self.assertFalse(output.exists())
             self.assertEqual(
@@ -726,7 +808,8 @@ class PublicCliTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(
                 result.stderr,
-                "error: RESTORE_VNEXT_OUTPUT_INVALID\n",
+                "error: RESTORE_VNEXT_OUTPUT_INVALID\n"
+                "hint: 请改用尚不存在且不与输入重叠的恢复目录或报告路径。\n",
             )
             self.assertFalse(overlap_output.exists())
 
@@ -763,7 +846,11 @@ class PublicCliTests(unittest.TestCase):
                     value,
                 )
                 self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(result.stderr, "error: CLI_VNEXT_RATE_INVALID\n")
+                self.assertEqual(
+                    result.stderr,
+                    "error: CLI_VNEXT_RATE_INVALID\n"
+                    "hint: 请把 --encryption-rate 设置为大于 0 且不大于 1 的数值。\n",
+                )
                 self.assertFalse(gate.exists())
 
     def test_internal_operation_keeps_required_reports_abi_and_old_all(self):
@@ -832,19 +919,34 @@ class PublicCliTests(unittest.TestCase):
             ROOT / "docs" / "systemverilog_renaming_table.md"
         ).read_text(encoding="utf-8")
         headings = (
-            "## 加密模式",
-            "## 输出文件和加密率",
-            "## 单文件加密",
-            "## Filelist 多文件加密",
-            "## Project-root 项目加密",
+            "## 3 分钟快速开始",
+            "## 用在自己的工程",
+            "## 看懂结果",
+            "## 三种加密模式",
             "## 解密",
-            "## 常用可选参数",
+            "## 常用参数",
+            "## 安装",
+            "## 更多文档",
         )
         positions = tuple(readme.index(heading) for heading in headings)
         self.assertEqual(positions, tuple(sorted(positions)))
+        quickstart = readme[
+            readme.index("## 3 分钟快速开始") : readme.index("## 用在自己的工程")
+        ]
+        for required in (
+            "python rtl_encrypt.py",
+            "cat \"$quick_work/gate/encryption_summary.txt\"",
+            "python rtl_decrypt.py",
+            "cmp rtl_samples/11_supported_obfuscation.sv",
+            "action_counts.rename",
+            "strict_compile_passed",
+            "restored_byte_identical",
+            "error: CLI_VNEXT_INPUT_INVALID",
+            "hint: 请检查输入模式和路径",
+        ):
+            self.assertIn(required, quickstart)
         forbidden = (
             "ABI",
-            "vNext",
             "physical files",
             "top closure",
             "selected_top_boundary",
@@ -855,37 +957,37 @@ class PublicCliTests(unittest.TestCase):
         for term in forbidden:
             self.assertNotIn(term.lower(), readme.lower())
             self.assertNotIn(term.lower(), table.lower())
-        for start, end in zip(positions[2:5], positions[3:6], strict=True):
-            section = readme[start:end]
-            self.assertIn("### 基础命令", section)
-            self.assertIn("### 示例与架构", section)
-            basic = section[
-                section.index("### 基础命令") : section.index("### 示例与架构")
-            ]
-            self.assertNotIn("--map", basic)
-            self.assertNotIn("--metrics", basic)
-            self.assertNotIn("### 必填参数", section)
-            self.assertNotIn("### 项目示例", section)
-            self.assertNotIn("### 示例架构", section)
+        own_project = readme[
+            readme.index("## 用在自己的工程") : readme.index("## 看懂结果")
+        ]
+        self.assertIn("真实工程优先使用显式 filelist", own_project)
+        self.assertIn("第一次建议只选少量类型", own_project)
+        self.assertIn("逐类增加 `--category`", own_project)
+        self.assertIn("不表示任意工程的全部默认类型都已稳定支持", own_project)
+        result_section = readme[
+            readme.index("## 看懂结果") : readme.index("## 三种加密模式")
+        ]
+        for action in ("`rename`", "`preserve`", "`unsupported`", "`modified_tokens`"):
+            self.assertIn(action, result_section)
+        self.assertIn("`rename=0`", result_section)
+        self.assertIn("不能把它理解为所选类型已经完整支持", result_section)
         self.assertIn("<output-dir>/mapping.json", readme)
         self.assertIn("<output-dir>/metrics.json", readme)
         self.assertIn("rtl_samples/11_supported_obfuscation.sv", readme)
         self.assertIn("rtl_samples/example_fifo/design.f", readme)
         self.assertIn("rtl_samples/example_fifo", readme)
-        self.assertIn("--encryption-rate 0.35", readme)
         self.assertIn("不是标识符数量的精确比例", readme)
-        self.assertIn("当前版本会保留 top module 内部直接声明的 interface 实例名", readme)
+        self.assertIn("当前版本还会保留 top module 内部直接声明的 interface 实例名", readme)
         project_section = readme[
-            readme.index("## Project-root 项目加密") : readme.index("## 解密")
+            readme.index("## 三种加密模式") : readme.index("## 解密")
         ]
         decrypt_section = readme[
-            readme.index("## 解密") : readme.index("## 常用可选参数")
+            readme.index("## 解密") : readme.index("## 常用参数")
         ]
-        self.assertIn("--source-root <项目根目录>", project_section)
+        self.assertIn("--source-root <项目源码根目录>", project_section)
         self.assertNotIn("--project-root", project_section)
         self.assertNotIn("--source-root", decrypt_section)
         self.assertIn("--report <恢复报告.json>", decrypt_section)
-        self.assertIn("Formal 验证流程", decrypt_section)
         self.assertNotIn("python rtl_encrypt.py \\\n  --project-root", readme)
         for category in CANONICAL_CATEGORIES:
             self.assertIn(f"`{category}`", table)

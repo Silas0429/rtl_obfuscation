@@ -4,6 +4,10 @@
 的 filelist 默认选择前 13 类；带 `--top` 的 filelist，以及只提供
 `--source-root + --top` 的项目加密，默认选择全部 19 类。
 
+默认选择只表示工具会检查这些类型，不表示任意工程中的每种写法都能改名。真实工程建议从少量
+`--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
+保留的对象。`rename=0` 不能视为该类型已经完整支持。
+
 | `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
 | --- | --- | --- | --- | --- |
 | `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |

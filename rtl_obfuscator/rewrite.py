@@ -56,6 +56,22 @@ class _CliVNextError(ValueError):
         super().__init__(f"{code}: {message}" if message else code)
 
 
+class _PublicArgumentParser(argparse.ArgumentParser):
+    """Argparse surface that keeps public failures stable and actionable."""
+
+    def __init__(self, *args: Any, error_code: str, error_hint: str, **kwargs: Any) -> None:
+        self._error_code = error_code
+        self._error_hint = error_hint
+        super().__init__(*args, **kwargs)
+
+    def error(self, message: str) -> None:
+        del message
+        self.exit(
+            2,
+            f"error: {self._error_code}\nhint: {self._error_hint}\n",
+        )
+
+
 _CLI_VNEXT_DEFAULT_CATEGORIES = tuple(CANONICAL_CATEGORIES[:13])
 _CLI_VNEXT_CATEGORIES = frozenset(CANONICAL_CATEGORIES)
 _CLI_VNEXT_ABI_CATEGORIES = frozenset(MODULE_ABI_CATEGORIES)
@@ -552,16 +568,32 @@ def _cli_vnext_mapping_table(
     return output.getvalue()
 
 
+def _cli_vnext_action_counts(report: dict[str, Any]) -> dict[str, int]:
+    mapping = report.get("mapping")
+    records = mapping.get("records") if isinstance(mapping, dict) else None
+    if not isinstance(records, list):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    action_counts = {"rename": 0, "preserve": 0, "unsupported": 0}
+    for record in records:
+        if not isinstance(record, dict) or record.get("action") not in action_counts:
+            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        action_counts[record["action"]] += 1
+    return action_counts
+
+
 def _cli_vnext_encryption_summary(
     report: dict[str, Any],
     metrics_report: dict[str, Any],
 ) -> str:
     mapping = report.get("mapping")
     records = mapping.get("records") if isinstance(mapping, dict) else None
+    summary = report.get("summary")
     effective_lines = metrics_report.get("effective_lines")
     affected_lines = metrics_report.get("affected_lines")
     if (
         not isinstance(records, list)
+        or not isinstance(summary, dict)
+        or type(summary.get("modified_tokens")) is not int
         or not isinstance(effective_lines, dict)
         or not isinstance(affected_lines, dict)
         or type(effective_lines.get("total")) is not int
@@ -570,10 +602,9 @@ def _cli_vnext_encryption_summary(
         or not isinstance(affected_lines.get("rate"), (int, float))
     ):
         _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+    action_counts = _cli_vnext_action_counts(report)
     renamed_records = []
     for record in records:
-        if not isinstance(record, dict):
-            _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
         if record.get("action") == "rename":
             renamed_records.append(record)
     category_set = {
@@ -586,6 +617,10 @@ def _cli_vnext_encryption_summary(
     )
     return "\n".join(
         (
+            f"改名对象（rename）：{action_counts['rename']}",
+            f"保留对象（preserve）：{action_counts['preserve']}",
+            f"不支持对象（unsupported）：{action_counts['unsupported']}",
+            f"修改 token 数：{summary['modified_tokens']}",
             f"加密率：{affected_lines['rate']}",
             f"实际加密行数：{affected_lines['changed']}",
             f"总代码行数：{effective_lines['total']}",
@@ -680,6 +715,7 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
         if not isinstance(summary, dict) or not _cli_vnext_portable_report(report):
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+        action_counts = _cli_vnext_action_counts(report)
         staged_map = gate_dir / "mapping.json" if map_default else staging_root / "orchestration.json"
         staged_metrics = gate_dir / "metrics.json" if metrics_default else staging_root / "metrics.json"
         staged_mapping_table = gate_dir / "mapping_table.csv"
@@ -712,6 +748,7 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             "format": "rtl-obfuscation.cli-vnext",
             "schema_version": 1,
             "state": "restored",
+            "action_counts": action_counts,
             "summary": summary,
         }
     finally:
@@ -787,26 +824,89 @@ def _register_encrypt_arguments(
     *,
     public_cli: bool,
 ) -> None:
-    parser.add_argument("--input", dest="input_file", type=Path)
-    parser.add_argument("--filelist", type=Path)
+    public_help = {
+        "input": "单文件模式：要加密的 .sv 文件",
+        "filelist": "filelist 模式：按编译顺序列出源码的 .f 文件",
+        "source_root": "源码根目录；相对路径和 include 均以此为基准",
+        "top": "顶层 module；project-root 模式必填，filelist 模式可选",
+        "include_dir": "额外 include 目录，可重复使用",
+        "define": "预处理宏 NAME[=VALUE]，可重复使用",
+        "category": "只处理指定名称类型，可重复使用；建议真实工程从少量类型开始",
+        "encryption_rate": "加密率，范围为 0 < RATE <= 1",
+        "name_length": "新名称长度，最小 4，默认 20",
+        "output_dir": "加密输出目录；运行前必须不存在",
+        "map": "mapping.json 的自定义路径；默认写入加密目录",
+        "metrics": "metrics.json 的自定义路径；默认写入加密目录",
+    }
+    parser.add_argument(
+        "--input",
+        dest="input_file",
+        type=Path,
+        help=public_help["input"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--filelist",
+        type=Path,
+        help=public_help["filelist"] if public_cli else None,
+    )
     if not public_cli:
         parser.add_argument("--project-root", type=Path)
-    parser.add_argument("--source-root", type=Path)
-    parser.add_argument("--top")
-    parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[])
-    parser.add_argument("--define", dest="defines", action="append", default=[])
-    parser.add_argument("--category", action="append", default=None)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help=public_help["source_root"] if public_cli else None,
+    )
+    parser.add_argument("--top", help=public_help["top"] if public_cli else None)
+    parser.add_argument(
+        "--include-dir",
+        dest="include_dirs",
+        action="append",
+        default=[],
+        help=public_help["include_dir"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--define",
+        dest="defines",
+        action="append",
+        default=[],
+        help=public_help["define"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=None,
+        help=public_help["category"] if public_cli else None,
+    )
     if not public_cli:
         parser.add_argument("--abi-category", action="append", default=None)
-    parser.add_argument("--encryption-rate")
-    parser.add_argument("--name-length", default=20)
-    parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--map", dest="map_file", required=not public_cli, type=Path)
+    parser.add_argument(
+        "--encryption-rate",
+        help=public_help["encryption_rate"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--name-length",
+        default=20,
+        help=public_help["name_length"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help=public_help["output_dir"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--map",
+        dest="map_file",
+        required=not public_cli,
+        type=Path,
+        help=public_help["map"] if public_cli else None,
+    )
     parser.add_argument(
         "--metrics",
         dest="metrics_file",
         required=not public_cli,
         type=Path,
+        help=public_help["metrics"] if public_cli else None,
     )
     parser.set_defaults(public_cli=public_cli)
 
@@ -816,12 +916,38 @@ def _register_decrypt_arguments(
     *,
     public_cli: bool,
 ) -> None:
-    parser.add_argument("--map", dest="map_file", required=True, type=Path)
-    parser.add_argument("--gate-dir", required=True, type=Path)
+    public_help = {
+        "map": "加密时生成的 mapping.json",
+        "gate_dir": "加密 RTL 所在目录",
+        "output_dir": "恢复输出目录；运行前必须不存在",
+        "report": "可选的恢复结果报告路径",
+    }
+    parser.add_argument(
+        "--map",
+        dest="map_file",
+        required=True,
+        type=Path,
+        help=public_help["map"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--gate-dir",
+        required=True,
+        type=Path,
+        help=public_help["gate_dir"] if public_cli else None,
+    )
     if not public_cli:
         parser.add_argument("--source-root", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help=public_help["output_dir"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help=public_help["report"] if public_cli else None,
+    )
     parser.set_defaults(public_cli=public_cli)
 
 
@@ -840,19 +966,34 @@ def _create_argument_parser() -> argparse.ArgumentParser:
 
 
 def _create_encrypt_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _PublicArgumentParser(
         prog="rtl_encrypt",
-        description="Encrypt selected SystemVerilog identifiers.",
+        description="加密 SystemVerilog RTL 名称。",
+        epilog=(
+            "输入模式（三选一）：\n"
+            "  单文件：--input FILE --source-root DIR\n"
+            "  filelist：--filelist DESIGN.F --source-root DIR [--top TOP]\n"
+            "  project-root：--source-root DIR --top TOP"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
+        error_code="CLI_VNEXT_INPUT_INVALID",
+        error_hint="请检查三种输入模式、必要参数和路径；project-root 模式需要 --source-root 与 --top。",
     )
+    parser.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     _register_encrypt_arguments(parser, public_cli=True)
     return parser
 
 
 def _create_decrypt_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _PublicArgumentParser(
         prog="rtl_decrypt",
-        description="Restore SystemVerilog sources from an encryption report.",
+        description="使用 mapping.json 从加密目录恢复 SystemVerilog 源码。",
+        add_help=False,
+        error_code="RESTORE_VNEXT_INPUT_INVALID",
+        error_hint="请同时提供 --map、--gate-dir 和尚不存在的 --output-dir。",
     )
+    parser.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     _register_decrypt_arguments(parser, public_cli=True)
     return parser
 
@@ -862,14 +1003,30 @@ def _run_cli_operation(
     args: argparse.Namespace,
     operation: Any,
 ) -> int:
+    def fail(code: str) -> None:
+        hints = {
+            "CLI_VNEXT_INPUT_INVALID": "请检查输入模式和路径；project-root 模式必须同时提供 --source-root 与 --top。",
+            "CLI_VNEXT_OUTPUT_INVALID": "请改用尚不存在且不与源码重叠的输出目录或报告路径。",
+            "CLI_VNEXT_RATE_INVALID": "请把 --encryption-rate 设置为大于 0 且不大于 1 的数值。",
+            "CLI_VNEXT_ORCHESTRATION_INVALID": "请检查 filelist 编译顺序、include 目录、宏定义及严格编译诊断。",
+            "CLI_VNEXT_IO_ERROR": "请检查目标目录权限和可用磁盘空间后重试。",
+            "RESTORE_VNEXT_INPUT_INVALID": "请检查 --map 是否指向本次加密生成的 mapping.json。",
+            "RESTORE_VNEXT_GATE_INVALID": "请检查 --gate-dir 是否为 mapping.json 对应且未被改动的加密目录。",
+            "RESTORE_VNEXT_OUTPUT_INVALID": "请改用尚不存在且不与输入重叠的恢复目录或报告路径。",
+            "RESTORE_VNEXT_REPORT_INVALID": "mapping.json 与加密目录不匹配或已损坏，请使用同一次加密的原始产物。",
+            "RESTORE_VNEXT_IO_ERROR": "请检查目标目录权限和可用磁盘空间后重试。",
+        }
+        hint = hints.get(code, "请检查命令参数、输入文件和输出路径后重试。")
+        parser.exit(1, f"error: {code}\nhint: {hint}\n")
+
     try:
         summary = operation(args)
     except _CliVNextError as error:
-        parser.exit(1, f"error: {error.code}\n")
+        fail(error.code)
     except restore_vnext.RestoreVNextError as error:
-        parser.exit(1, f"error: {error.code}\n")
+        fail(error.code)
     except (OSError, RuntimeError, ValueError):
-        parser.exit(1, "error: CLI_VNEXT_INPUT_INVALID\n")
+        fail("CLI_VNEXT_INPUT_INVALID")
     print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
     return 0
 

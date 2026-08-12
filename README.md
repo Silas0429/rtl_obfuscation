@@ -1,94 +1,71 @@
 # RTL Obfuscation
 
-本项目用于加密 SystemVerilog RTL 中的名称，例如信号、实例、参数、类型、module 和
-interface 名称。加密只改变名称，不改变 RTL 的预期功能，并且可以恢复原始源码。
+本项目通过一致改写 SystemVerilog RTL 名称来加密源码，并可使用 `mapping.json` 恢复原文件。
 
-## 安装 PySlang wheel
+## 3 分钟快速开始
 
-请先进入仓库根目录。项目本身无需安装，但运行加密命令需要 Python 3.10 或更高版本，
-以及已安装的 PySlang 11.x。仓库当前提供以下离线 wheel：
+前提：在仓库根目录使用 Python 3.10 或更高版本，并已安装 PySlang 11.x；如未安装，跳到
+[安装](#安装)。
 
-| 文件 | 适用版本和平台 |
-| --- | --- |
-| `wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` | CPython 3.11、Linux x86_64、glibc 2.17 或更高版本 |
-
-该 wheel 不适用于 Python 3.10、Windows、macOS 或 ARM。其他平台请安装匹配的 PySlang 11.x，
-或阅读 [PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。
-
-### 方式一：安装到当前 Python 环境
-
-确认当前 `python` 是 CPython 3.11，然后直接安装仓库提供的 wheel：
+复制下面命令即可完成一次加密和恢复：
 
 ```sh
-python --version
-python -m pip install --no-index --no-deps \
-  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-python -c "import pyslang; print(pyslang.__version__)"
+quick_work="$(mktemp -d /tmp/rtl-obfuscation-quick.XXXXXX)"
+python rtl_encrypt.py \
+  --input 11_supported_obfuscation.sv \
+  --source-root rtl_samples \
+  --output-dir "$quick_work/gate"
+cat "$quick_work/gate/encryption_summary.txt"
+python rtl_decrypt.py \
+  --map "$quick_work/gate/mapping.json" \
+  --gate-dir "$quick_work/gate" \
+  --output-dir "$quick_work/restored"
+cmp rtl_samples/11_supported_obfuscation.sv \
+  "$quick_work/restored/11_supported_obfuscation.sv"
 ```
 
-### 方式二：创建虚拟环境后安装
+如何判断成功：
 
-如果不希望修改当前 Python 环境，可以创建并激活一个 Python 3.11 虚拟环境：
+- 加密命令退出码为 `0`，终端 JSON 中 `action_counts.rename` 大于 `0`；
+- `summary.strict_compile_passed` 和 `summary.restored_byte_identical` 均为 `true`；
+- 最后一条 `cmp` 没有输出，表示公开恢复结果与原文件逐字节一致。
+
+输出目录只在全部检查成功后发布。失败时首行是稳定错误码，第二行会给出检查建议，例如：
+
+```text
+error: CLI_VNEXT_INPUT_INVALID
+hint: 请检查输入模式和路径；project-root 模式必须同时提供 --source-root 与 --top。
+```
+
+## 用在自己的工程
+
+真实工程优先使用显式 filelist。它能固定编译顺序，并配合 `--include-dir`、`--define` 准确提供
+编译环境。第一次建议只选少量类型，例如：
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --no-index --no-deps \
-  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-python -c "import pyslang; print(pyslang.__version__)"
-python rtl_encrypt.py --help
+python rtl_encrypt.py \
+  --filelist design.f \
+  --source-root <项目源码根目录> \
+  --top <顶层模块名> \
+  --category signals \
+  --category instances \
+  --output-dir <尚不存在的输出目录>
 ```
 
-之后保持虚拟环境处于激活状态即可运行本项目；使用完毕后执行 `deactivate` 退出。
+确认严格编译、实际改名数和恢复结果后，再用新的输出目录逐类增加 `--category`。不提供
+`--category` 时会使用当前模式的默认范围，但这不表示任意工程的全部默认类型都已稳定支持。
+可选值和保守边界见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。
 
-如果目标服务器无法联网安装或当前平台不匹配，请使用上面的离线部署指南准备兼容环境。
+## 看懂结果
 
-安装完成后，可查看命令帮助：
+加密命令的 JSON 和 `encryption_summary.txt` 会直接报告：
 
-```sh
-python rtl_encrypt.py --help
-python rtl_decrypt.py --help
-```
+- `rename`：实际改名的对象；
+- `preserve`：因边界或策略保持原名的对象；
+- `unsupported`：当前证据不足、为避免错误而不改名的对象；
+- `modified_tokens`：实际改写的源码 token 数。
 
-## 文档导航
-
-- [PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)：服务器无法联网时准备运行环境。
-- [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)：查看 `--category` 可以选择的内容。
-- [Formal 验证流程](docs/formal_verification.md)：加密完成后，按需独立检查原始 RTL 与加密 RTL 的功能等价性。
-- [开发文档索引](docs/development/README.md)：只面向项目维护者，不是用户操作必读内容。
-
-## 加密模式
-
-| 模式 | 输入 | 加密范围 | 加密内容 |
-| --- | --- | --- | --- |
-| 单文件 | 一个 `.sv` 文件及源码根目录 | 该输入文件 | 不改变 module 端口，只加密内部名称 |
-| filelist | filelist 及源码根目录 | filelist 中的全部文件 | 不提供 `--top` 时不改变 module 端口；提供 `--top` 后会同时加密子 module 端口和跨 module 引用 |
-| project-root | 源码根目录及 top module | top module 及其使用的全部源码 | 只保留顶层 module 名称和端口，加密子 module 端口以及跨 module 使用的接口、参数和类型 |
-
-不提供 `--category` 时，单文件和不带 `--top` 的 filelist 默认加密 13 类常用内部名称，
-包括信号、实例、参数、结构体、函数和任务等。它们不会改变其他 module 调用当前 module
-时使用的名称。
-
-filelist 可以增加 `--top`。filelist 中的全部文件仍会处理；同时，工具会在该 top 使用到
-的范围内一致地修改子 module 名称、子 module 端口、interface、参数和类型等跨 module
-名称。
-
-project-root 必须提供 `--top`。工具会自动找到该 top 使用的源码，并默认处理当前支持的
-全部 19 类名称。加密后，外部仍可通过原来的 top module 名称和端口连接设计；不应再单独
-调用已经改名的子 module、interface 或类型。
-
-当前版本会保留 top module 内部直接声明的 interface 实例名；interface 类型和成员仍会
-加密。
-
-使用 `--category` 可以只选择指定的加密内容。所有可选名称见
-[SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。
-
-## 输出文件和加密率
-
-`--output-dir` 是必填参数，用于存放加密后的 RTL。目标目录必须尚未存在，工具会在成功后
-一次性生成它。
-
-如果不指定报告路径，工具会把两个报告放在加密目录内：
+`rename=0` 表示本次没有发生有效加密，不能把它理解为所选类型已经完整支持。详细记录位于：
 
 ```text
 <output-dir>/mapping.json
@@ -97,150 +74,55 @@ project-root 必须提供 `--top`。工具会自动找到该 top 使用的源码
 <output-dir>/encryption_summary.txt
 ```
 
-- `mapping.json`：用于恢复原始名称，同时记录本次加密结果。
-- `metrics.json`：记录实际加密覆盖率。
-- `mapping_table.csv`：用表格列出每个实际替换的文件名、模块名、作用域、加密类型、原名和替换后名。
-- `encryption_summary.txt`：用文字列出实际加密率、加密行数、总代码行数和实际加密类型。
+`mapping.json` 同时用于恢复；`mapping_table.csv` 只列出实际替换项。严格编译和逐字节恢复是发布
+gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Formal 验证流程](docs/formal_verification.md)。
 
-CSV 中的作用域会使用简短形式，例如 `type:pair_t`、`task:select_value` 和
-`generate:line 42`；不会写入完整的 generate 语句。
+## 三种加密模式
 
-只有希望把报告放到其他位置时，才需要使用 `--map` 或 `--metrics`。可以只指定其中一个，
-另一个仍会写入默认位置。`mapping_table.csv` 和 `encryption_summary.txt` 始终写入
-`<output-dir>`。
+| 模式 | 必要输入 | 适用方式 |
+| --- | --- | --- |
+| 单文件 | `--input`、`--source-root` | 快速试用或独立 `.sv` 文件；只处理内部名称 |
+| filelist | `--filelist`、`--source-root`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件 |
+| project-root | `--source-root`、`--top` | 从 top 自动发现源码；适合目录和依赖都完整的工程 |
 
-默认会处理当前范围内全部可加密名称。使用下面的参数可以控制加密率：
-
-```sh
---encryption-rate 0.35
-```
-
-取值必须满足 `0 < RATE <= 1`，其中 `1` 表示全部加密。小于 `1` 时，工具根据可加密名称
-影响到的有效代码行选择接近目标比例的名称，因此它不是标识符数量的精确比例。
-
-## 单文件加密
-
-### 基础命令
+单文件：
 
 ```sh
 python rtl_encrypt.py \
-  --input <输入文件> \
+  --input <输入文件.sv> \
   --source-root <源码根目录> \
   --output-dir <加密输出目录>
 ```
 
-- `--input`：要加密的一个 `.sv` 文件，可写相对于 `--source-root` 的路径。
-- `--source-root`：输入文件和相对 include 使用的根目录。
-- `--output-dir`：加密结果目录，运行前不能存在。
-
-### 示例与架构
-
-示例文件为 `rtl_samples/11_supported_obfuscation.sv`，一个文件内包含两个 module：
-
-```text
-sample11_supported_obfuscation
-└── sample11_helper
-```
-
-它包含参数、信号、类型、function、task、generate 和 module 实例，适合查看默认 13 类
-内部名称的加密效果。
+Filelist：
 
 ```sh
-single_work="$(mktemp -d /tmp/rtl-obfuscation-single.XXXXXX)"
-
-python rtl_encrypt.py \
-  --input 11_supported_obfuscation.sv \
-  --source-root rtl_samples \
-  --output-dir "$single_work/gate"
-```
-
-加密报告位于 `$single_work/gate/mapping.json` 和
-`$single_work/gate/metrics.json`。
-
-## Filelist 多文件加密
-
-### 基础命令
-
-```sh
-python rtl_encrypt.py \
-  --filelist <文件清单.f> \
-  --source-root <源码根目录> \
-  --output-dir <加密输出目录>
-```
-
-- `--filelist`：列出输入 `.sv/.svh` 文件的 `.f` 文件，可写相对于
-  `--source-root` 的路径。
-- `--source-root`：filelist、源码和相对 include 使用的根目录。
-- `--output-dir`：加密结果目录，运行前不能存在。
-- `--top`：可选。不提供时只处理默认 13 类内部名称；提供后还会一致地修改该 top 使用到
-  的子 module 端口和跨 module 名称。
-
-### 示例与架构
-
-示例使用 `rtl_samples/example_fifo/design.f`。filelist 按编译顺序列出四个文件：
-
-```text
-fifo_top
-├── fifo_if
-└── fifo_ctrl
-    ├── fifo_if
-    └── fifo_storage
-```
-
-下面提供 `--top fifo_top`，因此会处理 filelist 中的全部文件，并自动加密子 module 端口、
-interface、参数和其他跨 module 名称；`fifo_top` 的名称和对外端口保持不变。
-
-```sh
-filelist_work="$(mktemp -d /tmp/rtl-obfuscation-filelist.XXXXXX)"
-
 python rtl_encrypt.py \
   --filelist design.f \
-  --source-root rtl_samples/example_fifo \
-  --top fifo_top \
-  --output-dir "$filelist_work/gate"
+  --source-root <源码根目录> \
+  --top <可选的顶层模块名> \
+  --output-dir <加密输出目录>
 ```
 
-## Project-root 项目加密
+仓库示例使用 `rtl_samples/example_fifo/design.f`、源码根目录
+`rtl_samples/example_fifo` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
+提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
 
-### 基础命令
+Project-root：
 
 ```sh
 python rtl_encrypt.py \
-  --source-root <项目根目录> \
+  --source-root <项目源码根目录> \
   --top <顶层模块名> \
   --output-dir <加密输出目录>
 ```
 
-- `--source-root`：RTL 项目根目录。
-- `--top`：项目对外使用的顶层 module 名称。
-- `--output-dir`：加密结果目录，运行前不能存在。
-
-不提供 `--input` 或 `--filelist`、同时提供 `--source-root` 和 `--top` 时，工具会自动进入
-项目加密模式，从 top 开始找到实际使用的源码。
-
-### 示例与架构
-
-示例继续使用 `rtl_samples/example_fifo`，架构与上一个示例相同。该命令默认处理当前支持的
-全部 19 类名称，只保留 `fifo_top` 的名称和对外端口：
-
-```sh
-project_work="$(mktemp -d /tmp/rtl-obfuscation-project.XXXXXX)"
-
-python rtl_encrypt.py \
-  --source-root rtl_samples/example_fifo \
-  --top fifo_top \
-  --output-dir "$project_work/gate"
-```
-
-如需把加密率控制在接近 35%，只需在命令末尾增加：
-
-```sh
-  --encryption-rate 0.35
-```
+Project-root 不使用 `--input` 或 `--filelist`。它是方便入口；若自动发现受宏、include 或文件顺序
+影响，请改用显式 filelist。当前版本还会保留 top module 内部直接声明的 interface 实例名。
 
 ## 解密
 
-加密时未指定 `--map`，映射报告默认位于 `<output-dir>/mapping.json`。恢复命令为：
+使用加密时生成的 `mapping.json` 和对应 gate，无需提供原始源码：
 
 ```sh
 python rtl_decrypt.py \
@@ -249,37 +131,47 @@ python rtl_decrypt.py \
   --output-dir <恢复输出目录>
 ```
 
-- `--map`：加密时生成的 `mapping.json`。
-- `--gate-dir`：加密 RTL 所在目录。
-- `--output-dir`：恢复后的源码目录，运行前不能存在。
+恢复目录运行前必须不存在。需要额外保存恢复报告时增加 `--report <恢复报告.json>`。
 
-恢复上面的 project-root 示例：
-
-```sh
-python rtl_decrypt.py \
-  --map "$project_work/gate/mapping.json" \
-  --gate-dir "$project_work/gate" \
-  --output-dir "$project_work/restored"
-```
-
-恢复成功后，四个 SystemVerilog 源文件与加密前逐字节一致。
-
-如果还需要保存一份恢复结果报告，可以增加 `--report <恢复报告.json>`。RTL 功能等价验证
-是独立步骤，参见 [Formal 验证流程](docs/formal_verification.md)。
-
-## 常用可选参数
+## 常用参数
 
 | 选项 | 用法 |
 | --- | --- |
-| `--include-dir PATH` | 添加 include 目录，可重复使用；相对路径以源码根目录为基准。 |
-| `--define NAME[=VALUE]` | 添加预处理宏，可重复使用，例如 `--define SYNTHESIS`。 |
-| `--category NAME` | 只加密指定类型，可重复使用；不提供时使用当前模式的默认范围。 |
-| `--encryption-rate RATE` | 控制加密率，必须大于 `0` 且不大于 `1`。 |
-| `--name-length N` | 设置新名称长度，最小为 `4`，默认值为 `20`。 |
-| `--map PATH` | 把映射报告写到指定文件；省略时写入 `<output-dir>/mapping.json`。 |
-| `--metrics PATH` | 把覆盖率报告写到指定文件；省略时写入 `<output-dir>/metrics.json`。 |
-| `--report PATH` | 解密时把恢复结果报告写到指定文件；省略时只输出恢复后的 RTL。 |
+| `--include-dir PATH` | 添加 include 目录，可重复使用；相对路径以源码根目录为基准 |
+| `--define NAME[=VALUE]` | 添加预处理宏，可重复使用，例如 `--define SYNTHESIS` |
+| `--category NAME` | 只处理指定类型，可重复使用 |
+| `--encryption-rate RATE` | 目标加密率，范围为 `0 < RATE <= 1`；不是标识符数量的精确比例 |
+| `--name-length N` | 新名称长度，最小为 `4`，默认值为 `20` |
+| `--map PATH` | 自定义映射报告路径；默认是 `<output-dir>/mapping.json` |
+| `--metrics PATH` | 自定义覆盖率报告路径；默认是 `<output-dir>/metrics.json` |
+| `--report PATH` | 解密时额外保存恢复报告 |
 
-可加密内容和 `--category` 示例见
-[SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。开发与维护信息见
-[开发文档索引](docs/development/README.md)。
+查看全部参数和三种输入模式提示：
+
+```sh
+python rtl_encrypt.py --help
+python rtl_decrypt.py --help
+```
+
+## 安装
+
+仓库提供 CPython 3.11、Linux x86_64、glibc 2.17 或更高版本使用的 PySlang 11.0.0 wheel。
+推荐在虚拟环境中安装：
+
+```sh
+python --version
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --no-index --no-deps \
+  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+python -c "import pyslang; print(pyslang.__version__)"
+```
+
+其他环境请准备匹配的 PySlang 11.x，详见
+[PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。
+
+## 更多文档
+
+- [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)：类型选择和保守边界；
+- [Formal 验证流程](docs/formal_verification.md)：独立检查功能等价性；
+- [开发文档索引](docs/development/README.md)：只面向维护者，不是首次使用必读内容。
