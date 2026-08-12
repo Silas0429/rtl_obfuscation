@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Iterable
 
 from .project_discovery import (
@@ -15,6 +16,27 @@ from .project_discovery import (
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")
+_ENVIRONMENT_VARIABLE = re.compile(
+    r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
+)
+_FILELIST_SUFFIXES = frozenset({".f", ".filelist"})
+_FILELIST_SHELL_MARKERS = (
+    "\\",
+    "\"",
+    "'",
+    "`",
+    "$(",
+    ";",
+    "&&",
+    "||",
+    "|",
+    "<",
+    ">",
+    "*",
+    "?",
+    "[",
+    "]",
+)
 
 
 @dataclass(frozen=True)
@@ -147,20 +169,51 @@ def _normalize_source_file(*, root: Path, source_file: Path) -> str:
     return relative
 
 
-def _normalize_filelist_entry(*, root: Path, text: str) -> str:
-    path = PurePosixPath(text)
-    if path.is_absolute() or ".." in path.parts:
-        raise SourceSetError(
-            "SOURCESET_PATH_OUTSIDE_ROOT", "filelist entry is outside source root", text
-        )
-    relative = path.as_posix()
-    absolute = (root / relative).resolve()
-    try:
-        absolute.relative_to(root)
-    except ValueError as error:
-        raise SourceSetError(
-            "SOURCESET_PATH_OUTSIDE_ROOT", "filelist entry is outside source root", text
-        ) from error
+def _raise_unsupported_filelist_directive(text: str) -> None:
+    raise SourceSetError(
+        "SOURCESET_UNSUPPORTED_FILELIST_DIRECTIVE",
+        "filelist directive or shell syntax is unsupported",
+        text,
+    )
+
+
+def _expand_filelist_environment(
+    text: str, environment: dict[str, str]
+) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group("braced") or match.group("plain")
+        if name not in environment:
+            raise SourceSetError(
+                "SOURCESET_ENV_UNDEFINED",
+                f"filelist environment variable is undefined: {name}",
+                name,
+            )
+        return environment[name]
+
+    expanded = _ENVIRONMENT_VARIABLE.sub(replace, text)
+    if "$" in expanded or any(
+        marker in expanded for marker in _FILELIST_SHELL_MARKERS
+    ):
+        _raise_unsupported_filelist_directive(text)
+    return expanded
+
+
+def _resolve_filelist_path(
+    *, root: Path, text: str, environment: dict[str, str], label: str
+) -> tuple[Path, str]:
+    expanded = _expand_filelist_environment(text, environment)
+    path = Path(expanded)
+    absolute = (root / path).resolve() if not path.is_absolute() else path.resolve()
+    relative = _relative_to_root(root, absolute, label=label)
+    return absolute, relative
+
+
+def _normalize_filelist_entry(
+    *, root: Path, text: str, environment: dict[str, str]
+) -> str:
+    absolute, relative = _resolve_filelist_path(
+        root=root, text=text, environment=environment, label="filelist entry"
+    )
     if absolute.suffix not in (".sv", ".svh"):
         raise SourceSetError(
             "SOURCESET_UNSUPPORTED_FILE",
@@ -175,30 +228,77 @@ def _normalize_filelist_entry(*, root: Path, text: str) -> str:
 
 
 def _read_filelist(
-    *, filelist: Path, root: Path
+    *, filelist: Path, root: Path, environment: dict[str, str] | None = None
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     path = Path(filelist).expanduser().resolve()
     if not path.is_file():
-        raise SourceSetError("SOURCESET_FILE_NOT_FOUND", "filelist does not exist", str(path))
+        raise SourceSetError(
+            "SOURCESET_FILE_NOT_FOUND", "filelist does not exist", str(path)
+        )
+    environment_snapshot = dict(os.environ if environment is None else environment)
     source_files: list[str] = []
     header_files: list[str] = []
     seen: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        text = line.strip()
-        if not text or text.startswith("#"):
-            continue
-        relative = _normalize_filelist_entry(root=root, text=text)
-        if relative in seen:
+
+    def visit(current: Path, active: tuple[Path, ...]) -> None:
+        canonical = current.resolve()
+        if canonical in active:
             raise SourceSetError(
-                "SOURCESET_DUPLICATE_FILE",
-                "filelist contains a duplicate normalized path",
-                relative,
+                "SOURCESET_FILELIST_CYCLE",
+                "filelist includes itself through a recursive -f chain",
+                str(canonical),
             )
-        seen.add(relative)
-        if relative.endswith(".sv"):
-            source_files.append(relative)
-        else:
-            header_files.append(relative)
+        if not canonical.is_file():
+            raise SourceSetError(
+                "SOURCESET_FILE_NOT_FOUND", "filelist does not exist", str(canonical)
+            )
+
+        next_active = (*active, canonical)
+        for line in canonical.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            if not text or text.startswith("#") or text.startswith("//"):
+                continue
+
+            tokens = text.split()
+            if tokens and tokens[0] == "-f":
+                if len(tokens) != 2:
+                    if len(tokens) == 1:
+                        raise SourceSetError(
+                            "SOURCESET_INVALID_ARGUMENT",
+                            "-f requires a filelist path on the same line",
+                            text,
+                        )
+                    _raise_unsupported_filelist_directive(text)
+                child, child_relative = _resolve_filelist_path(
+                    root=root,
+                    text=tokens[1],
+                    environment=environment_snapshot,
+                    label="nested filelist",
+                )
+                if child.suffix not in _FILELIST_SUFFIXES:
+                    _raise_unsupported_filelist_directive(child_relative)
+                visit(child, next_active)
+                continue
+
+            if text.startswith(("+", "-")) or len(tokens) != 1:
+                _raise_unsupported_filelist_directive(text)
+
+            relative = _normalize_filelist_entry(
+                root=root, text=tokens[0], environment=environment_snapshot
+            )
+            if relative in seen:
+                raise SourceSetError(
+                    "SOURCESET_DUPLICATE_FILE",
+                    "filelist contains a duplicate normalized path",
+                    relative,
+                )
+            seen.add(relative)
+            if relative.endswith(".sv"):
+                source_files.append(relative)
+            else:
+                header_files.append(relative)
+
+    visit(path, ())
     if not source_files and not header_files:
         raise SourceSetError("SOURCESET_EMPTY_FILELIST", "filelist has no valid entries")
     return tuple(source_files), tuple(header_files)
@@ -309,7 +409,9 @@ def from_filelist(
     top: str | None = None,
 ) -> SourceSet:
     root = _normalize_root(source_root)
-    source_files, explicit_headers = _read_filelist(filelist=filelist, root=root)
+    source_files, explicit_headers = _read_filelist(
+        filelist=filelist, root=root, environment=dict(os.environ)
+    )
     normalized_dirs = _normalize_include_dirs(root=root, include_dirs=include_dirs)
     normalized_defines = _normalize_defines(defines)
     normalized_top = _normalize_top(top, required=False)

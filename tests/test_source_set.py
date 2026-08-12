@@ -1,6 +1,9 @@
 import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 from rtl_obfuscator.source_set import (
     SourceSetError,
     from_filelist,
@@ -11,6 +14,7 @@ from rtl_obfuscator.source_set import (
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "refactor_source_set"
 INCLUDE_DIR = FIXTURE_ROOT / "include"
+T087_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "t087_filelist_frontend"
 
 
 class SourceSetTests(unittest.TestCase):
@@ -165,6 +169,97 @@ class SourceSetTests(unittest.TestCase):
         self.assertTrue(single.compile_order)
         self.assertTrue(filelist.compile_order)
         self.assertEqual(project.origin, "project-root")
+
+    def test_t087_expands_environment_comments_and_nested_order(self):
+        with mock.patch.dict(
+            os.environ, {"T087_PROJ": str(T087_FIXTURE_ROOT)}, clear=False
+        ):
+            result = from_filelist(
+                filelist=T087_FIXTURE_ROOT / "design.f",
+                source_root=T087_FIXTURE_ROOT,
+                top="top",
+            )
+
+        self.assertEqual(
+            result.ordered_source_files,
+            ("rtl/top.sv", "rtl/child.sv"),
+        )
+        self.assertEqual(result.compile_order, result.ordered_source_files)
+        self.assertEqual(result.included_files, ("include/common.svh",))
+        self.assertNotIn("rtl/ignored.sv", result.ordered_source_files)
+        self.assertNotIn("$T087_PROJ", json.dumps(result.to_report()))
+        self.assertNotIn("child.f", json.dumps(result.to_report()))
+
+    def test_t087_absolute_and_environment_paths_normalize_identically(self):
+        with mock.patch.dict(
+            os.environ, {"T087_PROJ": str(T087_FIXTURE_ROOT)}, clear=False
+        ):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                temporary_root = Path(temporary_directory)
+                absolute_filelist = temporary_root / "absolute.f"
+                variable_filelist = temporary_root / "variable.f"
+                absolute_filelist.write_text(
+                    f"{T087_FIXTURE_ROOT / 'rtl' / 'top.sv'}\n",
+                    encoding="utf-8",
+                )
+                variable_filelist.write_text(
+                    "$T087_PROJ/rtl/top.sv\n", encoding="utf-8"
+                )
+                absolute = from_filelist(
+                    filelist=absolute_filelist, source_root=T087_FIXTURE_ROOT
+                )
+                variable = from_filelist(
+                    filelist=variable_filelist, source_root=T087_FIXTURE_ROOT
+                )
+
+        self.assertEqual(absolute.ordered_source_files, ("rtl/top.sv",))
+        self.assertEqual(absolute.ordered_source_files, variable.ordered_source_files)
+        self.assertEqual(absolute.included_files, variable.included_files)
+
+    def test_t087_nested_relative_entries_stay_source_root_based(self):
+        with mock.patch.dict(
+            os.environ, {"T087_PROJ": str(T087_FIXTURE_ROOT)}, clear=False
+        ):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                top_filelist = Path(temporary_directory) / "top.f"
+                top_filelist.write_text(
+                    "-f $T087_PROJ/nested/relative.f\n", encoding="utf-8"
+                )
+                result = from_filelist(
+                    filelist=top_filelist, source_root=T087_FIXTURE_ROOT
+                )
+
+        self.assertEqual(result.ordered_source_files, ("rtl/child.sv",))
+
+    def test_t087_filelist_failures_are_stable_and_leave_no_sourceset(self):
+        cases = (
+            ("duplicate.f", "SOURCESET_DUPLICATE_FILE"),
+            ("nested/cycle_a.f", "SOURCESET_FILELIST_CYCLE"),
+            ("undefined_env.f", "SOURCESET_ENV_UNDEFINED"),
+            ("outside.f", "SOURCESET_PATH_OUTSIDE_ROOT"),
+            (
+                "unsupported_directive.f",
+                "SOURCESET_UNSUPPORTED_FILELIST_DIRECTIVE",
+            ),
+            ("missing_f_argument.f", "SOURCESET_INVALID_ARGUMENT"),
+            ("missing_nested.f", "SOURCESET_FILE_NOT_FOUND"),
+        )
+
+        with mock.patch.dict(
+            os.environ, {"T087_PROJ": str(T087_FIXTURE_ROOT)}, clear=False
+        ):
+            os.environ.pop("T087_MISSING", None)
+            for relative_filelist, expected_code in cases:
+                with self.subTest(relative_filelist=relative_filelist):
+                    with self.assertRaises(SourceSetError) as raised:
+                        from_filelist(
+                            filelist=T087_FIXTURE_ROOT / relative_filelist,
+                            source_root=T087_FIXTURE_ROOT,
+                        )
+                    self.assertEqual(raised.exception.code, expected_code)
+                    self.assertTrue(
+                        str(raised.exception).startswith(f"{expected_code}: ")
+                    )
 
 
 if __name__ == "__main__":
