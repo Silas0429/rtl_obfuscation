@@ -1,6 +1,6 @@
 # T087：filelist 环境变量与嵌套 `-f` 输入适配
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：待分配
 - 前置任务：T086 `ACCEPTED`
