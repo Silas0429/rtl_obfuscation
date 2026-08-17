@@ -230,9 +230,58 @@ def _normalize_filelist_entry(
     return relative
 
 
+def _parse_filelist_context_directive(
+    *, root: Path, text: str, environment: dict[str, str]
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    if text.startswith("+incdir+"):
+        values = text[len("+incdir+") :].split("+")
+        if not values or any(not value for value in values):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT",
+                "+incdir+ requires one or more directory paths",
+                text,
+            )
+        directories: list[str] = []
+        for value in values:
+            absolute, relative = _resolve_filelist_path(
+                root=root,
+                text=value,
+                environment=environment,
+                label="include directory",
+            )
+            if not absolute.is_dir():
+                raise SourceSetError(
+                    "SOURCESET_FILE_NOT_FOUND",
+                    "include directory does not exist or is not a directory",
+                    relative,
+                )
+            if relative not in directories:
+                directories.append(relative)
+        return tuple(directories), ()
+
+    if text.startswith("+define+"):
+        values = text[len("+define+") :].split("+")
+        if not values or any(not value for value in values):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT",
+                "+define+ requires one or more NAME[=VALUE] definitions",
+                text,
+            )
+        defines: list[str] = []
+        for value in values:
+            expanded = _expand_filelist_environment(value, environment)
+            _normalize_defines((expanded,))
+            defines.append(expanded)
+        return (), tuple(defines)
+
+    return None
+
+
 def _read_filelist(
     *, filelist: Path, root: Path, environment: dict[str, str] | None = None
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[
+    tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]
+]:
     path = Path(filelist).expanduser().resolve()
     if not path.is_file():
         raise SourceSetError(
@@ -241,6 +290,9 @@ def _read_filelist(
     environment_snapshot = dict(os.environ if environment is None else environment)
     source_files: list[str] = []
     header_files: list[str] = []
+    include_dirs: list[str] = []
+    defines: list[str] = []
+    context_directives: list[str] = []
     seen: set[str] = set()
 
     def visit(current: Path, active: tuple[Path, ...]) -> None:
@@ -283,6 +335,18 @@ def _read_filelist(
                 visit(child, next_active)
                 continue
 
+            context = _parse_filelist_context_directive(
+                root=root, text=text, environment=environment_snapshot
+            )
+            if context is not None:
+                directive_dirs, directive_defines = context
+                context_directives.append(text)
+                for directory in directive_dirs:
+                    if directory not in include_dirs:
+                        include_dirs.append(directory)
+                defines.extend(directive_defines)
+                continue
+
             if text.startswith(("+", "-")) or len(tokens) != 1:
                 _raise_unsupported_filelist_directive(text)
 
@@ -303,8 +367,15 @@ def _read_filelist(
 
     visit(path, ())
     if not source_files and not header_files:
+        if context_directives:
+            _raise_unsupported_filelist_directive(context_directives[0])
         raise SourceSetError("SOURCESET_EMPTY_FILELIST", "filelist has no valid entries")
-    return tuple(source_files), tuple(header_files)
+    return (
+        tuple(source_files),
+        tuple(header_files),
+        tuple(include_dirs),
+        tuple(defines),
+    )
 
 
 def _map_discovery_error(error: ProjectAnalysisError) -> SourceSetError:
@@ -412,11 +483,13 @@ def from_filelist(
     top: str | None = None,
 ) -> SourceSet:
     root = _normalize_root(source_root)
-    source_files, explicit_headers = _read_filelist(
+    source_files, explicit_headers, filelist_dirs, filelist_defines = _read_filelist(
         filelist=filelist, root=root, environment=dict(os.environ)
     )
-    normalized_dirs = _normalize_include_dirs(root=root, include_dirs=include_dirs)
-    normalized_defines = _normalize_defines(defines)
+    normalized_dirs = _normalize_include_dirs(
+        root=root, include_dirs=(*include_dirs, *filelist_dirs)
+    )
+    normalized_defines = _normalize_defines((*filelist_defines, *defines))
     normalized_top = _normalize_top(top, required=False)
     all_headers = tuple(path for path in _discover_files(root) if is_header_file(path))
     candidates = tuple(dict.fromkeys((*source_files, *explicit_headers, *all_headers)))

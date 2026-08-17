@@ -113,6 +113,8 @@ python rtl_encrypt.py \
 提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
 filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 只作为 include 物理文件进入 gate、mapping
 和恢复清单，不会被写入 canonical `design.f`。
+filelist 还可使用 `+incdir+DIR1+DIR2` 和 `+define+NAME[=VALUE]` 提供编译上下文；其中的环境变量和嵌套
+`-f` 会按出现顺序展开，命令行 `--include-dir`、`--define` 对同名项具有最终优先级。
 
 Project-root：
 
