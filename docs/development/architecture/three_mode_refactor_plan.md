@@ -44,20 +44,20 @@ project-root --> discover list --+                         |
 
 关系定义如下：
 
-1. 单文件是只包含一个 `.sv` 的 filelist 子集；
+1. 单文件是只包含一个 `.sv` 或 `.v` source unit 的 filelist 子集；
 2. project-root 是 filelist 的自动发现前端：根据必填 top 计算闭包和顺序，再把结果交给同一个
    filelist 引擎；
 3. filelist 是核心多文件输入模型，必须保留用户给出的文件顺序、include directories、defines
    和 compilation-unit 语义；
-4. `.svh` 作为 include 依赖进入 SourceSet 和物理改写审计，但不作为独立 top/source unit；
+4. `.svh`、`.vh` 作为 include 依赖进入 SourceSet 和物理改写审计，但不作为独立 top/source unit；
 5. 新架构允许 breaking change，不再为历史 mapping 和旧执行路径增加兼容分支。
 
 ## 2. 三种模式的冻结语义
 
 | 入口 | SourceSet 文件范围 | 未提供 top | 提供 top |
 | --- | --- | --- | --- |
-| 单文件 | 一个显式 `.sv` 及其可定位 include | 全文件所有 module 只允许非 ABI 改写 | 等价于单文件 filelist + top |
-| filelist | 严格按 filelist 顺序的全部 `.sv` 及 include | 所有 module 执行非 ABI 改写 | 全部 module 执行非 ABI 改写；top 闭包内可显式选择 ABI 改写 |
+| 单文件 | 一个显式 `.sv/.v` 及其可定位 include | 全文件所有 module 只允许非 ABI 改写 | 等价于单文件 filelist + top |
+| filelist | 严格按 filelist 顺序的全部 `.sv/.v` 及 `.svh/.vh` include | 所有 module 执行非 ABI 改写 | 全部 module 执行非 ABI 改写；top 闭包内可显式选择 ABI 改写 |
 | project-root | 自动发现的 top 闭包和依赖 | 不支持，top 必填 | 生成 canonical SourceSet 后调用同一 filelist 引擎 |
 
 ### 2.1 非 ABI 改写
@@ -98,6 +98,12 @@ top: str | null
 top_closure_files: list[str]
 compile_order: list[str]
 ```
+
+- source unit 后缀为小写 `.sv`、`.v`；included physical header 后缀为小写 `.svh`、`.vh`；
+- 四种后缀共用当前 PySlang SystemVerilog semantic frontend，不按后缀切换第二套 parser；
+- header 只进入 `included_files`、physical manifest、gate 和 restore，不进入 `compile_order` 或
+  canonical `design.f`；
+- 原始后缀保留在 SourceSet、mapping、manifest、gate 和 restore 中，不在流水线中改写后缀。
 
 - filelist 顺序是输入合同，不得在进入编译前按路径排序；
 - project-root discovery 必须生成确定的 compile order；

@@ -41,12 +41,15 @@ compile_order: tuple[str, ...]
 1. 所有记录使用 source-root-relative POSIX 路径；
 2. `ordered_source_files` 对 single-file/filelist 保留用户顺序，禁止排序；
 3. single-file/filelist 的 `compile_order` 保持显式 source 顺序；project-root 根据依赖生成确定顺序；
-4. `.svh` 只进入 `included_files`，不作为独立 source unit；
+4. `.sv`、`.v` 是 source unit；`.svh`、`.vh` 只进入 `included_files`，不作为独立 source unit；
 5. filelist 无 top 时，`top_closure_files=()`；
 6. filelist 有 top 时，`ordered_source_files` 仍包含全部列出文件，closure 只作为 overlay；
 7. project-root 必须提供 top，且 `ordered_source_files` 只包含自动发现的 top closure source units；
 8. 单文件 adapter 必须等价于一个只含该文件的 filelist adapter；
 9. adapter 失败必须返回稳定错误码，不写输出文件或缓存。
+
+四种小写后缀继续使用同一 PySlang SystemVerilog semantic frontend；后缀只决定 physical file
+classification，不触发 strict legacy-Verilog parser 或独立的 rewrite 分支。
 
 首批固定错误码：
 
@@ -98,6 +101,9 @@ rtl/unused.sv
 include/common.svh
 ```
 
+SourceSet 的后缀合同同时覆盖 `.sv/.v` source unit 和 `.svh/.vh` included header；本 compact
+fixture 使用 `.sv/.svh` 仅为了保持 R1 的原始最小示例，不代表 `.v/.vh` 被排除。
+
 fixture 必须故意让 filelist 顺序不同于路径排序，并覆盖：
 
 - `z_defs.sv` 在 `a_child.sv` 之前；
@@ -120,7 +126,7 @@ fixture 只为 SourceSet 语义服务，不冻结 renaming entry 数量。
 3. filelist + top 保留 `unused.sv`，但 `top_closure_files` 不包含它；
 4. project-root + top 只产生 closure source files；
 5. 等价 project-root 与显式 closure filelist 的 include/define/top/closure/compile-order 相同；
-6. include header 只出现在 `included_files`；
+6. `.svh/.vh` include header 只出现在 `included_files`；
 7. 重复项、越界路径和 project-root 缺失 top 使用稳定错误码失败；
 8. 连续两次 `to_report()` byte-identical。
 
