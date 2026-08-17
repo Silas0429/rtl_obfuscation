@@ -13,6 +13,7 @@ from .project_discovery import (
     _discover_files,
     _discover_sourceset,
 )
+from .rtl_files import HEADER_SUFFIXES, SOURCE_SUFFIXES, is_header_file, is_source_file
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")
@@ -160,9 +161,11 @@ def _normalize_source_file(*, root: Path, source_file: Path) -> str:
     path = Path(source_file).expanduser()
     absolute = (root / path).resolve() if not path.is_absolute() else path.resolve()
     relative = _relative_to_root(root, absolute, label="source file")
-    if absolute.suffix != ".sv":
+    if not is_source_file(absolute):
         raise SourceSetError(
-            "SOURCESET_UNSUPPORTED_FILE", "source unit must use the .sv suffix", relative
+            "SOURCESET_UNSUPPORTED_FILE",
+            "source unit must use the .sv or .v suffix",
+            relative,
         )
     if not absolute.is_file():
         raise SourceSetError("SOURCESET_FILE_NOT_FOUND", "source file does not exist", relative)
@@ -214,10 +217,10 @@ def _normalize_filelist_entry(
     absolute, relative = _resolve_filelist_path(
         root=root, text=text, environment=environment, label="filelist entry"
     )
-    if absolute.suffix not in (".sv", ".svh"):
+    if absolute.suffix not in SOURCE_SUFFIXES | HEADER_SUFFIXES:
         raise SourceSetError(
             "SOURCESET_UNSUPPORTED_FILE",
-            "filelist entries must use .sv or .svh suffixes",
+            "filelist entries must use .sv, .v, .svh, or .vh suffixes",
             relative,
         )
     if not absolute.is_file():
@@ -293,7 +296,7 @@ def _read_filelist(
                     relative,
                 )
             seen.add(relative)
-            if relative.endswith(".sv"):
+            if is_source_file(relative):
                 source_files.append(relative)
             else:
                 header_files.append(relative)
@@ -385,7 +388,7 @@ def from_single_file(
     normalized_top = _normalize_top(top, required=False)
     candidates = tuple(
         [normalized_source]
-        + [path for path in _discover_files(root) if path.endswith(".svh")]
+        + [path for path in _discover_files(root) if is_header_file(path)]
     )
     return _discover(
         root=root,
@@ -415,7 +418,7 @@ def from_filelist(
     normalized_dirs = _normalize_include_dirs(root=root, include_dirs=include_dirs)
     normalized_defines = _normalize_defines(defines)
     normalized_top = _normalize_top(top, required=False)
-    all_headers = tuple(path for path in _discover_files(root) if path.endswith(".svh"))
+    all_headers = tuple(path for path in _discover_files(root) if is_header_file(path))
     candidates = tuple(dict.fromkeys((*source_files, *explicit_headers, *all_headers)))
     return _discover(
         root=root,
@@ -442,7 +445,7 @@ def from_project_root(
     normalized_dirs = _normalize_include_dirs(root=root, include_dirs=include_dirs)
     normalized_defines = _normalize_defines(defines)
     candidates = tuple(_discover_files(root))
-    source_files = tuple(path for path in candidates if path.endswith(".sv"))
+    source_files = tuple(path for path in candidates if is_source_file(path))
     return _discover(
         root=root,
         origin="project-root",

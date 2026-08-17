@@ -19,6 +19,7 @@ operation 暂时只为历史测试和兼容保留，不是当前用户接口。
 | 路径 | 职责 |
 | --- | --- |
 | `rtl_obfuscator/source_set.py` | 将单文件、显式 filelist 和 project-root 输入归一化为同一种 SourceSet。 |
+| `rtl_obfuscator/rtl_files.py` | 集中定义 `.sv/.v` source 与 `.svh/.vh` header 的 canonical 后缀分类。 |
 | `rtl_obfuscator/project_discovery.py` | 从 project root 和 top 自动发现依赖闭包及编译顺序。 |
 | `rtl_obfuscator/source_catalog.py` | 使用 PySlang 建立源文件、编译上下文和模块 owner catalog。 |
 | `rtl_obfuscator/symbol_graph.py` | 收集可处理的 SystemVerilog 符号、声明、引用及归属关系。 |
@@ -45,6 +46,9 @@ python rtl_decrypt.py -> persisted report + actual gate
     -> gate/range/manifest audit -> direct restore -> hydration validation
     -> byte-identical source files
 ```
+
+四种小写 RTL 后缀共用当前 PySlang SystemVerilog 语义模式；header 进入物理清单但不进入 source
+compile order，后缀不触发第二套 parser 或 rewrite 分支。
 
 ## 测试、脚本和样例
 

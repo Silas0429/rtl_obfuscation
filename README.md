@@ -2,6 +2,10 @@
 
 本项目通过一致改写 SystemVerilog RTL 名称来加密源码，并可使用 `mapping.json` 恢复原文件。
 
+输入后缀边界：独立编译单元支持小写 `.sv`、`.v`，被 include 的物理头文件支持小写 `.svh`、`.vh`。
+四种后缀都沿用当前 PySlang 的 SystemVerilog 语义模式解析；这不是一套按后缀切换的 legacy
+Verilog parser。大写 `.V/.VH`、`.txt` 和把 `.vh` 当作单文件 source unit 会稳定失败。
+
 ## 3 分钟快速开始
 
 前提：在仓库根目录使用 Python 3.10 或更高版本，并已安装 PySlang 11.x；如未安装，跳到
@@ -81,7 +85,7 @@ gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Form
 
 | 模式 | 必要输入 | 适用方式 |
 | --- | --- | --- |
-| 单文件 | `--input`、`--source-root` | 快速试用或独立 `.sv` 文件；只处理内部名称 |
+| 单文件 | `--input`、`--source-root` | 快速试用或独立 `.sv/.v` 文件；只处理内部名称 |
 | filelist | `--filelist`、`--source-root`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件 |
 | project-root | `--source-root`、`--top` | 从 top 自动发现源码；适合目录和依赖都完整的工程 |
 
@@ -89,7 +93,7 @@ gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Form
 
 ```sh
 python rtl_encrypt.py \
-  --input <输入文件.sv> \
+  --input <input_file.sv_or_v> \
   --source-root <源码根目录> \
   --output-dir <加密输出目录>
 ```
@@ -107,6 +111,8 @@ python rtl_encrypt.py \
 仓库示例使用 `rtl_samples/example_fifo/design.f`、源码根目录
 `rtl_samples/example_fifo` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
 提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
+filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 只作为 include 物理文件进入 gate、mapping
+和恢复清单，不会被写入 canonical `design.f`。
 
 Project-root：
 

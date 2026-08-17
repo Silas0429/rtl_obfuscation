@@ -8,6 +8,10 @@
 `--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
 保留的对象。`rename=0` 不能视为该类型已经完整支持。
 
+文件后缀不是新的加密类别：`.sv`、`.v` source unit 以及被 include 的 `.svh`、`.vh` 共用同一条
+PySlang SystemVerilog 语义流水线。工具不承诺 strict legacy-Verilog 方言，也不接受大写后缀或把
+header 当作独立 source unit。
+
 | `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
 | --- | --- | --- | --- | --- |
 | `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |

@@ -31,6 +31,9 @@ Formal 输入必须满足：
 - top 的端口和端口方向保持一致；
 - 多文件工程使用相同的编译顺序和等价的宏/include 设置；
 - filelist 中的路径相对于各自的 `--gold-root` 或 `--gate-root` 可找到。
+- source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
+  这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
+- canonical `design.f` 只列 source unit；header 仍随 gate 保留并由 source 的 include 路径加载。
 
 ## 多文件项目：推荐命令
 

@@ -9,6 +9,7 @@ from typing import Any
 import pyslang
 
 from .source_set import SourceSet
+from .rtl_files import is_source_file
 
 
 @dataclass(frozen=True)
@@ -105,11 +106,11 @@ class _DefinitionRecord:
 
 def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
     source_files = tuple(
-        path for path in source_set.compile_order if path.endswith(".sv")
+        path for path in source_set.compile_order if is_source_file(path)
     )
     if not source_files:
         raise SourceCatalogError(
-            "CATALOG_EMPTY_SOURCE_SET", "SourceSet has no .sv source unit"
+            "CATALOG_EMPTY_SOURCE_SET", "SourceSet has no .sv or .v source unit"
         )
 
     manager = pyslang.SourceManager()

@@ -21,6 +21,7 @@ from .mapping_vnext import (
 from .rewrite_policy import RewritePolicy, build_rewrite_policy
 from .source_catalog import SourceCatalog, SourceRange, build_source_catalog
 from .source_set import SourceSet
+from .rtl_files import is_source_file
 from .symbol_graph import SourceSymbol, SymbolGraph, SymbolOccurrence
 from .systemverilog_names import is_plain_identifier
 
@@ -681,7 +682,7 @@ def _source_set_from_mapping(
         _fail("REWRITE_MAPPING_INVALID", "compile_order is not canonical")
     if any(
         not isinstance(file, str)
-        or not file.endswith(".sv")
+        or not is_source_file(file)
         or file not in source_set.ordered_source_files
         for file in source_set.compile_order
     ):

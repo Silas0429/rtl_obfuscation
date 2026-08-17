@@ -10,12 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import posixpath
 from pathlib import Path, PurePosixPath
 import re
 import tempfile
 from typing import Any, Iterable
 
 import pyslang
+
+from .rtl_files import is_header_file, is_physical_rtl_file, is_source_file
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
@@ -144,7 +147,7 @@ def _discover_files(root: Path) -> list[str]:
         )
         for name in sorted(files):
             path = Path(directory) / name
-            if path.suffix not in (".sv", ".svh"):
+            if not is_physical_rtl_file(path):
                 continue
             if path.is_symlink() or not path.is_file():
                 continue
@@ -332,13 +335,21 @@ class _ProjectContext:
 
     def _resolve_include(self, consumer: str, include_name: str) -> str:
         include_path = PurePosixPath(include_name)
-        if include_path.is_absolute() or ".." in include_path.parts:
+        if include_path.is_absolute():
             raise ProjectAnalysisError(
                 "MISSING_INCLUDE",
                 f"include is outside project root: {include_name}",
                 file=consumer,
             )
-        local = str(PurePosixPath(consumer).parent / include_path)
+        local = posixpath.normpath(
+            str(PurePosixPath(consumer).parent / include_path)
+        )
+        if local == ".." or local.startswith("../"):
+            raise ProjectAnalysisError(
+                "MISSING_INCLUDE",
+                f"include is outside project root: {include_name}",
+                file=consumer,
+            )
         if local in self.candidate_set:
             return local
         for directory in self.include_dirs:
@@ -602,7 +613,7 @@ class _ProjectContext:
         )
 
     def compile_order(self, closure: set[str]) -> list[str]:
-        source_files = {path for path in closure if path.endswith(".sv")}
+        source_files = {path for path in closure if is_source_file(path)}
         incoming = {path: set() for path in source_files}
         outgoing = {path: set() for path in source_files}
         for edge in (
@@ -740,15 +751,15 @@ def _discover_sourceset(
 
     if top is None:
         for edge in context.include_edges:
-            if not edge.provider.endswith((".sv", ".svh")):
+            if not is_physical_rtl_file(edge.provider):
                 raise ProjectAnalysisError(
                     "UNSUPPORTED_INCLUDE",
-                    f"include dependency is not a .sv or .svh provider: {edge.provider}",
+                    f"include dependency is not a supported RTL provider: {edge.provider}",
                     file=edge.consumer,
                 )
         included_files = {
             edge.provider for edge in context.include_edges
-            if edge.provider.endswith(".svh")
+            if is_header_file(edge.provider)
         }
         included_files.update(explicit_header_files)
         return SourceSetDiscovery(
@@ -795,19 +806,19 @@ def _discover_sourceset(
         )
 
     for edge in context.include_edges:
-        if not edge.provider.endswith((".sv", ".svh")):
+        if not is_physical_rtl_file(edge.provider):
             raise ProjectAnalysisError(
                 "UNSUPPORTED_INCLUDE",
-                f"include dependency is not a .sv or .svh provider: {edge.provider}",
+                f"include dependency is not a supported RTL provider: {edge.provider}",
                 file=edge.consumer,
             )
     included_files = {
         edge.provider for edge in context.include_edges
-        if edge.provider.endswith(".svh")
+        if is_header_file(edge.provider)
     }
     included_files.update(explicit_header_files)
 
-    closure_sources = set(path for path in closure if path.endswith(".sv"))
+    closure_sources = set(path for path in closure if is_source_file(path))
     if preserve_top_file_order:
         top_closure_files = tuple(
             path for path in source_order if path in closure_sources

@@ -10,6 +10,10 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
 
 ## 语言语义边界
 
+- `.sv/.v` source unit 与 `.svh/.vh` included header 已共用当前 PySlang SystemVerilog 语义模式；这只
+  是 physical suffix compatibility，不承诺 strict legacy-Verilog 方言、关键字模式或大写 `.V/.VH`。
+  header 可以承载 semantic mapping/edit，并进入物理 manifest、gate 和 restore，但不成为独立 compile unit。
+
 - T071 已将物理可定位的 module type parameter 与语义绑定的 `defparam` 转为 module-owner
   safe-preserve：type parameter 本身和其 owner 全部保持，`defparam` 引用/目标 owner 全部保持；
   无法证明物理 declaration、typed binding token 或 owner 时仍保持 fail-closed。package/class

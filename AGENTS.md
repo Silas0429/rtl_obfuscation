@@ -24,9 +24,10 @@ conda run -n rtl_obfuscation yosys -V
 
 ## RTL language scope
 
-- SystemVerilog is the only target RTL language for this project.
-- New RTL samples and fixtures must use the `.sv` extension and SystemVerilog syntax.
-- Verilog-only behavior may be studied for compatibility, but it must not drive the product design or acceptance criteria.
+- SystemVerilog semantic mode remains the only target frontend for this project.
+- Source units may use lower-case `.sv` or `.v`; included physical headers may use `.svh` or `.vh`.
+- New RTL samples and fixtures should use SystemVerilog-compatible syntax; the `.v/.vh` suffix support does not
+  introduce a strict legacy-Verilog parser or a parser branch selected by suffix.
 
 ## Development approach
 

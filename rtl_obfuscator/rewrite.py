@@ -825,7 +825,7 @@ def _register_encrypt_arguments(
     public_cli: bool,
 ) -> None:
     public_help = {
-        "input": "单文件模式：要加密的 .sv 文件",
+        "input": "单文件模式：要加密的 .sv 或 .v 文件",
         "filelist": "filelist 模式：按编译顺序列出源码的 .f 文件",
         "source_root": "源码根目录；相对路径和 include 均以此为基准",
         "top": "顶层 module；project-root 模式必填，filelist 模式可选",
