@@ -30,6 +30,7 @@ from rtl_obfuscator.source_set import (
     from_filelist,
     from_project_root,
     from_single_file,
+    infer_filelist_root,
 )
 from rtl_obfuscator.symbol_graph import _semantic_scopes, _syntax_span
 
@@ -147,6 +148,11 @@ def _cli_vnext_validate_arguments(
             value is not None for value in (input_file, filelist)
         ) > 1:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        if filelist is not None and source_root_value is not None:
+            _cli_vnext_fail(
+                "CLI_VNEXT_INPUT_INVALID",
+                "filelist mode does not accept --source-root",
+            )
         if input_file is None and filelist is None and not public_project_mode:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     elif sum(
@@ -158,14 +164,26 @@ def _cli_vnext_validate_arguments(
         if getattr(args, "source_root", None) is not None or args.top is None:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
         source_root_arg = project_root_arg
+        try:
+            source_root = Path(source_root_arg).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError) as error:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+    elif public_cli and filelist is not None:
+        try:
+            source_root = infer_filelist_root(
+                filelist=Path(filelist).expanduser().resolve(),
+                include_dirs=args.include_dirs,
+            )
+        except (OSError, RuntimeError, SourceSetError, TypeError, ValueError) as error:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
     else:
         source_root_arg = source_root_value
         if source_root_arg is None:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
-    try:
-        source_root = Path(source_root_arg).expanduser().resolve()
-    except (OSError, RuntimeError, TypeError) as error:
-        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+        try:
+            source_root = Path(source_root_arg).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError) as error:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
     if not source_root.is_dir():
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
 
@@ -280,6 +298,14 @@ def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
             return from_single_file(
                 source_file=_cli_vnext_input_path(args.input_file, source_root),
                 source_root=source_root,
+                include_dirs=args.include_dirs,
+                defines=args.defines,
+                top=args.top,
+            )
+        if bool(getattr(args, "public_cli", False)):
+            return from_filelist(
+                filelist=Path(args.filelist).expanduser().resolve(),
+                source_root=None,
                 include_dirs=args.include_dirs,
                 defines=args.defines,
                 top=args.top,
@@ -827,7 +853,7 @@ def _register_encrypt_arguments(
     public_help = {
         "input": "单文件模式：要加密的 .sv 或 .v 文件",
         "filelist": "filelist 模式：按编译顺序列出源码的 .f 文件",
-        "source_root": "源码根目录；相对路径和 include 均以此为基准",
+        "source_root": "单文件或 project-root 模式的源码根目录；filelist 模式禁止提供",
         "top": "顶层 module；project-root 模式必填，filelist 模式可选",
         "include_dir": "额外 include 目录，可重复使用",
         "define": "预处理宏 NAME[=VALUE]，可重复使用",
@@ -972,13 +998,13 @@ def _create_encrypt_argument_parser() -> argparse.ArgumentParser:
         epilog=(
             "输入模式（三选一）：\n"
             "  单文件：--input FILE --source-root DIR\n"
-            "  filelist：--filelist DESIGN.F --source-root DIR [--top TOP]\n"
+            "  filelist：--filelist DESIGN.F [--top TOP]\n"
             "  project-root：--source-root DIR --top TOP"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
         error_code="CLI_VNEXT_INPUT_INVALID",
-        error_hint="请检查三种输入模式、必要参数和路径；project-root 模式需要 --source-root 与 --top。",
+        error_hint="请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式需要 --source-root 与 --top。",
     )
     parser.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     _register_encrypt_arguments(parser, public_cli=True)
@@ -1005,7 +1031,7 @@ def _run_cli_operation(
 ) -> int:
     def fail(code: str) -> None:
         hints = {
-            "CLI_VNEXT_INPUT_INVALID": "请检查输入模式和路径；project-root 模式必须同时提供 --source-root 与 --top。",
+            "CLI_VNEXT_INPUT_INVALID": "请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。",
             "CLI_VNEXT_OUTPUT_INVALID": "请改用尚不存在且不与源码重叠的输出目录或报告路径。",
             "CLI_VNEXT_RATE_INVALID": "请把 --encryption-rate 设置为大于 0 且不大于 1 的数值。",
             "CLI_VNEXT_ORCHESTRATION_INVALID": "请检查 filelist 编译顺序、include 目录、宏定义及严格编译诊断。",

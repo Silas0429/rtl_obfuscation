@@ -7,8 +7,8 @@
 ## 产品入口
 
 普通用户从仓库根目录运行 `python rtl_encrypt.py` 加密，运行 `python rtl_decrypt.py`
-恢复；无需安装本项目。项目模式也使用 `--source-root`，由缺少 input/filelist 且提供 top
-来推断。两个根目录脚本只负责调用共享 Python 函数。
+恢复；无需安装本项目。filelist 模式以显式 filelist 为唯一输入并自动推导内部路径边界；
+单文件和 project-root 模式继续使用 `--source-root`。两个根目录脚本只负责调用共享 Python 函数。
 
 `rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
 中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`
@@ -18,7 +18,7 @@ operation 暂时只为历史测试和兼容保留，不是当前用户接口。
 
 | 路径 | 职责 |
 | --- | --- |
-| `rtl_obfuscator/source_set.py` | 将单文件、显式 filelist 和 project-root 输入归一化为同一种 SourceSet。 |
+| `rtl_obfuscator/source_set.py` | 将单文件、显式 filelist（自动推导边界）和 project-root 输入归一化为同一种 SourceSet。 |
 | `rtl_obfuscator/rtl_files.py` | 集中定义 `.sv/.v` source、`.svh/.vh` header 与显式 filelist-only `.h` context 的后缀分类。 |
 | `rtl_obfuscator/project_discovery.py` | 从 project root 和 top 自动发现依赖闭包及编译顺序。 |
 | `rtl_obfuscator/source_catalog.py` | 使用 PySlang 建立源文件、编译上下文和模块 owner catalog。 |

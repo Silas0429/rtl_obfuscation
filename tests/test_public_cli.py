@@ -186,7 +186,7 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 removed_project.stderr,
                 "error: CLI_VNEXT_INPUT_INVALID\n"
-                "hint: 请检查三种输入模式、必要参数和路径；project-root 模式需要 "
+                "hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式需要 "
                 "--source-root 与 --top。\n",
             )
             self.assertFalse((root / "project-gate").exists())
@@ -203,7 +203,7 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 incomplete.stderr,
                 "error: CLI_VNEXT_INPUT_INVALID\n"
-                "hint: 请检查输入模式和路径；project-root 模式必须同时提供 "
+                "hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 "
                 "--source-root 与 --top。\n",
             )
             self.assertFalse((root / "incomplete-gate").exists())
@@ -249,9 +249,7 @@ class PublicCliTests(unittest.TestCase):
             _plain_gate, _plain_map, _plain_metrics, plain_filelist = self._encrypt(
                 root / "plain-filelist",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FIFO_ROOT),
+                str(FIFO_ROOT / "design.f"),
             )
             self.assertEqual(
                 plain_filelist["mapping"]["selection"]["selected_categories"],
@@ -264,9 +262,7 @@ class PublicCliTests(unittest.TestCase):
             _top_gate, _top_map, _top_metrics, top_filelist = self._encrypt(
                 root / "top-filelist",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FIFO_ROOT),
+                str(FIFO_ROOT / "design.f"),
                 "--top",
                 "fifo_top",
             )
@@ -594,9 +590,7 @@ class PublicCliTests(unittest.TestCase):
             encrypted = self._run_public(
                 "rtl_encrypt",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(TYPEDEF_FIREWALL_ROOT),
+                str(TYPEDEF_FIREWALL_ROOT / "design.f"),
                 "--top",
                 "t085_top",
                 "--category",
@@ -819,9 +813,7 @@ class PublicCliTests(unittest.TestCase):
             _gate, _mapping, _metrics, report = self._encrypt(
                 root / "valid",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FORMAL_ROOT),
+                str(FORMAL_ROOT / "design.f"),
                 "--top",
                 "parameter_top",
                 "--encryption-rate",
@@ -942,7 +934,7 @@ class PublicCliTests(unittest.TestCase):
             "strict_compile_passed",
             "restored_byte_identical",
             "error: CLI_VNEXT_INPUT_INVALID",
-            "hint: 请检查输入模式和路径",
+            "hint: 请检查三种输入模式",
         ):
             self.assertIn(required, quickstart)
         forbidden = (

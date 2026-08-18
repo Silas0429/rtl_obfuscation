@@ -121,9 +121,7 @@ endmodule
         result = self._run_public(
             "rtl_encrypt.py",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t079_top",
             "--category",

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import posixpath
 import re
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Iterable
 
 from .project_discovery import (
@@ -17,6 +19,7 @@ from .rtl_files import (
     CONTEXT_SUFFIXES,
     HEADER_SUFFIXES,
     SOURCE_SUFFIXES,
+    is_context_file,
     is_header_file,
     is_source_file,
 )
@@ -44,6 +47,7 @@ _FILELIST_SHELL_MARKERS = (
     "[",
     "]",
 )
+_INCLUDE_DIRECTIVE = re.compile(r'^\s*`include\s+"([^"]+)"')
 
 
 @dataclass(frozen=True)
@@ -208,20 +212,40 @@ def _expand_filelist_environment(
 
 
 def _resolve_filelist_path(
-    *, root: Path, text: str, environment: dict[str, str], label: str
+    *,
+    root: Path | None,
+    text: str,
+    environment: dict[str, str],
+    label: str,
+    base: Path | None = None,
 ) -> tuple[Path, str]:
     expanded = _expand_filelist_environment(text, environment)
     path = Path(expanded)
-    absolute = (root / path).resolve() if not path.is_absolute() else path.resolve()
-    relative = _relative_to_root(root, absolute, label=label)
+    if path.is_absolute():
+        absolute = path.resolve()
+    else:
+        absolute = ((base if base is not None else root) / path).resolve()
+    relative = (
+        absolute.as_posix()
+        if root is None
+        else _relative_to_root(root, absolute, label=label)
+    )
     return absolute, relative
 
 
 def _normalize_filelist_entry(
-    *, root: Path, text: str, environment: dict[str, str]
+    *,
+    root: Path | None,
+    text: str,
+    environment: dict[str, str],
+    base: Path | None = None,
 ) -> str:
     absolute, relative = _resolve_filelist_path(
-        root=root, text=text, environment=environment, label="filelist entry"
+        root=root,
+        text=text,
+        environment=environment,
+        label="filelist entry",
+        base=base,
     )
     if absolute.suffix not in SOURCE_SUFFIXES | HEADER_SUFFIXES | CONTEXT_SUFFIXES:
         raise SourceSetError(
@@ -237,7 +261,11 @@ def _normalize_filelist_entry(
 
 
 def _parse_filelist_context_directive(
-    *, root: Path, text: str, environment: dict[str, str]
+    *,
+    root: Path | None,
+    text: str,
+    environment: dict[str, str],
+    base: Path | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
     if text.startswith("+incdir+"):
         values = text[len("+incdir+") :].split("+")
@@ -254,6 +282,7 @@ def _parse_filelist_context_directive(
                 text=value,
                 environment=environment,
                 label="include directory",
+                base=base,
             )
             if not absolute.is_dir():
                 raise SourceSetError(
@@ -283,10 +312,75 @@ def _parse_filelist_context_directive(
     return None
 
 
+def _resolve_auto_include_dirs(
+    *, filelist: Path, include_dirs: Iterable[Path | str], environment: dict[str, str]
+) -> tuple[Path, ...]:
+    resolved: list[Path] = []
+    base = Path(filelist).expanduser().resolve().parent
+    for item in include_dirs:
+        path = Path(_expand_filelist_environment(str(item), environment))
+        absolute = (path if path.is_absolute() else base / path).resolve()
+        if not absolute.is_dir():
+            raise SourceSetError(
+                "SOURCESET_FILE_NOT_FOUND",
+                "include directory does not exist or is not a directory",
+                str(absolute),
+            )
+        if absolute not in resolved:
+            resolved.append(absolute)
+    return tuple(resolved)
+
+
+def infer_filelist_root(
+    *,
+    filelist: Path,
+    include_dirs: Iterable[Path | str] = (),
+    environment: dict[str, str] | None = None,
+) -> Path:
+    """Infer the internal path boundary for a filelist-only input."""
+
+    environment_snapshot = dict(os.environ if environment is None else environment)
+    path = Path(filelist).expanduser().resolve()
+    _, _, filelist_dirs, _, physical_paths = _read_filelist(
+        filelist=path,
+        root=None,
+        environment=environment_snapshot,
+        relative_entries_to_filelist=True,
+    )
+    command_include_dirs = _resolve_auto_include_dirs(
+        filelist=path,
+        include_dirs=include_dirs,
+        environment=environment_snapshot,
+    )
+    directories = [path.parent]
+    directories.extend(Path(item).parent for item in physical_paths)
+    directories.extend(Path(item) for item in filelist_dirs)
+    directories.extend(command_include_dirs)
+    try:
+        root = Path(os.path.commonpath([str(item) for item in directories])).resolve()
+    except (OSError, ValueError) as error:
+        raise SourceSetError(
+            "SOURCESET_PATH_OUTSIDE_ROOT",
+            "filelist paths do not share a common source root",
+            str(path),
+        ) from error
+    if not root.is_dir():
+        raise SourceSetError(
+            "SOURCESET_FILE_NOT_FOUND",
+            "inferred source root does not exist or is not a directory",
+            str(root),
+        )
+    return root
+
+
 def _read_filelist(
-    *, filelist: Path, root: Path, environment: dict[str, str] | None = None
+    *,
+    filelist: Path,
+    root: Path | None,
+    environment: dict[str, str] | None = None,
+    relative_entries_to_filelist: bool = False,
 ) -> tuple[
-    tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]
+    tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]
 ]:
     path = Path(filelist).expanduser().resolve()
     if not path.is_file():
@@ -298,6 +392,7 @@ def _read_filelist(
     header_files: list[str] = []
     include_dirs: list[str] = []
     defines: list[str] = []
+    physical_paths: list[str] = []
     context_directives: list[str] = []
     seen: set[str] = set()
 
@@ -335,6 +430,7 @@ def _read_filelist(
                     text=tokens[1],
                     environment=environment_snapshot,
                     label="nested filelist",
+                    base=canonical.parent if relative_entries_to_filelist else None,
                 )
                 if child.suffix not in _FILELIST_SUFFIXES:
                     _raise_unsupported_filelist_directive(child_relative)
@@ -342,7 +438,10 @@ def _read_filelist(
                 continue
 
             context = _parse_filelist_context_directive(
-                root=root, text=text, environment=environment_snapshot
+                root=root,
+                text=text,
+                environment=environment_snapshot,
+                base=canonical.parent if relative_entries_to_filelist else None,
             )
             if context is not None:
                 directive_dirs, directive_defines = context
@@ -357,7 +456,10 @@ def _read_filelist(
                 _raise_unsupported_filelist_directive(text)
 
             relative = _normalize_filelist_entry(
-                root=root, text=tokens[0], environment=environment_snapshot
+                root=root,
+                text=tokens[0],
+                environment=environment_snapshot,
+                base=canonical.parent if relative_entries_to_filelist else None,
             )
             if relative in seen:
                 raise SourceSetError(
@@ -366,6 +468,14 @@ def _read_filelist(
                     relative,
                 )
             seen.add(relative)
+            absolute, _ = _resolve_filelist_path(
+                root=root,
+                text=tokens[0],
+                environment=environment_snapshot,
+                label="filelist entry",
+                base=canonical.parent if relative_entries_to_filelist else None,
+            )
+            physical_paths.append(absolute.as_posix())
             if is_source_file(relative):
                 source_files.append(relative)
             else:
@@ -381,6 +491,7 @@ def _read_filelist(
         tuple(header_files),
         tuple(include_dirs),
         tuple(defines),
+        tuple(physical_paths),
     )
 
 
@@ -396,6 +507,57 @@ def _map_discovery_error(error: ProjectAnalysisError) -> SourceSetError:
             )
         return SourceSetError("SOURCESET_FILE_NOT_FOUND", error.message, error.file)
     return SourceSetError("SOURCESET_DISCOVERY_FAILED", error.message, error.file)
+
+
+def _discover_explicit_include_headers(
+    *, root: Path, seed_files: Iterable[str], include_dirs: Iterable[str]
+) -> tuple[str, ...]:
+    """Add only headers named by the bounded filelist/include closure."""
+
+    discovered: list[str] = []
+    pending = list(dict.fromkeys(seed_files))
+    seen: set[str] = set()
+    include_directories = tuple(include_dirs)
+    while pending:
+        relative = pending.pop(0)
+        if relative in seen:
+            continue
+        seen.add(relative)
+        absolute = root / relative
+        if not absolute.is_file() or not (
+            is_header_file(absolute) or is_context_file(absolute)
+        ):
+            continue
+        for line in absolute.read_text(encoding="utf-8").splitlines():
+            match = _INCLUDE_DIRECTIVE.match(line)
+            if match is None:
+                continue
+            include_name = match.group(1)
+            include_path = PurePosixPath(include_name)
+            candidates: list[str] = []
+            local = PurePosixPath(relative).parent / include_path
+            if not include_path.is_absolute():
+                normalized_local = posixpath.normpath(str(local))
+                if normalized_local != ".." and not normalized_local.startswith("../"):
+                    candidates.append(normalized_local)
+                candidates.extend(
+                    str(PurePosixPath(directory) / include_path)
+                    for directory in include_directories
+                )
+            for candidate in candidates:
+                candidate_path = root / candidate
+                if not candidate_path.is_file():
+                    continue
+                if not (is_header_file(candidate_path) or is_context_file(candidate_path)):
+                    continue
+                normalized = _relative_to_root(
+                    root, candidate_path, label="include file"
+                )
+                if normalized not in discovered:
+                    discovered.append(normalized)
+                if normalized not in seen:
+                    pending.append(normalized)
+    return tuple(discovered)
 
 
 def _discover(
@@ -483,22 +645,54 @@ def from_single_file(
 def from_filelist(
     *,
     filelist: Path,
-    source_root: Path,
+    source_root: Path | None = None,
     include_dirs: Iterable[Path | str] = (),
     defines: Iterable[str] = (),
     top: str | None = None,
 ) -> SourceSet:
-    root = _normalize_root(source_root)
-    source_files, explicit_headers, filelist_dirs, filelist_defines = _read_filelist(
-        filelist=filelist, root=root, environment=dict(os.environ)
+    filelist_path = Path(filelist).expanduser().resolve()
+    include_dir_values = tuple(include_dirs)
+    auto_root = source_root is None
+    root = (
+        infer_filelist_root(filelist=filelist_path, include_dirs=include_dir_values)
+        if auto_root
+        else _normalize_root(source_root)
+    )
+    resolved_cli_include_dirs = (
+        _resolve_auto_include_dirs(
+            filelist=filelist_path,
+            include_dirs=include_dir_values,
+            environment=dict(os.environ),
+        )
+        if auto_root
+        else include_dir_values
+    )
+    source_files, explicit_headers, filelist_dirs, filelist_defines, _ = _read_filelist(
+        filelist=filelist_path,
+        root=root,
+        environment=dict(os.environ),
+        relative_entries_to_filelist=auto_root,
     )
     normalized_dirs = _normalize_include_dirs(
-        root=root, include_dirs=(*include_dirs, *filelist_dirs)
+        root=root, include_dirs=(*resolved_cli_include_dirs, *filelist_dirs)
     )
     normalized_defines = _normalize_defines((*filelist_defines, *defines))
     normalized_top = _normalize_top(top, required=False)
-    all_headers = tuple(path for path in _discover_files(root) if is_header_file(path))
-    candidates = tuple(dict.fromkeys((*source_files, *explicit_headers, *all_headers)))
+    if auto_root:
+        include_headers = list(
+            _discover_explicit_include_headers(
+                root=root,
+                seed_files=(*source_files, *explicit_headers),
+                include_dirs=normalized_dirs,
+            )
+        )
+    else:
+        include_headers = [
+            path for path in _discover_files(root) if is_header_file(path)
+        ]
+    candidates = tuple(
+        dict.fromkeys((*source_files, *explicit_headers, *include_headers))
+    )
     return _discover(
         root=root,
         origin="filelist",

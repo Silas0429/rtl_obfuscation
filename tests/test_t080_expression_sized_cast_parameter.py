@@ -110,9 +110,7 @@ class T080ExpressionSizedCastParameterTests(unittest.TestCase):
         result = self._run_public(
             "rtl_encrypt.py",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t080_expression_sized_cast",
             "--category",

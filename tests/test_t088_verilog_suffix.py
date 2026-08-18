@@ -120,9 +120,7 @@ class VerilogSuffixTests(unittest.TestCase):
             filelist, filelist_report = self._encrypt(
                 root / "filelist",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FIXTURE_ROOT),
+                str(FIXTURE_ROOT / "design.f"),
                 "--top",
                 "t088_top",
             )
@@ -221,9 +219,7 @@ class VerilogSuffixTests(unittest.TestCase):
             result = self._run(
                 "encrypt",
                 "--filelist",
-                "bad.f",
-                "--source-root",
-                str(fixture),
+                str(bad_filelist),
                 "--output-dir",
                 str(gate),
             )
@@ -276,9 +272,7 @@ class VerilogSuffixTests(unittest.TestCase):
             gate, _report = self._encrypt(
                 root / "gate",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FIXTURE_ROOT),
+                str(FIXTURE_ROOT / "design.f"),
                 "--top",
                 "t088_top",
             )

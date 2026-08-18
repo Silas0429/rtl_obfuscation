@@ -35,9 +35,7 @@ class HMacroHeaderTests(unittest.TestCase):
         result = self._run(
             "encrypt",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t091_top",
             "--category",

@@ -47,9 +47,7 @@ class T078DirectRestoreHeaderTests(unittest.TestCase):
         result = self._run_public(
             "rtl_encrypt",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t078_header_top",
             "--category",

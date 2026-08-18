@@ -132,9 +132,7 @@ class T085TypedefLexicalCompletenessFirewallTests(unittest.TestCase):
         result = self._run_public(
             "rtl_encrypt.py",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t085_top",
             "--define",
@@ -303,9 +301,7 @@ class T085TypedefLexicalCompletenessFirewallTests(unittest.TestCase):
             argv = [
                 "rtl_encrypt",
                 "--filelist",
-                "design.f",
-                "--source-root",
-                str(FIXTURE_ROOT),
+                str(FIXTURE_ROOT / "design.f"),
                 "--top",
                 "t085_top",
                 "--define",

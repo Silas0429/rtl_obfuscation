@@ -123,9 +123,7 @@ class T081EnumLexicalCompletenessFirewallTests(unittest.TestCase):
         result = self._run_public(
             "rtl_encrypt.py",
             "--filelist",
-            "design.f",
-            "--source-root",
-            str(FIXTURE_ROOT),
+            str(FIXTURE_ROOT / "design.f"),
             "--top",
             "t081_top",
             "--category",

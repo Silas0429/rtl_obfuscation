@@ -39,7 +39,7 @@ cmp rtl_samples/11_supported_obfuscation.sv \
 
 ```text
 error: CLI_VNEXT_INPUT_INVALID
-hint: 请检查输入模式和路径；project-root 模式必须同时提供 --source-root 与 --top。
+hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。
 ```
 
 ## 用在自己的工程
@@ -50,7 +50,6 @@ hint: 请检查输入模式和路径；project-root 模式必须同时提供 --s
 ```sh
 python rtl_encrypt.py \
   --filelist design.f \
-  --source-root <项目源码根目录> \
   --top <顶层模块名> \
   --category signals \
   --category instances \
@@ -87,7 +86,7 @@ gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Form
 | 模式 | 必要输入 | 适用方式 |
 | --- | --- | --- |
 | 单文件 | `--input`、`--source-root` | 快速试用或独立 `.sv/.v` 文件；只处理内部名称 |
-| filelist | `--filelist`、`--source-root`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件 |
+| filelist | `--filelist`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件，自动推导内部路径边界 |
 | project-root | `--source-root`、`--top` | 从 top 自动发现源码；适合目录和依赖都完整的工程 |
 
 单文件：
@@ -104,16 +103,16 @@ Filelist：
 ```sh
 python rtl_encrypt.py \
   --filelist design.f \
-  --source-root <源码根目录> \
   --top <可选的顶层模块名> \
   --output-dir <加密输出目录>
 ```
 
-仓库示例使用 `rtl_samples/example_fifo/design.f`、源码根目录
-`rtl_samples/example_fifo` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
+仓库示例使用 `rtl_samples/example_fifo/design.f` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
 提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
 filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 和显式列出的 `.h` 作为 include/context 物理文件进入 gate、mapping
-和恢复清单，不会被写入 canonical `design.f`；`.h` 不产生宏 rename edit。
+和恢复清单，不会被写入 canonical `design.f`；`.h` 不产生宏 rename edit。顶层和嵌套 filelist
+中的相对路径分别以所在 filelist 目录为基准，`$NAME`/`${NAME}` 会按当前环境展开；`-f`、
+`+incdir+` 和显式物理 entry 共同推导内部路径边界，但不会把边界目录下未列出的源码自动加入候选集合。
 filelist 还可使用 `+incdir+DIR1+DIR2` 和 `+define+NAME[=VALUE]` 提供编译上下文；其中的环境变量和嵌套
 `-f` 会按出现顺序展开，命令行 `--include-dir`、`--define` 对同名项具有最终优先级。
 
@@ -146,7 +145,7 @@ python rtl_decrypt.py \
 
 | 选项 | 用法 |
 | --- | --- |
-| `--include-dir PATH` | 添加 include 目录，可重复使用；相对路径以源码根目录为基准 |
+| `--include-dir PATH` | 添加 include 目录，可重复使用；filelist 模式的相对路径以顶层 filelist 目录为基准，单文件/project-root 仍以源码根目录为基准 |
 | `--define NAME[=VALUE]` | 添加预处理宏，可重复使用，例如 `--define SYNTHESIS` |
 | `--category NAME` | 只处理指定类型，可重复使用 |
 | `--encryption-rate RATE` | 目标加密率，范围为 `0 < RATE <= 1`；不是标识符数量的精确比例 |
