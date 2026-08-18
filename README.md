@@ -42,6 +42,10 @@ error: CLI_VNEXT_INPUT_INVALID
 hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。
 ```
 
+如果 filelist 的宏、include 或路径分析失败，命令会在稳定错误码后直接给出 `detail`、`path`、
+`message` 和可用时的 `details`（例如冲突宏的 provider 列表）。这些路径是工程内部相对路径；失败时
+不会发布输出目录、mapping 或 metrics。
+
 ## 用在自己的工程
 
 真实工程优先使用显式 filelist。它能固定编译顺序，并配合 `--include-dir`、`--define` 准确提供

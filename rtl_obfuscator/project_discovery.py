@@ -241,6 +241,7 @@ class _ProjectContext:
         self.include_edges: set[_Edge] = set()
         self.macro_edges: set[_Edge] = set()
         self.global_macro_providers: dict[str, set[str]] = {}
+        self.global_macro_fallback_providers: dict[str, set[str]] = {}
         self._build_indexes()
 
     def _build_indexes(self) -> None:
@@ -302,7 +303,7 @@ class _ProjectContext:
         for relative in self.candidates:
             env = dict(self.defines)
             active = True
-            stack: list[tuple[bool, bool]] = []
+            stack: list[tuple[bool, bool, str | None, str]] = []
             for line in self.clean_sources[relative].splitlines():
                 directive = self._directive(line)
                 if directive is None:
@@ -313,28 +314,35 @@ class _ProjectContext:
                     condition = macro_name in env
                     if name == "ifndef":
                         condition = not condition
-                    stack.append((active, condition))
+                    stack.append((active, condition, name, macro_name))
                     active = active and condition
                 elif name == "elsif" and stack:
-                    parent, taken = stack[-1]
+                    parent, taken, _, _ = stack[-1]
                     condition = macro_name in env
-                    stack[-1] = (parent, taken or condition)
+                    stack[-1] = (parent, taken or condition, None, "")
                     active = parent and not taken and condition
                 elif name == "else" and stack:
-                    parent, taken = stack[-1]
+                    parent, taken, _, _ = stack[-1]
                     active = parent and not taken
-                    stack[-1] = (parent, True)
+                    stack[-1] = (parent, True, None, "")
                 elif name == "endif" and stack:
-                    parent, _ = stack.pop()
+                    parent, _, _, _ = stack.pop()
                     active = parent
                 elif name == "define" and active:
                     match = re.match(r"([A-Za-z_][A-Za-z0-9_$]*)", argument)
                     if match is not None:
                         macro = match.group(1)
                         env[macro] = "1"
-                        self.global_macro_providers.setdefault(macro, set()).add(
-                            relative
+                        fallback = any(
+                            branch == "ifndef" and guarded_macro == macro
+                            for _, _, branch, guarded_macro in stack
                         )
+                        providers = (
+                            self.global_macro_fallback_providers
+                            if fallback
+                            else self.global_macro_providers
+                        )
+                        providers.setdefault(macro, set()).add(relative)
                 elif name == "undef" and active:
                     env.pop(macro_name, None)
 
@@ -497,6 +505,10 @@ class _ProjectContext:
                     continue
                 providers = sorted(self.global_macro_providers.get(macro, set()))
                 if not providers:
+                    providers = sorted(
+                        self.global_macro_fallback_providers.get(macro, set())
+                    )
+                if not providers:
                     raise ProjectAnalysisError(
                         "UNRESOLVED_MACRO",
                         f"macro has no provider: {macro}",
@@ -578,7 +590,12 @@ class _ProjectContext:
             source_manager.addUserDirectories(str(self.root / directory))
         bag, _ = self._bags()
         compile_order = self.compile_order(closure)
-        source_paths = [str(self.root / path) for path in compile_order]
+        context_paths = sorted(
+            path for path in closure if is_context_file(path)
+        )
+        source_paths = [
+            str(self.root / path) for path in (*context_paths, *compile_order)
+        ]
         syntax_tree = pyslang.syntax.SyntaxTree.fromFiles(
             source_paths, source_manager, bag
         )

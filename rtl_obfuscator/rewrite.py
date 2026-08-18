@@ -51,9 +51,20 @@ def _write_json(path: Path, content: dict[str, Any]) -> None:
 class _CliVNextError(ValueError):
     """Stable user-facing failure for the explicit vNext CLI."""
 
-    def __init__(self, code: str, message: str = "") -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str = "",
+        *,
+        detail: str | None = None,
+        path: str | None = None,
+        details: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.code = code
         self.message = message
+        self.detail = detail
+        self.path = path
+        self.details = list(details or [])
         super().__init__(f"{code}: {message}" if message else code)
 
 
@@ -79,8 +90,62 @@ _CLI_VNEXT_ABI_CATEGORIES = frozenset(MODULE_ABI_CATEGORIES)
 _CLI_VNEXT_PATH_FIELDS = ("output_dir", "map_file", "metrics_file")
 
 
-def _cli_vnext_fail(code: str, message: str = "") -> None:
-    raise _CliVNextError(code, message)
+def _cli_vnext_fail(
+    code: str,
+    message: str = "",
+    *,
+    detail: str | None = None,
+    path: str | None = None,
+    details: list[dict[str, Any]] | None = None,
+) -> None:
+    raise _CliVNextError(
+        code,
+        message,
+        detail=detail,
+        path=path,
+        details=details,
+    )
+
+
+def _cli_vnext_relative_diagnostic_path(
+    value: str | None, source_root: Path
+) -> str | None:
+    if value is None:
+        return None
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        return value
+    try:
+        return candidate.resolve().relative_to(source_root.resolve()).as_posix()
+    except ValueError:
+        return candidate.name
+
+
+def _cli_vnext_diagnostic_details(
+    details: list[dict[str, Any]], source_root: Path
+) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for detail in details:
+        item: dict[str, Any] = {}
+        for key, value in detail.items():
+            if isinstance(value, str):
+                item[key] = _cli_vnext_relative_diagnostic_path(value, source_root)
+            else:
+                item[key] = value
+        sanitized.append(item)
+    return sanitized
+
+
+def _cli_vnext_fail_source_set(
+    error: SourceSetError, diagnostic_root: Path
+) -> None:
+    _cli_vnext_fail(
+        "CLI_VNEXT_INPUT_INVALID",
+        error.message,
+        detail=error.code,
+        path=_cli_vnext_relative_diagnostic_path(error.path, diagnostic_root),
+        details=_cli_vnext_diagnostic_details(error.details, diagnostic_root),
+    )
 
 
 def _cli_vnext_path_overlap(first: Path, second: Path) -> bool:
@@ -147,34 +212,49 @@ def _cli_vnext_validate_arguments(
         if project_root_arg is not None or sum(
             value is not None for value in (input_file, filelist)
         ) > 1:
-            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+            _cli_vnext_fail(
+                "CLI_VNEXT_INPUT_INVALID",
+                "public input modes are mutually exclusive",
+            )
         if filelist is not None and source_root_value is not None:
             _cli_vnext_fail(
                 "CLI_VNEXT_INPUT_INVALID",
                 "filelist mode does not accept --source-root",
+                detail="CLI_VNEXT_INPUT_INVALID",
             )
         if input_file is None and filelist is None and not public_project_mode:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     elif sum(
         value is not None for value in (input_file, filelist, project_root_arg)
     ) != 1:
-        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        _cli_vnext_fail(
+            "CLI_VNEXT_INPUT_INVALID",
+            "internal input modes are mutually exclusive; choose exactly one of --input, --filelist, or --project-root",
+            detail="CLI_VNEXT_INPUT_INVALID",
+        )
 
     if project_root_arg is not None:
         if getattr(args, "source_root", None) is not None or args.top is None:
-            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+            _cli_vnext_fail(
+                "CLI_VNEXT_INPUT_INVALID",
+                "--project-root cannot be combined with --source-root and requires --top",
+                detail="CLI_VNEXT_INPUT_INVALID",
+            )
         source_root_arg = project_root_arg
         try:
             source_root = Path(source_root_arg).expanduser().resolve()
         except (OSError, RuntimeError, TypeError) as error:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
     elif public_cli and filelist is not None:
+        filelist_path = Path(filelist).expanduser().resolve()
         try:
             source_root = infer_filelist_root(
-                filelist=Path(filelist).expanduser().resolve(),
+                filelist=filelist_path,
                 include_dirs=args.include_dirs,
             )
-        except (OSError, RuntimeError, SourceSetError, TypeError, ValueError) as error:
+        except SourceSetError as error:
+            _cli_vnext_fail_source_set(error, filelist_path.parent)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
     else:
         source_root_arg = source_root_value
@@ -317,7 +397,9 @@ def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
             defines=args.defines,
             top=args.top,
         )
-    except (OSError, RuntimeError, SourceSetError, TypeError, ValueError) as error:
+    except SourceSetError as error:
+        _cli_vnext_fail_source_set(error, source_root)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
 
 
@@ -1029,7 +1111,7 @@ def _run_cli_operation(
     args: argparse.Namespace,
     operation: Any,
 ) -> int:
-    def fail(code: str) -> None:
+    def fail(error: _CliVNextError) -> None:
         hints = {
             "CLI_VNEXT_INPUT_INVALID": "请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。",
             "CLI_VNEXT_OUTPUT_INVALID": "请改用尚不存在且不与源码重叠的输出目录或报告路径。",
@@ -1042,17 +1124,30 @@ def _run_cli_operation(
             "RESTORE_VNEXT_REPORT_INVALID": "mapping.json 与加密目录不匹配或已损坏，请使用同一次加密的原始产物。",
             "RESTORE_VNEXT_IO_ERROR": "请检查目标目录权限和可用磁盘空间后重试。",
         }
-        hint = hints.get(code, "请检查命令参数、输入文件和输出路径后重试。")
-        parser.exit(1, f"error: {code}\nhint: {hint}\n")
+        hint = hints.get(error.code, "请检查命令参数、输入文件和输出路径后重试。")
+        lines = [f"error: {error.code}"]
+        if error.detail:
+            lines.append(f"detail: {error.detail}")
+        if error.path:
+            lines.append(f"path: {error.path}")
+        if error.message:
+            lines.append(f"message: {error.message}")
+        if error.details:
+            lines.append(
+                "details: "
+                + json.dumps(error.details, ensure_ascii=False, separators=(",", ":"))
+            )
+        lines.append(f"hint: {hint}")
+        parser.exit(1, "\n".join(lines) + "\n")
 
     try:
         summary = operation(args)
     except _CliVNextError as error:
-        fail(error.code)
+        fail(error)
     except restore_vnext.RestoreVNextError as error:
-        fail(error.code)
-    except (OSError, RuntimeError, ValueError):
-        fail("CLI_VNEXT_INPUT_INVALID")
+        fail(_CliVNextError(error.code, str(error)))
+    except (OSError, RuntimeError, ValueError) as error:
+        fail(_CliVNextError("CLI_VNEXT_INPUT_INVALID", str(error)))
     print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
     return 0
 

@@ -12,7 +12,8 @@
 
 `rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
 中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`
-operation 暂时只为历史测试和兼容保留，不是当前用户接口。
+operation 暂时只为历史测试和兼容保留，不是当前用户接口。加密输入模式在入口处互斥校验；filelist
+和单文件发现失败会保留 SourceSet 的错误 code、相对 path、message 及 provider details，直接输出给用户。
 
 ## 核心模块
 

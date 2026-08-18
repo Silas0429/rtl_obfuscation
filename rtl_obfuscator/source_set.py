@@ -83,10 +83,18 @@ class SourceSet:
 class SourceSetError(ValueError):
     """Stable input failure for a SourceSet adapter."""
 
-    def __init__(self, code: str, message: str, path: str | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        path: str | None = None,
+        *,
+        details: list[dict[str, object]] | None = None,
+    ) -> None:
         self.code = code
         self.message = message
         self.path = path
+        self.details = list(details or [])
         super().__init__(f"{code}: {message}")
 
 
@@ -497,16 +505,30 @@ def _read_filelist(
 
 def _map_discovery_error(error: ProjectAnalysisError) -> SourceSetError:
     if error.code == "TOP_NOT_FOUND":
-        return SourceSetError("SOURCESET_TOP_NOT_FOUND", error.message, error.file)
+        return SourceSetError(
+            "SOURCESET_TOP_NOT_FOUND", error.message, error.file, details=error.details
+        )
     if error.code == "AMBIGUOUS_TOP":
-        return SourceSetError("SOURCESET_TOP_AMBIGUOUS", error.message, error.file)
+        return SourceSetError(
+            "SOURCESET_TOP_AMBIGUOUS", error.message, error.file, details=error.details
+        )
     if error.code == "MISSING_INCLUDE":
         if "outside project root" in error.message:
             return SourceSetError(
-                "SOURCESET_PATH_OUTSIDE_ROOT", error.message, error.file
+                "SOURCESET_PATH_OUTSIDE_ROOT",
+                error.message,
+                error.file,
+                details=error.details,
             )
-        return SourceSetError("SOURCESET_FILE_NOT_FOUND", error.message, error.file)
-    return SourceSetError("SOURCESET_DISCOVERY_FAILED", error.message, error.file)
+        return SourceSetError(
+            "SOURCESET_FILE_NOT_FOUND", error.message, error.file, details=error.details
+        )
+    return SourceSetError(
+        "SOURCESET_DISCOVERY_FAILED",
+        error.message,
+        error.file,
+        details=error.details,
+    )
 
 
 def _discover_explicit_include_headers(
