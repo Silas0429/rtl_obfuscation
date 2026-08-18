@@ -73,6 +73,14 @@ class _TypeDefinition:
 
 
 @dataclass(frozen=True)
+class _MacroDefinition:
+    name: str
+    formal_names: frozenset[str]
+    formal_text: str
+    body_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _Edge:
     provider: str
     consumer: str
@@ -207,6 +215,98 @@ def _strip_comments(source: str) -> str:
     return "".join(result)
 
 
+def _continuation_piece(line: str) -> tuple[str, bool]:
+    text = line.rstrip("\r\n")
+    match = re.search(r"\\[ \t]*$", text)
+    if match is None:
+        return text, False
+    return text[: match.start()], True
+
+
+def _split_macro_formals(text: str) -> frozenset[str]:
+    names: set[str] = set()
+    current: list[str] = []
+    depth = 0
+    parts: list[str] = []
+    for character in text:
+        if character == "(":
+            depth += 1
+        elif character == ")" and depth:
+            depth -= 1
+        if character == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(character)
+    if current or text.strip():
+        parts.append("".join(current))
+    for part in parts:
+        match = _IDENTIFIER.match(part.strip())
+        if match is not None:
+            names.add(match.group(0))
+    return frozenset(names)
+
+
+def _parse_macro_definition(argument: str) -> _MacroDefinition | None:
+    match = _IDENTIFIER.match(argument.strip())
+    if match is None:
+        return None
+    name = match.group(0)
+    rest = argument[argument.find(name) + len(name) :]
+    formal_text = ""
+    body = rest
+    if rest.startswith("("):
+        depth = 0
+        closing = None
+        for index, character in enumerate(rest):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    closing = index
+                    break
+        if closing is None:
+            return _MacroDefinition(name, frozenset(), "", (rest,))
+        formal_text = rest[1:closing]
+        body = rest[closing + 1 :]
+    return _MacroDefinition(
+        name=name,
+        formal_names=_split_macro_formals(formal_text),
+        formal_text=formal_text,
+        body_lines=tuple(body.splitlines()),
+    )
+
+
+def _iter_preprocessor_units(source: str) -> Iterable[str | _MacroDefinition]:
+    lines = source.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        directive = _ProjectContext._directive(line)
+        if directive is None or directive[0] != "define":
+            yield line
+            index += 1
+            continue
+        first_piece, continued = _continuation_piece(line)
+        first_directive = _ProjectContext._directive(first_piece)
+        if first_directive is None:
+            yield line
+            index += 1
+            continue
+        parts = [first_directive[1]]
+        index += 1
+        while continued and index < len(lines):
+            piece, continued = _continuation_piece(lines[index])
+            parts.append(piece)
+            index += 1
+        macro = _parse_macro_definition("\n".join(parts))
+        if macro is None:
+            yield first_piece
+        else:
+            yield macro
+
+
 class _ProjectContext:
     def __init__(
         self,
@@ -323,7 +423,34 @@ class _ProjectContext:
             }
             active = True
             stack: list[tuple[bool, bool, str | None, str]] = []
-            for line in self.clean_sources[relative].splitlines():
+            for unit in _iter_preprocessor_units(self.clean_sources[relative]):
+                if isinstance(unit, _MacroDefinition):
+                    if not active:
+                        continue
+                    macro = unit.name
+                    if macro in _BUILTIN_PREPROCESSOR_MACROS:
+                        raise ProjectAnalysisError(
+                            "AMBIGUOUS_MACRO",
+                            f"built-in macro cannot be redefined: {macro}",
+                            file=relative,
+                            details=[
+                                {"provider": "<builtin>"},
+                                {"provider": relative},
+                            ],
+                        )
+                    env[macro] = "1"
+                    fallback = any(
+                        branch == "ifndef" and guarded_macro == macro
+                        for _, _, branch, guarded_macro in stack
+                    )
+                    providers = (
+                        self.global_macro_fallback_providers
+                        if fallback
+                        else self.global_macro_providers
+                    )
+                    providers.setdefault(macro, set()).add(relative)
+                    continue
+                line = unit
                 directive = self._directive(line)
                 if directive is None:
                     continue
@@ -347,31 +474,6 @@ class _ProjectContext:
                 elif name == "endif" and stack:
                     parent, _, _, _ = stack.pop()
                     active = parent
-                elif name == "define" and active:
-                    match = re.match(r"([A-Za-z_][A-Za-z0-9_$]*)", argument)
-                    if match is not None:
-                        macro = match.group(1)
-                        if macro in _BUILTIN_PREPROCESSOR_MACROS:
-                            raise ProjectAnalysisError(
-                                "AMBIGUOUS_MACRO",
-                                f"built-in macro cannot be redefined: {macro}",
-                                file=relative,
-                                details=[
-                                    {"provider": "<builtin>"},
-                                    {"provider": relative},
-                                ],
-                            )
-                        env[macro] = "1"
-                        fallback = any(
-                            branch == "ifndef" and guarded_macro == macro
-                            for _, _, branch, guarded_macro in stack
-                        )
-                        providers = (
-                            self.global_macro_fallback_providers
-                            if fallback
-                            else self.global_macro_providers
-                        )
-                        providers.setdefault(macro, set()).add(relative)
                 elif name == "undef" and active:
                     env.pop(macro_name, None)
 
@@ -421,19 +523,50 @@ class _ProjectContext:
             )
         return automatic[0]
 
-    def _scan_preprocessed_file(
+    def _scan_preprocessed_units(
         self,
         relative: str,
+        units: Iterable[str | _MacroDefinition],
         env: dict[str, str | None],
         closure: set[str],
         include_stack: tuple[str, ...],
+        formal_parameters: frozenset[str] = frozenset(),
     ) -> set[str]:
         added: set[str] = set()
         active = True
         stack: list[tuple[bool, bool]] = []
-        for line_number, line in enumerate(
-            self.clean_sources[relative].splitlines(keepends=True), 1
-        ):
+        for unit in units:
+            if isinstance(unit, _MacroDefinition):
+                if not active:
+                    continue
+                macro = unit.name
+                if macro in _BUILTIN_PREPROCESSOR_MACROS:
+                    raise ProjectAnalysisError(
+                        "AMBIGUOUS_MACRO",
+                        f"built-in macro cannot be redefined: {macro}",
+                        file=relative,
+                        details=[
+                            {"provider": "<builtin>"},
+                            {"provider": relative},
+                        ],
+                    )
+                env[macro] = relative
+                body_units: list[str | _MacroDefinition] = []
+                if unit.formal_text:
+                    body_units.append(unit.formal_text)
+                body_units.extend(unit.body_lines)
+                added.update(
+                    self._scan_preprocessed_units(
+                        relative,
+                        body_units,
+                        env,
+                        closure | added,
+                        include_stack,
+                        unit.formal_names,
+                    )
+                )
+                continue
+            line = unit
             directive = self._directive(line)
             if directive is not None:
                 name, argument = directive
@@ -531,8 +664,12 @@ class _ProjectContext:
             if not active:
                 continue
             for match in re.finditer(r"`([A-Za-z_][A-Za-z0-9_$]*)", line):
+                if match.start() > 0 and line[match.start() - 1] == "`":
+                    continue
                 macro = match.group(1)
                 if macro in _DIRECTIVES:
+                    continue
+                if macro in formal_parameters:
                     continue
                 if macro in _BUILTIN_PREPROCESSOR_MACROS:
                     continue
@@ -568,8 +705,6 @@ class _ProjectContext:
                 self.macro_edges.add(_Edge(provider, relative, macro))
                 if provider not in closure:
                     added.add(provider)
-            if stack and line_number == len(self.clean_sources[relative].splitlines()):
-                pass
         if stack:
             raise ProjectAnalysisError(
                 "PREPROCESS_ERROR",
@@ -577,6 +712,21 @@ class _ProjectContext:
                 file=relative,
             )
         return added
+
+    def _scan_preprocessed_file(
+        self,
+        relative: str,
+        env: dict[str, str | None],
+        closure: set[str],
+        include_stack: tuple[str, ...],
+    ) -> set[str]:
+        return self._scan_preprocessed_units(
+            relative,
+            _iter_preprocessor_units(self.clean_sources[relative]),
+            env,
+            closure,
+            include_stack,
+        )
 
     def add_preprocessor_dependencies(self, closure: set[str]) -> bool:
         additions: set[str] = set()

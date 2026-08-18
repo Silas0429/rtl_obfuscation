@@ -1,0 +1,2 @@
+`define ASSERT_DEFAULT_CLK t095_clk
+`define ASSERT_DEFAULT_RST t095_rst
