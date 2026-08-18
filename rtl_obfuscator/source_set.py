@@ -13,7 +13,13 @@ from .project_discovery import (
     _discover_files,
     _discover_sourceset,
 )
-from .rtl_files import HEADER_SUFFIXES, SOURCE_SUFFIXES, is_header_file, is_source_file
+from .rtl_files import (
+    CONTEXT_SUFFIXES,
+    HEADER_SUFFIXES,
+    SOURCE_SUFFIXES,
+    is_header_file,
+    is_source_file,
+)
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")
@@ -217,10 +223,10 @@ def _normalize_filelist_entry(
     absolute, relative = _resolve_filelist_path(
         root=root, text=text, environment=environment, label="filelist entry"
     )
-    if absolute.suffix not in SOURCE_SUFFIXES | HEADER_SUFFIXES:
+    if absolute.suffix not in SOURCE_SUFFIXES | HEADER_SUFFIXES | CONTEXT_SUFFIXES:
         raise SourceSetError(
             "SOURCESET_UNSUPPORTED_FILE",
-            "filelist entries must use .sv, .v, .svh, or .vh suffixes",
+            "filelist entries must use .sv, .v, .svh, .vh, or explicit .h suffixes",
             relative,
         )
     if not absolute.is_file():

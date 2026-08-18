@@ -2,9 +2,10 @@
 
 本项目通过一致改写 SystemVerilog RTL 名称来加密源码，并可使用 `mapping.json` 恢复原文件。
 
-输入后缀边界：独立编译单元支持小写 `.sv`、`.v`，被 include 的物理头文件支持小写 `.svh`、`.vh`。
-四种后缀都沿用当前 PySlang 的 SystemVerilog 语义模式解析；这不是一套按后缀切换的 legacy
-Verilog parser。大写 `.V/.VH`、`.txt` 和把 `.vh` 当作单文件 source unit 会稳定失败。
+输入后缀边界：独立编译单元支持小写 `.sv`、`.v`，被 include 的物理头文件支持小写 `.svh`、`.vh`；
+显式 filelist 还可列出只读的 `.h` 宏上下文文件。前四种后缀沿用当前 PySlang 的 SystemVerilog
+语义模式解析；`.h` 只作为 filelist context provider，不是独立 source unit，也不进入 project-root
+自动扫描。大写 `.V/.VH/.H`、`.txt` 和把 header 当作单文件 source unit 会稳定失败。
 
 ## 3 分钟快速开始
 
@@ -111,8 +112,8 @@ python rtl_encrypt.py \
 仓库示例使用 `rtl_samples/example_fifo/design.f`、源码根目录
 `rtl_samples/example_fifo` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
 提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
-filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 只作为 include 物理文件进入 gate、mapping
-和恢复清单，不会被写入 canonical `design.f`。
+filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 和显式列出的 `.h` 作为 include/context 物理文件进入 gate、mapping
+和恢复清单，不会被写入 canonical `design.f`；`.h` 不产生宏 rename edit。
 filelist 还可使用 `+incdir+DIR1+DIR2` 和 `+define+NAME[=VALUE]` 提供编译上下文；其中的环境变量和嵌套
 `-f` 会按出现顺序展开，命令行 `--include-dir`、`--define` 对同名项具有最终优先级。
 

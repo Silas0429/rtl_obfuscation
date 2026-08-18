@@ -18,7 +18,12 @@ from typing import Any, Iterable
 
 import pyslang
 
-from .rtl_files import is_header_file, is_physical_rtl_file, is_source_file
+from .rtl_files import (
+    is_context_file,
+    is_header_file,
+    is_physical_rtl_file,
+    is_source_file,
+)
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
@@ -751,7 +756,7 @@ def _discover_sourceset(
 
     if top is None:
         for edge in context.include_edges:
-            if not is_physical_rtl_file(edge.provider):
+            if not (is_physical_rtl_file(edge.provider) or is_context_file(edge.provider)):
                 raise ProjectAnalysisError(
                     "UNSUPPORTED_INCLUDE",
                     f"include dependency is not a supported RTL provider: {edge.provider}",
@@ -759,7 +764,7 @@ def _discover_sourceset(
                 )
         included_files = {
             edge.provider for edge in context.include_edges
-            if is_header_file(edge.provider)
+            if is_header_file(edge.provider) or is_context_file(edge.provider)
         }
         included_files.update(explicit_header_files)
         return SourceSetDiscovery(
@@ -806,7 +811,7 @@ def _discover_sourceset(
         )
 
     for edge in context.include_edges:
-        if not is_physical_rtl_file(edge.provider):
+        if not (is_physical_rtl_file(edge.provider) or is_context_file(edge.provider)):
             raise ProjectAnalysisError(
                 "UNSUPPORTED_INCLUDE",
                 f"include dependency is not a supported RTL provider: {edge.provider}",
@@ -814,7 +819,7 @@ def _discover_sourceset(
             )
     included_files = {
         edge.provider for edge in context.include_edges
-        if is_header_file(edge.provider)
+        if is_header_file(edge.provider) or is_context_file(edge.provider)
     }
     included_files.update(explicit_header_files)
 

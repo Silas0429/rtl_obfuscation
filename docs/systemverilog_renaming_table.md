@@ -9,8 +9,9 @@
 保留的对象。`rename=0` 不能视为该类型已经完整支持。
 
 文件后缀不是新的加密类别：`.sv`、`.v` source unit 以及被 include 的 `.svh`、`.vh` 共用同一条
-PySlang SystemVerilog 语义流水线。工具不承诺 strict legacy-Verilog 方言，也不接受大写后缀或把
-header 当作独立 source unit。
+PySlang SystemVerilog 语义流水线；显式 filelist 还可提供只读 `.h` 宏 context header。`.h` 不进入
+compile order、不产生宏 rename，也不被 single-file 或 project-root 自动扫描。工具不承诺 strict
+legacy-Verilog 方言，也不接受大写后缀或把 header 当作独立 source unit。
 
 | `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
 | --- | --- | --- | --- | --- |
