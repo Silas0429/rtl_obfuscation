@@ -29,6 +29,9 @@ from .rtl_files import (
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
 _DEFINE_ARGUMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(?:=.*)?\Z")
 _IGNORED_DIRECTORIES = frozenset({".git", ".hg", ".svn", "__pycache__"})
+_BUILTIN_PREPROCESSOR_MACROS = frozenset(
+    {"__FILE__", "__LINE__", "__DATE__", "__TIME__", "__TIMESTAMP__"}
+)
 _DIRECTIVES = frozenset(
     {
         "define",
@@ -218,6 +221,19 @@ class _ProjectContext:
         self.top = top
         self.include_dirs = include_dirs
         self.defines = defines
+        conflicting_defines = sorted(
+            set(defines) & _BUILTIN_PREPROCESSOR_MACROS
+        )
+        if conflicting_defines:
+            macro = conflicting_defines[0]
+            raise ProjectAnalysisError(
+                "AMBIGUOUS_MACRO",
+                f"built-in macro cannot be supplied as a project define: {macro}",
+                details=[
+                    {"provider": "<builtin>"},
+                    {"provider": "<project-define>"},
+                ],
+            )
         self.categories = categories
         self.candidates = sorted(
             candidate_files if candidate_files is not None else _discover_files(root)
@@ -301,7 +317,10 @@ class _ProjectContext:
 
     def _index_macro_providers(self) -> None:
         for relative in self.candidates:
-            env = dict(self.defines)
+            env = {
+                **self.defines,
+                **{name: None for name in _BUILTIN_PREPROCESSOR_MACROS},
+            }
             active = True
             stack: list[tuple[bool, bool, str | None, str]] = []
             for line in self.clean_sources[relative].splitlines():
@@ -332,6 +351,16 @@ class _ProjectContext:
                     match = re.match(r"([A-Za-z_][A-Za-z0-9_$]*)", argument)
                     if match is not None:
                         macro = match.group(1)
+                        if macro in _BUILTIN_PREPROCESSOR_MACROS:
+                            raise ProjectAnalysisError(
+                                "AMBIGUOUS_MACRO",
+                                f"built-in macro cannot be redefined: {macro}",
+                                file=relative,
+                                details=[
+                                    {"provider": "<builtin>"},
+                                    {"provider": relative},
+                                ],
+                            )
                         env[macro] = "1"
                         fallback = any(
                             branch == "ifndef" and guarded_macro == macro
@@ -481,7 +510,18 @@ class _ProjectContext:
                 if name == "define":
                     match = re.match(r"([A-Za-z_][A-Za-z0-9_$]*)", argument)
                     if match is not None:
-                        env[match.group(1)] = relative
+                        macro = match.group(1)
+                        if macro in _BUILTIN_PREPROCESSOR_MACROS:
+                            raise ProjectAnalysisError(
+                                "AMBIGUOUS_MACRO",
+                                f"built-in macro cannot be redefined: {macro}",
+                                file=relative,
+                                details=[
+                                    {"provider": "<builtin>"},
+                                    {"provider": relative},
+                                ],
+                            )
+                        env[macro] = relative
                     continue
                 if name == "undef":
                     env.pop(macro_name, None)
@@ -493,6 +533,8 @@ class _ProjectContext:
             for match in re.finditer(r"`([A-Za-z_][A-Za-z0-9_$]*)", line):
                 macro = match.group(1)
                 if macro in _DIRECTIVES:
+                    continue
+                if macro in _BUILTIN_PREPROCESSOR_MACROS:
                     continue
                 if macro in self.defines:
                     continue
@@ -540,7 +582,8 @@ class _ProjectContext:
         additions: set[str] = set()
         for relative in sorted(closure):
             env: dict[str, str | None] = {
-                name: None for name in self.defines
+                name: None
+                for name in (*self.defines, *_BUILTIN_PREPROCESSOR_MACROS)
             }
             additions.update(
                 self._scan_preprocessed_file(relative, env, closure, (relative,))
