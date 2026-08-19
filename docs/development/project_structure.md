@@ -7,8 +7,9 @@
 ## 产品入口
 
 普通用户从仓库根目录运行 `python rtl_encrypt.py` 加密，运行 `python rtl_decrypt.py`
-恢复；无需安装本项目。filelist 模式以显式 filelist 为唯一输入并自动推导内部路径边界；
-单文件和 project-root 模式继续使用 `--source-root`。两个根目录脚本只负责调用共享 Python 函数。
+恢复；无需安装本项目。filelist 模式以显式 filelist 为唯一输入并自动推导内部路径边界，
+是实际工程的首选公共入口；单文件只接受 `--input` 路径，project-root 才接受
+`--source-root` 与 `--top`。三个公共模式均在入口处严格互斥校验，两个根目录脚本只负责调用共享 Python 函数。
 
 `rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
 中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`

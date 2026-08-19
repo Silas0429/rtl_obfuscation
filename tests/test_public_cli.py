@@ -97,7 +97,16 @@ class PublicCliTests(unittest.TestCase):
     ) -> tuple[Path, Path, Path, dict[str, object]]:
         root.mkdir(parents=True)
         gate = root / "gate"
-        arguments = [*mode_arguments, "--output-dir", str(gate)]
+        arguments = list(mode_arguments)
+        if "--input" in arguments and "--source-root" in arguments:
+            input_index = arguments.index("--input")
+            source_root_index = arguments.index("--source-root")
+            input_path = Path(arguments[input_index + 1])
+            source_root = Path(arguments[source_root_index + 1])
+            if not input_path.is_absolute():
+                arguments[input_index + 1] = str(source_root / input_path)
+            del arguments[source_root_index : source_root_index + 2]
+        arguments.extend(("--output-dir", str(gate)))
         if map_location == "explicit":
             mapping = root / "mapping-explicit.json"
             arguments.extend(("--map", str(mapping)))
@@ -186,8 +195,8 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 removed_project.stderr,
                 "error: CLI_VNEXT_INPUT_INVALID\n"
-                "hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式需要 "
-                "--source-root 与 --top。\n",
+                "hint: 请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，"
+                "推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。\n",
             )
             self.assertFalse((root / "project-gate").exists())
 
@@ -203,8 +212,10 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 incomplete.stderr,
                 "error: CLI_VNEXT_INPUT_INVALID\n"
-                "hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 "
-                "--source-root 与 --top。\n",
+                "detail: CLI_VNEXT_INPUT_MODE_INCOMPLETE\n"
+                "message: project-root mode requires both --source-root and --top\n"
+                "hint: 请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，"
+                "推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。\n",
             )
             self.assertFalse((root / "incomplete-gate").exists())
 
@@ -781,6 +792,7 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 result.stderr,
                 "error: RESTORE_VNEXT_OUTPUT_INVALID\n"
+                "message: RESTORE_VNEXT_OUTPUT_INVALID: report\n"
                 "hint: 请改用尚不存在且不与输入重叠的恢复目录或报告路径。\n",
             )
             self.assertFalse(output.exists())
@@ -803,6 +815,7 @@ class PublicCliTests(unittest.TestCase):
             self.assertEqual(
                 result.stderr,
                 "error: RESTORE_VNEXT_OUTPUT_INVALID\n"
+                "message: RESTORE_VNEXT_OUTPUT_INVALID: output overlaps an input\n"
                 "hint: 请改用尚不存在且不与输入重叠的恢复目录或报告路径。\n",
             )
             self.assertFalse(overlap_output.exists())
@@ -829,9 +842,7 @@ class PublicCliTests(unittest.TestCase):
                 result = self._run_public(
                     "rtl_encrypt",
                     "--input",
-                    "11_supported_obfuscation.sv",
-                    "--source-root",
-                    str(SINGLE_ROOT),
+                    str(SINGLE_ROOT / "11_supported_obfuscation.sv"),
                     "--output-dir",
                     str(gate),
                     "--encryption-rate",
@@ -929,7 +940,8 @@ class PublicCliTests(unittest.TestCase):
             "python rtl_encrypt.py",
             "cat \"$quick_work/gate/encryption_summary.txt\"",
             "python rtl_decrypt.py",
-            "cmp rtl_samples/11_supported_obfuscation.sv",
+            "--filelist rtl_samples/example_fifo/design.f",
+            "for source in fifo_if.sv fifo_storage.sv fifo_ctrl.sv fifo_top.sv; do",
             "action_counts.rename",
             "strict_compile_passed",
             "restored_byte_identical",

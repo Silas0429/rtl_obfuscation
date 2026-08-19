@@ -1,6 +1,6 @@
 # T094：内置预处理宏兼容
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：待分配的 GPT-5.6 Luna Extra high 子 Agent
 - 前置任务：T093 宏 fallback、输入互斥和详细诊断；当前基线 `5f625e5`

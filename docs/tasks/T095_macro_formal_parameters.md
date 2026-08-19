@@ -1,6 +1,6 @@
 # T095：多行宏形式参数兼容
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：待分配的 GPT-5.6 Luna Extra high 子 Agent
 - 前置任务：T093 宏 fallback/CLI 诊断、T094 内置预处理宏；当前基线 `f6762ea`

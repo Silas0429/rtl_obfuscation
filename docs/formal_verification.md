@@ -42,7 +42,6 @@ Formal 输入必须满足：
 ```sh
 python rtl_encrypt.py \
   --filelist <原始项目>/design.f \
-  --source-root <原始项目> \
   --top <top_module> \
   --output-dir <工作目录>/gate
 ```
@@ -68,7 +67,6 @@ python scripts/formal_equivalence.py \
 ```sh
 python rtl_encrypt.py \
   --input <原始目录>/design.sv \
-  --source-root <原始目录> \
   --output-dir <工作目录>/gate
 
 python scripts/formal_equivalence.py \

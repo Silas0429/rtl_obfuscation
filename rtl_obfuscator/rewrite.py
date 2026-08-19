@@ -88,6 +88,10 @@ _CLI_VNEXT_DEFAULT_CATEGORIES = tuple(CANONICAL_CATEGORIES[:13])
 _CLI_VNEXT_CATEGORIES = frozenset(CANONICAL_CATEGORIES)
 _CLI_VNEXT_ABI_CATEGORIES = frozenset(MODULE_ABI_CATEGORIES)
 _CLI_VNEXT_PATH_FIELDS = ("output_dir", "map_file", "metrics_file")
+_CLI_VNEXT_PUBLIC_INPUT_HINT = (
+    "请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，"
+    "推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。"
+)
 
 
 def _cli_vnext_fail(
@@ -201,29 +205,69 @@ def _cli_vnext_validate_arguments(
     project_root_arg = getattr(args, "project_root", None)
     public_cli = bool(getattr(args, "public_cli", False))
     source_root_value = getattr(args, "source_root", None)
-    public_project_mode = (
-        public_cli
-        and input_file is None
-        and filelist is None
-        and source_root_value is not None
-        and args.top is not None
-    )
     if public_cli:
-        if project_root_arg is not None or sum(
-            value is not None for value in (input_file, filelist)
-        ) > 1:
+        if project_root_arg is not None:
             _cli_vnext_fail(
                 "CLI_VNEXT_INPUT_INVALID",
-                "public input modes are mutually exclusive",
+                "--project-root is internal-only; choose --input, --filelist, or --source-root with --top",
+                detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
             )
-        if filelist is not None and source_root_value is not None:
+        if input_file is not None and filelist is not None:
             _cli_vnext_fail(
                 "CLI_VNEXT_INPUT_INVALID",
-                "filelist mode does not accept --source-root",
-                detail="CLI_VNEXT_INPUT_INVALID",
+                "--input and --filelist select different public input modes; choose exactly one",
+                detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
             )
-        if input_file is None and filelist is None and not public_project_mode:
-            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
+        if input_file is not None:
+            illegal = []
+            if source_root_value is not None:
+                illegal.append("--source-root")
+            if args.top is not None:
+                illegal.append("--top")
+            if illegal:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_INPUT_INVALID",
+                    f"single-file mode accepts only --input; illegal arguments: {', '.join(illegal)}",
+                    detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
+                )
+            try:
+                source_root = Path(input_file).expanduser().resolve().parent
+            except (OSError, RuntimeError, TypeError) as error:
+                _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+        elif filelist is not None:
+            if source_root_value is not None:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_INPUT_INVALID",
+                    "filelist mode does not accept --source-root; use --filelist [--top]",
+                    detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
+                )
+            filelist_path = Path(filelist).expanduser().resolve()
+            try:
+                source_root = infer_filelist_root(
+                    filelist=filelist_path,
+                    include_dirs=args.include_dirs,
+                )
+            except SourceSetError as error:
+                _cli_vnext_fail_source_set(error, filelist_path.parent)
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+        elif source_root_value is not None or args.top is not None:
+            if source_root_value is None or args.top is None:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_INPUT_INVALID",
+                    "project-root mode requires both --source-root and --top",
+                    detail="CLI_VNEXT_INPUT_MODE_INCOMPLETE",
+                )
+            try:
+                source_root = Path(source_root_value).expanduser().resolve()
+            except (OSError, RuntimeError, TypeError) as error:
+                _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
+        else:
+            _cli_vnext_fail(
+                "CLI_VNEXT_INPUT_INVALID",
+                "no public input mode selected; choose --input, --filelist, or --source-root with --top",
+                detail="CLI_VNEXT_INPUT_MODE_INCOMPLETE",
+            )
     elif sum(
         value is not None for value in (input_file, filelist, project_root_arg)
     ) != 1:
@@ -233,7 +277,8 @@ def _cli_vnext_validate_arguments(
             detail="CLI_VNEXT_INPUT_INVALID",
         )
 
-    if project_root_arg is not None:
+    public_project_mode = public_cli and input_file is None and filelist is None
+    if not public_cli and project_root_arg is not None:
         if getattr(args, "source_root", None) is not None or args.top is None:
             _cli_vnext_fail(
                 "CLI_VNEXT_INPUT_INVALID",
@@ -245,18 +290,7 @@ def _cli_vnext_validate_arguments(
             source_root = Path(source_root_arg).expanduser().resolve()
         except (OSError, RuntimeError, TypeError) as error:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
-    elif public_cli and filelist is not None:
-        filelist_path = Path(filelist).expanduser().resolve()
-        try:
-            source_root = infer_filelist_root(
-                filelist=filelist_path,
-                include_dirs=args.include_dirs,
-            )
-        except SourceSetError as error:
-            _cli_vnext_fail_source_set(error, filelist_path.parent)
-        except (OSError, RuntimeError, TypeError, ValueError) as error:
-            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
-    else:
+    elif not public_cli:
         source_root_arg = source_root_value
         if source_root_arg is None:
             _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
@@ -375,8 +409,13 @@ def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
                 defines=args.defines,
             )
         if args.input_file is not None:
+            source_file = (
+                Path(args.input_file).expanduser().resolve()
+                if bool(getattr(args, "public_cli", False))
+                else _cli_vnext_input_path(args.input_file, source_root)
+            )
             return from_single_file(
-                source_file=_cli_vnext_input_path(args.input_file, source_root),
+                source_file=source_file,
                 source_root=source_root,
                 include_dirs=args.include_dirs,
                 defines=args.defines,
@@ -933,10 +972,10 @@ def _register_encrypt_arguments(
     public_cli: bool,
 ) -> None:
     public_help = {
-        "input": "单文件模式：要加密的 .sv 或 .v 文件",
+        "input": "单文件模式：只提供要加密的 .sv 或 .v 文件路径",
         "filelist": "filelist 模式：按编译顺序列出源码的 .f 文件",
-        "source_root": "单文件或 project-root 模式的源码根目录；filelist 模式禁止提供",
-        "top": "顶层 module；project-root 模式必填，filelist 模式可选",
+        "source_root": "project-root 模式的源码根目录；不能与 --input 或 --filelist 同用",
+        "top": "顶层 module；project-root 模式必填，filelist 模式可选，单文件模式禁止",
         "include_dir": "额外 include 目录，可重复使用",
         "define": "预处理宏 NAME[=VALUE]，可重复使用",
         "category": "只处理指定名称类型，可重复使用；建议真实工程从少量类型开始",
@@ -1079,14 +1118,14 @@ def _create_encrypt_argument_parser() -> argparse.ArgumentParser:
         description="加密 SystemVerilog RTL 名称。",
         epilog=(
             "输入模式（三选一）：\n"
-            "  单文件：--input FILE --source-root DIR\n"
+            "  单文件：--input FILE\n"
             "  filelist：--filelist DESIGN.F [--top TOP]\n"
             "  project-root：--source-root DIR --top TOP"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
         error_code="CLI_VNEXT_INPUT_INVALID",
-        error_hint="请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式需要 --source-root 与 --top。",
+        error_hint=_CLI_VNEXT_PUBLIC_INPUT_HINT,
     )
     parser.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     _register_encrypt_arguments(parser, public_cli=True)
@@ -1113,7 +1152,7 @@ def _run_cli_operation(
 ) -> int:
     def fail(error: _CliVNextError) -> None:
         hints = {
-            "CLI_VNEXT_INPUT_INVALID": "请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。",
+            "CLI_VNEXT_INPUT_INVALID": _CLI_VNEXT_PUBLIC_INPUT_HINT,
             "CLI_VNEXT_OUTPUT_INVALID": "请改用尚不存在且不与源码重叠的输出目录或报告路径。",
             "CLI_VNEXT_RATE_INVALID": "请把 --encryption-rate 设置为大于 0 且不大于 1 的数值。",
             "CLI_VNEXT_ORCHESTRATION_INVALID": "请检查 filelist 编译顺序、include 目录、宏定义及严格编译诊断。",

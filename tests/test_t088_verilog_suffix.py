@@ -49,7 +49,16 @@ class VerilogSuffixTests(unittest.TestCase):
     def _encrypt(
         self, output: Path, *arguments: str
     ) -> tuple[Path, dict[str, object]]:
-        result = self._run("encrypt", *arguments, "--output-dir", str(output))
+        normalized_arguments = list(arguments)
+        if "--input" in normalized_arguments and "--source-root" in normalized_arguments:
+            input_index = normalized_arguments.index("--input")
+            source_root_index = normalized_arguments.index("--source-root")
+            input_path = Path(normalized_arguments[input_index + 1])
+            source_root = Path(normalized_arguments[source_root_index + 1])
+            if not input_path.is_absolute():
+                normalized_arguments[input_index + 1] = str(source_root / input_path)
+            del normalized_arguments[source_root_index : source_root_index + 2]
+        result = self._run("encrypt", *normalized_arguments, "--output-dir", str(output))
         self.assertEqual(result.returncode, 0, result.stderr)
         stdout = json.loads(result.stdout)
         self.assertGreater(stdout["action_counts"]["rename"], 0)

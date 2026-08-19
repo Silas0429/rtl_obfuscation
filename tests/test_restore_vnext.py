@@ -286,7 +286,12 @@ class RestoreVNextTests(unittest.TestCase):
                 "--output-dir", str(root / "missing-report-output"),
             )
             self.assertNotEqual(missing_report.returncode, 0)
-            self.assertEqual(missing_report.stderr, "error: RESTORE_VNEXT_OUTPUT_INVALID\n")
+            self.assertEqual(
+                missing_report.stderr,
+                "error: RESTORE_VNEXT_OUTPUT_INVALID\n"
+                "message: RESTORE_VNEXT_OUTPUT_INVALID: report is required\n"
+                "hint: 请改用尚不存在且不与输入重叠的恢复目录或报告路径。\n",
+            )
             self.assertNotIn("Traceback", missing_report.stderr)
             self.assertFalse((root / "missing-report-output").exists())
 

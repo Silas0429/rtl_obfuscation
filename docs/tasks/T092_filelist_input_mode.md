@@ -1,6 +1,6 @@
 # T092：filelist 模式禁止外部 source-root 并自动推导输入边界
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：GPT-5.6 Luna Extra high 子 Agent
 - 前置任务：T087 filelist 前端兼容、T088 `.v/.vh`、T090 上下文指令、T091 `.h` 宏头文件；当前基线 `555d906`

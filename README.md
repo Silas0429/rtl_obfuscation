@@ -12,21 +12,24 @@
 前提：在仓库根目录使用 Python 3.10 或更高版本，并已安装 PySlang 11.x；如未安装，跳到
 [安装](#安装)。
 
-复制下面命令即可完成一次加密和恢复：
+复制下面命令即可完成一次 filelist 加密和恢复：
 
 ```sh
 quick_work="$(mktemp -d /tmp/rtl-obfuscation-quick.XXXXXX)"
 python rtl_encrypt.py \
-  --input 11_supported_obfuscation.sv \
-  --source-root rtl_samples \
+  --filelist rtl_samples/example_fifo/design.f \
+  --top fifo_top \
+  --category signals \
   --output-dir "$quick_work/gate"
 cat "$quick_work/gate/encryption_summary.txt"
 python rtl_decrypt.py \
   --map "$quick_work/gate/mapping.json" \
   --gate-dir "$quick_work/gate" \
   --output-dir "$quick_work/restored"
-cmp rtl_samples/11_supported_obfuscation.sv \
-  "$quick_work/restored/11_supported_obfuscation.sv"
+for source in fifo_if.sv fifo_storage.sv fifo_ctrl.sv fifo_top.sv; do
+  cmp "rtl_samples/example_fifo/$source" \
+    "$quick_work/restored/$source"
+done
 ```
 
 如何判断成功：
@@ -39,7 +42,9 @@ cmp rtl_samples/11_supported_obfuscation.sv \
 
 ```text
 error: CLI_VNEXT_INPUT_INVALID
-hint: 请检查三种输入模式；filelist 模式不要提供 --source-root，project-root 模式必须同时提供 --source-root 与 --top。
+detail: CLI_VNEXT_INPUT_MODE_CONFLICT
+message: filelist mode does not accept --source-root; use --filelist [--top]
+hint: 请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。
 ```
 
 如果 filelist 的宏、include 或路径分析失败，命令会在稳定错误码后直接给出 `detail`、`path`、
@@ -89,7 +94,7 @@ gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Form
 
 | 模式 | 必要输入 | 适用方式 |
 | --- | --- | --- |
-| 单文件 | `--input`、`--source-root` | 快速试用或独立 `.sv/.v` 文件；只处理内部名称 |
+| 单文件 | `--input` | 独立 `.sv/.v` 文件的快速试用；输入参数本身就是路径 |
 | filelist | `--filelist`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件，自动推导内部路径边界 |
 | project-root | `--source-root`、`--top` | 从 top 自动发现源码；适合目录和依赖都完整的工程 |
 
@@ -98,9 +103,10 @@ gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Form
 ```sh
 python rtl_encrypt.py \
   --input <input_file.sv_or_v> \
-  --source-root <源码根目录> \
   --output-dir <加密输出目录>
 ```
+
+仓库中的独立单文件示例为 `rtl_samples/11_supported_obfuscation.sv`；输入文件路径按当前工作目录解析。
 
 Filelist：
 
@@ -129,8 +135,11 @@ python rtl_encrypt.py \
   --output-dir <加密输出目录>
 ```
 
-Project-root 不使用 `--input` 或 `--filelist`。它是方便入口；若自动发现受宏、include 或文件顺序
-影响，请改用显式 filelist。当前版本还会保留 top module 内部直接声明的 interface 实例名。
+三种公共模式严格互斥：单文件只提供 `--input`，filelist 只提供 `--filelist`（可选 `--top`），
+project-root 只提供 `--source-root` 和 `--top`。单文件不能附带 `--source-root` 或 `--top`；
+filelist 不能附带 `--source-root`；project-root 不能附带 `--input` 或 `--filelist`。
+输入模式冲突会在输出目录、mapping 和 metrics 创建前报告具体的 `detail`、`message` 和 `hint`。
+真实工程建议始终使用显式 filelist；project-root 只是目录和依赖完整时的辅助入口。当前版本还会保留 top module 内部直接声明的 interface 实例名。
 
 ## 解密
 
@@ -149,7 +158,7 @@ python rtl_decrypt.py \
 
 | 选项 | 用法 |
 | --- | --- |
-| `--include-dir PATH` | 添加 include 目录，可重复使用；filelist 模式的相对路径以顶层 filelist 目录为基准，单文件/project-root 仍以源码根目录为基准 |
+| `--include-dir PATH` | 添加 include 目录，可重复使用；filelist 模式的相对路径以顶层 filelist 目录为基准，单文件以输入文件父目录为基准，project-root 以源码根目录为基准 |
 | `--define NAME[=VALUE]` | 添加预处理宏，可重复使用，例如 `--define SYNTHESIS` |
 | `--category NAME` | 只处理指定类型，可重复使用 |
 | `--encryption-rate RATE` | 目标加密率，范围为 `0 < RATE <= 1`；不是标识符数量的精确比例 |

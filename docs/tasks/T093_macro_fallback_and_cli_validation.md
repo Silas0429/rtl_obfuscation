@@ -1,6 +1,6 @@
 # T093：宏 fallback 解析、输入互斥和详细 CLI 诊断
 
-- 状态：`IN_PROGRESS`
+- 状态：`ACCEPTED`
 - 设计负责人：主 Agent
 - 实现负责人：待分配的 GPT-5.6 Luna Extra high 子 Agent
 - 前置任务：T091 `.h` 宏头文件、T092 filelist 自动边界；当前基线 `ee14f85`
