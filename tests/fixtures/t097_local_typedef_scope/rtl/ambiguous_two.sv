@@ -1,0 +1,1 @@
+typedef logic [7:0] t097_ambiguous_t;

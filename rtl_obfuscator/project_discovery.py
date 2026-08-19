@@ -395,7 +395,7 @@ class _ProjectContext:
                     )
                 elif node_type == "TypedefDeclarationSyntax":
                     token = node.name
-                    if token.rawText:
+                    if token.rawText and not self._has_design_scope_ancestor(node):
                         self.types_by_name.setdefault(token.rawText, []).append(
                             _TypeDefinition(token.rawText, relative)
                         )
@@ -407,6 +407,30 @@ class _ProjectContext:
         for definitions in self.types_by_name.values():
             definitions.sort(key=lambda item: item.file)
         self._index_macro_providers()
+
+    @staticmethod
+    def _has_design_scope_ancestor(node: Any) -> bool:
+        """Return whether a syntax node is nested in a module or interface.
+
+        Syntax ownership comes from PySlang's parent chain.  In particular,
+        lexical scopes below a design declaration remain local to that design
+        scope and must not be indexed as compilation-unit type providers.
+        Packages intentionally remain outside this filter to preserve their
+        existing discovery behavior.
+        """
+
+        design_kinds = frozenset(
+            {
+                pyslang.syntax.SyntaxKind.ModuleDeclaration,
+                pyslang.syntax.SyntaxKind.InterfaceDeclaration,
+            }
+        )
+        ancestor = getattr(node, "parent", None)
+        while ancestor is not None:
+            if getattr(ancestor, "kind", None) in design_kinds:
+                return True
+            ancestor = getattr(ancestor, "parent", None)
+        return False
 
     @staticmethod
     def _directive(line: str) -> tuple[str, str] | None:
@@ -755,6 +779,10 @@ class _ProjectContext:
                         "SEMANTIC_ERROR",
                         f"type has multiple providers: {name}",
                         file=consumer,
+                        details=[
+                            {"provider": provider}
+                            for provider in provider_files
+                        ],
                     )
                 provider = provider_files[0]
                 if provider == consumer:
