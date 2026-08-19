@@ -199,20 +199,29 @@ class SourceSetTests(unittest.TestCase):
                 absolute_filelist = temporary_root / "absolute.f"
                 variable_filelist = temporary_root / "variable.f"
                 absolute_filelist.write_text(
-                    f"{T087_FIXTURE_ROOT / 'rtl' / 'top.sv'}\n",
+                    f"{T087_FIXTURE_ROOT / 'rtl' / 'top.sv'}\n"
+                    f"{T087_FIXTURE_ROOT / 'rtl' / 'child.sv'}\n",
                     encoding="utf-8",
                 )
                 variable_filelist.write_text(
-                    "$T087_PROJ/rtl/top.sv\n", encoding="utf-8"
+                    "$T087_PROJ/rtl/top.sv\n$T087_PROJ/rtl/child.sv\n",
+                    encoding="utf-8",
                 )
                 absolute = from_filelist(
-                    filelist=absolute_filelist, source_root=T087_FIXTURE_ROOT
+                    filelist=absolute_filelist,
+                    source_root=T087_FIXTURE_ROOT,
+                    include_dirs=[T087_FIXTURE_ROOT / "include"],
                 )
                 variable = from_filelist(
-                    filelist=variable_filelist, source_root=T087_FIXTURE_ROOT
+                    filelist=variable_filelist,
+                    source_root=T087_FIXTURE_ROOT,
+                    include_dirs=[T087_FIXTURE_ROOT / "include"],
                 )
 
-        self.assertEqual(absolute.ordered_source_files, ("rtl/top.sv",))
+        self.assertEqual(
+            absolute.ordered_source_files,
+            ("rtl/top.sv", "rtl/child.sv"),
+        )
         self.assertEqual(absolute.ordered_source_files, variable.ordered_source_files)
         self.assertEqual(absolute.included_files, variable.included_files)
 

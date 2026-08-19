@@ -117,6 +117,213 @@ class SourceSetDiscovery:
     compile_order: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PySlangCompilationView:
+    """One PySlang compilation over an explicit source/context order."""
+
+    compilation: Any
+    root: Any
+    source_manager: Any
+    syntax_tree: Any
+    parse_errors: tuple[Any, ...]
+    semantic_errors: tuple[Any, ...]
+
+
+def _pyslang_source_manager(
+    root: Path,
+    source_files: tuple[str, ...],
+    context_files: tuple[str, ...],
+    include_files: tuple[str, ...],
+    include_dirs: tuple[str, ...],
+) -> pyslang.SourceManager:
+    manager = pyslang.SourceManager()
+    directories: list[str] = []
+    for relative in (*context_files, *source_files, *include_files):
+        parent = str(PurePosixPath(relative).parent)
+        if parent not in directories:
+            directories.append(parent)
+    for directory in (*include_dirs, *directories):
+        if directory not in directories:
+            directories.append(directory)
+    for directory in directories:
+        manager.addUserDirectories(str(root / directory))
+    return manager
+
+
+def compile_pyslang_source_set(
+    *,
+    root: Path,
+    source_files: Iterable[str],
+    context_files: Iterable[str] = (),
+    include_files: Iterable[str] = (),
+    include_dirs: Iterable[str] = (),
+    defines: dict[str, str] | None = None,
+    top: str | None = None,
+) -> PySlangCompilationView:
+    """Compile exactly the supplied source/context order with PySlang.
+
+    This helper is shared by the authoritative filelist adapter and the
+    semantic SourceCatalog.  It deliberately does not inspect providers,
+    discover candidates, or reorder source units.
+    """
+
+    ordered_sources = tuple(source_files)
+    ordered_context = tuple(context_files)
+    ordered_includes = tuple(include_files)
+    manager = _pyslang_source_manager(
+        root, ordered_sources, ordered_context, ordered_includes, tuple(include_dirs)
+    )
+    bag = pyslang.Bag()
+    preprocessor = pyslang.parsing.PreprocessorOptions()
+    preprocessor.predefines = [
+        f"{name}={value}" for name, value in sorted((defines or {}).items())
+    ]
+    bag.preprocessorOptions = preprocessor
+    options = pyslang.ast.CompilationOptions()
+    if top is not None:
+        options.topModules = {top}
+    bag.compilationOptions = options
+    syntax_tree = pyslang.syntax.SyntaxTree.fromFiles(
+        [
+            str(root / relative)
+            for relative in (*ordered_context, *ordered_sources)
+        ],
+        manager,
+        bag,
+    )
+    compilation = pyslang.ast.Compilation(bag)
+    compilation.addSyntaxTree(syntax_tree)
+    root_symbol = compilation.getRoot()
+    parse_errors = tuple(
+        diagnostic
+        for diagnostic in syntax_tree.diagnostics
+        if diagnostic.isError()
+    )
+    parse_keys = {
+        (str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset)
+        for diagnostic in parse_errors
+    }
+    semantic_errors = tuple(
+        diagnostic
+        for diagnostic in compilation.getAllDiagnostics()
+        if diagnostic.isError()
+        and (
+            str(diagnostic.code),
+            diagnostic.location.buffer,
+            diagnostic.location.offset,
+        )
+        not in parse_keys
+    )
+    return PySlangCompilationView(
+        compilation=compilation,
+        root=root_symbol,
+        source_manager=manager,
+        syntax_tree=syntax_tree,
+        parse_errors=parse_errors,
+        semantic_errors=semantic_errors,
+    )
+
+
+def _pyslang_diagnostic_details(
+    root: Path,
+    manager: Any,
+    diagnostics: Iterable[Any],
+) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    for diagnostic in diagnostics:
+        path: str | None = None
+        start: int | None = None
+        try:
+            path = _relative_path(
+                root, Path(manager.getFullPath(diagnostic.location.buffer))
+            )
+            start = int(diagnostic.location.offset)
+        except (OSError, ValueError, RuntimeError):
+            pass
+        details.append(
+            {
+                "code": str(diagnostic.code),
+                "path": path,
+                "start": start,
+            }
+        )
+    return sorted(
+        details,
+        key=lambda item: (
+            item["path"] or "",
+            item["start"] if item["start"] is not None else -1,
+            item["code"],
+        ),
+    )
+
+
+def _pyslang_top_closure_files(
+    *,
+    root: Path,
+    manager: Any,
+    semantic_root: Any,
+    top: str,
+    source_order: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return source files reached through PySlang-bound top objects."""
+
+    tops = _pyslang_top_instances(semantic_root, top)
+    if not tops:
+        raise ProjectAnalysisError("TOP_NOT_FOUND", f"top definition not found: {top}")
+    if len(tops) != 1:
+        raise ProjectAnalysisError(
+            "AMBIGUOUS_TOP", f"top definition is ambiguous: {top}"
+        )
+
+    reachable: set[str] = set()
+    nodes: list[Any] = []
+    tops[0].visit(nodes.append)
+    for node in nodes:
+        definition = getattr(node, "definition", None)
+        locations: list[Any] = []
+        if definition is not None:
+            location = getattr(definition, "location", None)
+            if location is not None:
+                locations.append(location)
+        semantic_type = getattr(node, "type", None)
+        if type(semantic_type).__name__ == "TypeAliasType":
+            location = getattr(semantic_type, "location", None)
+            if location is not None:
+                locations.append(location)
+        for location in locations:
+            try:
+                relative = _relative_path(
+                    root, Path(manager.getFullPath(location.buffer))
+                )
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if relative in source_order and is_source_file(relative):
+                reachable.add(relative)
+    return tuple(path for path in source_order if path in reachable)
+
+
+def _pyslang_top_instances(semantic_root: Any, top: str) -> list[Any]:
+    """Return bound module instances for a selected top name."""
+
+    tops = [
+        instance
+        for instance in semantic_root.topInstances
+        if instance.name == top and getattr(instance, "isModule", False)
+    ]
+    return tops
+
+
+def _pyslang_top_module_definitions(compilation: Any, top: str) -> list[Any]:
+    """Return native PySlang module definitions for the requested top name."""
+
+    return [
+        definition
+        for definition in compilation.getDefinitions()
+        if str(definition.name) == top
+        and definition.definitionKind == pyslang.ast.DefinitionKind.Module
+    ]
+
+
 class ProjectAnalysisError(Exception):
     """A stable project-analysis failure that belongs in the JSON report."""
 
@@ -967,6 +1174,7 @@ def _discover_sourceset(
     top: str | None = None,
     preserve_top_file_order: bool = False,
     include_all_sources: bool = True,
+    authoritative_filelist: bool = False,
 ) -> SourceSetDiscovery:
     """Resolve SourceSet dependencies without inventory or report generation.
 
@@ -977,6 +1185,80 @@ def _discover_sourceset(
 
     source_order = tuple(source_files)
     candidate_order = tuple(candidate_files)
+
+    if authoritative_filelist:
+        context_files = tuple(
+            path for path in explicit_header_files if is_context_file(path)
+        )
+        compiled = compile_pyslang_source_set(
+            root=root,
+            source_files=source_order,
+            context_files=context_files,
+            include_files=tuple(
+                path
+                for path in candidate_order
+                if is_header_file(path) or is_context_file(path)
+            ),
+            include_dirs=tuple(include_dirs),
+            defines=dict(defines or {}),
+            top=top,
+        )
+        top_closure_files: tuple[str, ...] = ()
+        if top is not None:
+            top_definitions = _pyslang_top_module_definitions(
+                compiled.compilation, top
+            )
+            if not top_definitions:
+                raise ProjectAnalysisError(
+                    "TOP_NOT_FOUND", f"top definition not found: {top}"
+                )
+            if len(top_definitions) > 1:
+                raise ProjectAnalysisError(
+                    "AMBIGUOUS_TOP", f"top definition is ambiguous: {top}"
+                )
+        diagnostics = (*compiled.parse_errors, *compiled.semantic_errors)
+        if compiled.parse_errors:
+            details = _pyslang_diagnostic_details(root, compiled.source_manager, diagnostics)
+            first = details[0] if details else {"path": None, "start": None}
+            raise ProjectAnalysisError(
+                "PARSE_ERROR",
+                "filelist PySlang compilation contains parse errors",
+                file=first["path"],
+                start=first["start"],
+                details=details,
+            )
+        if compiled.semantic_errors:
+            details = _pyslang_diagnostic_details(
+                root, compiled.source_manager, compiled.semantic_errors
+            )
+            first = details[0] if details else {"path": None, "start": None}
+            raise ProjectAnalysisError(
+                "SEMANTIC_ERROR",
+                "filelist PySlang compilation contains semantic errors",
+                file=first["path"],
+                start=first["start"],
+                details=details,
+            )
+
+        if top is not None:
+            top_closure_files = _pyslang_top_closure_files(
+                root=root,
+                manager=compiled.source_manager,
+                semantic_root=compiled.root,
+                top=top,
+                source_order=source_order,
+            )
+        included_files = {
+            path
+            for path in candidate_order
+            if is_header_file(path) or is_context_file(path)
+        }
+        return SourceSetDiscovery(
+            included_files=tuple(path for path in candidate_order if path in included_files),
+            top_closure_files=top_closure_files,
+            compile_order=source_order,
+        )
+
     context = _ProjectContext(
         root,
         top or "",

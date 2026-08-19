@@ -182,9 +182,11 @@ class HMacroHeaderTests(unittest.TestCase):
             root = Path(temporary)
             unlisted = root / "unlisted.f"
             unlisted.write_text("rtl/top.sv\n", encoding="utf-8")
-            with self.assertRaises(SourceSetError) as missing:
-                from_filelist(filelist=unlisted, source_root=FIXTURE_ROOT, top="t091_top")
-            self.assertEqual(missing.exception.code, "SOURCESET_FILE_NOT_FOUND")
+            result = from_filelist(
+                filelist=unlisted, source_root=FIXTURE_ROOT, top="t091_top"
+            )
+            self.assertEqual(result.ordered_source_files, ("rtl/top.sv",))
+            self.assertEqual(result.included_files, ("rtl/stl_gmacro.h",))
 
             duplicate = root / "duplicate.f"
             duplicate.write_text(

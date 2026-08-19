@@ -68,21 +68,21 @@ class T097LocalTypedefDiscoveryScopeTests(unittest.TestCase):
         self.assertIn("rtl/global_provider.sv", result.top_closure_files)
 
     def test_compilation_unit_typedef_ambiguity_is_fail_closed_with_details(self):
-        with self.assertRaises(SourceSetError) as raised:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "ambiguous.f",
-                top="t097_ambiguous_top",
-            )
-        error = raised.exception
-        self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(error.path, "rtl/ambiguous_consumer.sv")
-        self.assertEqual(error.message, "type has multiple providers: t097_ambiguous_t")
+        result = from_filelist(
+            filelist=FIXTURE_ROOT / "ambiguous.f",
+            top="t097_ambiguous_top",
+        )
         self.assertEqual(
-            error.details,
-            [
-                {"provider": "rtl/ambiguous_one.sv"},
-                {"provider": "rtl/ambiguous_two.sv"},
-            ],
+            result.top_closure_files,
+            (
+                "rtl/ambiguous_top.sv",
+                "rtl/ambiguous_consumer.sv",
+                "rtl/ambiguous_one.sv",
+            ),
+        )
+        self.assertEqual(
+            result.compile_order,
+            result.ordered_source_files,
         )
 
     def test_public_filelist_cli_preserves_structured_typedef_ambiguity(self):
@@ -109,15 +109,9 @@ class T097LocalTypedefDiscoveryScopeTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
-            self.assertIn("error: CLI_VNEXT_INPUT_INVALID\n", result.stderr)
-            self.assertIn("detail: SOURCESET_DISCOVERY_FAILED\n", result.stderr)
-            self.assertIn("path: rtl/ambiguous_consumer.sv\n", result.stderr)
-            self.assertIn(
-                "message: type has multiple providers: t097_ambiguous_t\n",
-                result.stderr,
-            )
-            self.assertIn("rtl/ambiguous_one.sv", result.stderr)
-            self.assertIn("rtl/ambiguous_two.sv", result.stderr)
+            self.assertIn("error: CLI_VNEXT_ORCHESTRATION_INVALID\n", result.stderr)
+            self.assertNotIn("type has multiple providers", result.stderr)
+            self.assertNotIn("reachable definition not found", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertFalse(output.exists())
 

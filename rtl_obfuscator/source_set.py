@@ -21,6 +21,7 @@ from .rtl_files import (
     SOURCE_SUFFIXES,
     is_context_file,
     is_header_file,
+    is_physical_rtl_file,
     is_source_file,
 )
 
@@ -546,9 +547,7 @@ def _discover_explicit_include_headers(
             continue
         seen.add(relative)
         absolute = root / relative
-        if not absolute.is_file() or not (
-            is_header_file(absolute) or is_context_file(absolute)
-        ):
+        if not absolute.is_file() or not is_physical_rtl_file(absolute):
             continue
         for line in absolute.read_text(encoding="utf-8").splitlines():
             match = _INCLUDE_DIRECTIVE.match(line)
@@ -595,6 +594,7 @@ def _discover(
     preserve_top_file_order: bool,
     discovery_source_files: tuple[str, ...] | None = None,
     include_all_sources: bool = True,
+    authoritative_filelist: bool = False,
 ) -> SourceSet:
     try:
         result = _discover_sourceset(
@@ -611,6 +611,7 @@ def _discover(
             top=top,
             preserve_top_file_order=preserve_top_file_order,
             include_all_sources=include_all_sources,
+            authoritative_filelist=authoritative_filelist,
         )
     except ProjectAnalysisError as error:
         raise _map_discovery_error(error) from error
@@ -700,18 +701,13 @@ def from_filelist(
     )
     normalized_defines = _normalize_defines((*filelist_defines, *defines))
     normalized_top = _normalize_top(top, required=False)
-    if auto_root:
-        include_headers = list(
-            _discover_explicit_include_headers(
-                root=root,
-                seed_files=(*source_files, *explicit_headers),
-                include_dirs=normalized_dirs,
-            )
+    include_headers = list(
+        _discover_explicit_include_headers(
+            root=root,
+            seed_files=(*source_files, *explicit_headers),
+            include_dirs=normalized_dirs,
         )
-    else:
-        include_headers = [
-            path for path in _discover_files(root) if is_header_file(path)
-        ]
+    )
     candidates = tuple(
         dict.fromkeys((*source_files, *explicit_headers, *include_headers))
     )
@@ -725,6 +721,7 @@ def from_filelist(
         top=normalized_top,
         candidate_files=candidates,
         preserve_top_file_order=True,
+        authoritative_filelist=True,
     )
 
 

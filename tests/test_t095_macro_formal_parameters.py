@@ -67,8 +67,25 @@ class MacroFormalParameterTests(unittest.TestCase):
         error = raised.exception
         self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
         self.assertEqual(error.path, "rtl/unknown.sv")
-        self.assertEqual(error.message, "macro has no provider: __name")
-        self.assertEqual(error.details, [])
+        self.assertEqual(
+            error.message,
+            "filelist PySlang compilation contains parse errors",
+        )
+        self.assertEqual(
+            error.details,
+            [
+                {
+                    "code": "DiagCode(UnknownDirective)",
+                    "path": "rtl/unknown.sv",
+                    "start": 85,
+                },
+                {
+                    "code": "DiagCode(ExpectedExpression)",
+                    "path": "rtl/unknown.sv",
+                    "start": 92,
+                },
+            ],
+        )
 
 
 if __name__ == "__main__":

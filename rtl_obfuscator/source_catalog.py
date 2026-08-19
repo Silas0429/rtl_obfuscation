@@ -8,8 +8,9 @@ from typing import Any
 
 import pyslang
 
+from .project_discovery import compile_pyslang_source_set
 from .source_set import SourceSet
-from .rtl_files import is_source_file
+from .rtl_files import is_context_file, is_source_file
 
 
 @dataclass(frozen=True)
@@ -113,41 +114,28 @@ def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
             "CATALOG_EMPTY_SOURCE_SET", "SourceSet has no .sv or .v source unit"
         )
 
-    manager = pyslang.SourceManager()
-    directories: list[str] = []
-    for directory in source_set.include_dirs:
-        if directory not in directories:
-            directories.append(directory)
-    for relative in (*source_files, *source_set.included_files):
-        parent = str(Path(relative).parent.as_posix())
-        if parent not in directories:
-            directories.append(parent)
-    for directory in directories:
-        manager.addUserDirectories(str(source_set.source_root / directory))
-
-    bag = pyslang.Bag()
-    preprocessor = pyslang.parsing.PreprocessorOptions()
-    preprocessor.predefines = [
-        f"{name}={value}" for name, value in source_set.defines
-    ]
-    bag.preprocessorOptions = preprocessor
-    options = pyslang.ast.CompilationOptions()
-    if top is not None:
-        options.topModules = {top}
-    bag.compilationOptions = options
-
     try:
-        syntax_tree = pyslang.syntax.SyntaxTree.fromFiles(
-            [str(source_set.source_root / path) for path in source_files],
-            manager,
-            bag,
+        view = compile_pyslang_source_set(
+            root=source_set.source_root,
+            source_files=source_files,
+            context_files=tuple(
+                path
+                for path in source_set.included_files
+                if is_context_file(path)
+            ),
+            include_files=source_set.included_files,
+            include_dirs=source_set.include_dirs,
+            defines=dict(source_set.defines),
+            top=top,
         )
-        compilation = pyslang.ast.Compilation(bag)
-        compilation.addSyntaxTree(syntax_tree)
-        root = compilation.getRoot()
     except (OSError, RuntimeError, ValueError) as error:
         raise SourceCatalogError("CATALOG_PARSE_FAILED", str(error)) from error
-    return _CompiledView(compilation, root, manager, syntax_tree)
+    return _CompiledView(
+        view.compilation,
+        view.root,
+        view.source_manager,
+        view.syntax_tree,
+    )
 
 
 def _diagnostic_counts(view: _CompiledView) -> tuple[int, int]:

@@ -52,8 +52,20 @@ class BuiltinPreprocessorMacroTests(unittest.TestCase):
         error = raised.exception
         self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
         self.assertEqual(error.path, "rtl/unknown.sv")
-        self.assertEqual(error.message, "macro has no provider: T094_UNKNOWN_WIDTH")
-        self.assertEqual(error.details, [])
+        self.assertEqual(
+            error.message,
+            "filelist PySlang compilation contains parse errors",
+        )
+        self.assertEqual(
+            error.details,
+            [
+                {
+                    "code": "DiagCode(UnknownDirective)",
+                    "path": "rtl/unknown.sv",
+                    "start": 39,
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

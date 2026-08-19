@@ -1,0 +1,2 @@
+interface t098_interface_only;
+endinterface
