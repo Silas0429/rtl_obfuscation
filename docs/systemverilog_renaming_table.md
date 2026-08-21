@@ -9,10 +9,9 @@
 target；无宏 sibling 仍可改名。非 module 宏不单独阻断无关 signals，但宏生成 module definition
 或无法安全隔离的真实改写对象继续 fail-closed。
 
-filelist 中物理存在但当前 PySlang compilation 未 elaboration 的普通 module 同样不是 rename target：
-它不建立 semantic owner、graph record、mapping 或 edit，但仍保留在 gate、manifest 和 restore 中；
-其他已有唯一 owner 的 module 继续按下表类别处理。每个 semantic owner 到物理 module span 的映射
-仍必须唯一，冲突时保持 fail-closed。
+filelist 中列出但当前 PySlang 编译配置未使用到的普通 module 不参与改名：不会建立改名记录或源码编辑，
+但仍原样保留在 gate、manifest 和 restore 中。其他能唯一对应到源码范围的 module 按下表处理；若一个
+module 无法唯一对应到源码范围，工具会停止并报告错误。
 
 默认选择只表示工具会检查这些类型，不表示任意工程中的每种写法都能改名。真实工程建议从少量
 `--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而

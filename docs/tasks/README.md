@@ -29,6 +29,7 @@ Formal 和已知边界分别以
 | `BLOCKED` | 发现任务边界内无法继续的问题 | 子 Agent |
 | `READY_FOR_REVIEW` | 实现和自测完成，等待主 Agent 验收 | 子 Agent |
 | `ACCEPTED` | 黑盒验收通过 | 主 Agent |
+| `SUPERSEDED` | 未实现且已被当前设计替代的历史提案终态；不表示实现成功，不属于活动任务，不得恢复为 `READY`，新需求必须新建任务 | 主 Agent |
 
 ## 2. 子 Agent 强制更新点
 
