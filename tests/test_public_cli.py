@@ -379,6 +379,16 @@ class PublicCliTests(unittest.TestCase):
                     for record in selected["mapping"]["records"]
                 )
             )
+            self.assertNotIn(
+                "category_not_selected",
+                {
+                    record["reason"]
+                    for record in selected["mapping"]["records"]
+                },
+            )
+            self.assertEqual(
+                selected["summary"]["encryption_result"], "PASS_PARTIAL"
+            )
 
             _all_gate, _all_map, _all_metrics, all_report = self._encrypt(
                 root / "all",

@@ -851,7 +851,11 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
                 if error.code == "ORCHESTRATION_RATE_INVALID"
                 else "CLI_VNEXT_ORCHESTRATION_INVALID"
             )
-            _cli_vnext_fail(code)
+            _cli_vnext_fail(
+                code,
+                f"REFUSED_ATOMIC: {error.message}",
+                detail=error.code,
+            )
         except (OSError, RuntimeError, ValueError) as error:
             _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID", str(error))
         if not isinstance(report, dict) or report.get("format") != "rtl-obfuscation.orchestration-vnext":

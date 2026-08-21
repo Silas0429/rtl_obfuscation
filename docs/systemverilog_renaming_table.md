@@ -17,6 +17,10 @@ module 无法唯一对应到源码范围，工具会停止并报告错误。
 `--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
 保留的对象。`rename=0` 不能视为该类型已经完整支持。
 
+每次运行还会给出明确结果：`PASS_FULL` 表示所选 graph 有实际改名且没有 `preserve/unsupported`；
+`PASS_PARTIAL` 表示 gate/恢复通过但存在保留、不支持或零改名；`REFUSED_ATOMIC` 表示无法证明安全性，
+不发布半成品输出。只有 `PASS_FULL` 才表示当前输入闭包内的所选类别完成了完整改名。
+
 文件后缀不是新的加密类别：`.sv`、`.v` source unit 以及被 include 的 `.svh`、`.vh` 共用同一条
 PySlang SystemVerilog 语义流水线；显式 filelist 还可提供只读 `.h` 宏 context header。`.h` 不进入
 compile order、不产生宏 rename，也不被 single-file 或 project-root 自动扫描。工具不承诺 strict

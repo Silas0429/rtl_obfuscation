@@ -5,6 +5,11 @@ SourceSet、SourceCatalog、SymbolGraph、RewritePolicy、MappingVNext、actual 
 restore pipeline。19 个 canonical category 由一个 semantic owner registry 管理；默认选择为
 前 13 类，module/type/interface ABI 必须显式 opt-in。
 
+category 选择在 SymbolGraph 入口生效。未选择类别不会因其自身 collector 的不支持语法阻断本次运行，
+报告会区分 `PASS_FULL`、`PASS_PARTIAL` 和 `REFUSED_ATOMIC`；这不等于承诺所有能被 PySlang compile/elaborate
+的 SV/V 都能完整改名。宏、外部消费者、黑盒和无法唯一映射到物理源码范围的对象仍按 preserve/unsupported
+或原子拒绝处理。
+
 本文件只记录当前交付范围之外的事项。使用方法和当前入口见根目录
 [`README.md`](../README.md)。
 

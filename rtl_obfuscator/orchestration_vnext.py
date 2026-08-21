@@ -21,6 +21,7 @@ from .rate_metrics_vnext import (
     build_rate_metrics_vnext,
 )
 from .rate_vnext import RateSelectionVNext, RateVNextError, build_rate_selection_vnext
+from .category_registry_vnext import CategoryRegistryError, normalize_categories
 from .rewrite_policy import RewritePolicyError, build_rewrite_policy
 from .rewrite_vnext import (
     CompileEvidence,
@@ -173,11 +174,12 @@ def _build_mapping(
     name_factory: NameFactory,
 ) -> MappingVNext:
     try:
+        selected_categories = normalize_categories(categories, default=False)
         catalog = build_source_catalog(source_set)
-        graph = build_symbol_graph(catalog)
+        graph = build_symbol_graph(catalog, categories=selected_categories)
         policy = build_rewrite_policy(
             graph,
-            categories=categories,
+            categories=selected_categories,
             abi_categories=abi_categories,
         )
         return build_mapping_vnext(
@@ -185,7 +187,12 @@ def _build_mapping(
             name_length=name_length,
             name_factory=name_factory,
         )
-    except (SourceCatalogError, SymbolGraphError, RewritePolicyError) as error:
+    except (
+        CategoryRegistryError,
+        SourceCatalogError,
+        SymbolGraphError,
+        RewritePolicyError,
+    ) as error:
         _fail("ORCHESTRATION_MAPPING_INVALID", str(error).split(": ", 1)[-1])
     except Exception as error:
         _fail("ORCHESTRATION_MAPPING_INVALID", str(error))
@@ -276,6 +283,19 @@ class OrchestrationVNext:
             _fail("ORCHESTRATION_AUDIT_INVALID", "nested report state is not verified")
         if rate_report is not None and (not isinstance(rate_report, dict) or rate_report.get("state") != "restored"):
             _fail("ORCHESTRATION_AUDIT_INVALID", "rate metrics report state is not restored")
+        effective_records = self.effective_mapping_vnext.records
+        action_counts = {
+            "rename": sum(record.action == "rename" for record in effective_records),
+            "preserve": sum(record.action == "preserve" for record in effective_records),
+            "unsupported": sum(record.action == "unsupported" for record in effective_records),
+        }
+        encryption_result = (
+            "PASS_FULL"
+            if action_counts["rename"] > 0
+            and action_counts["preserve"] == 0
+            and action_counts["unsupported"] == 0
+            else "PASS_PARTIAL"
+        )
         report = {
             "format": "rtl-obfuscation.orchestration-vnext",
             "schema_version": self.schema_version,
@@ -286,6 +306,7 @@ class OrchestrationVNext:
             "metrics": metrics_report,
             "rate_metrics": rate_report,
             "summary": {
+                "encryption_result": encryption_result,
                 "origin": self.source_set.origin,
                 "top": self.source_set.top,
                 "rate_enabled": self.rate_metrics is not None,
@@ -303,6 +324,9 @@ class OrchestrationVNext:
                 "occurrence_coverage": metrics_report["occurrences"]["coverage"],
                 "plaintext_leakage_rate": metrics_report["plaintext_leakage_rate"],
                 "effective_coverage": metrics_report["effective_coverage"],
+                "rename": action_counts["rename"],
+                "preserve": action_counts["preserve"],
+                "unsupported": action_counts["unsupported"],
             },
         }
         if _contains_absolute_path(report):

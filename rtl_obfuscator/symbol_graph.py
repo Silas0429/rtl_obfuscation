@@ -11,7 +11,11 @@ from typing import Any
 import pyslang
 
 from .source_catalog import ModuleOwner, SourceCatalog, SourceRange
-from .category_registry_vnext import CANONICAL_CATEGORIES
+from .category_registry_vnext import (
+    CANONICAL_CATEGORIES,
+    CategoryRegistryError,
+    normalize_categories,
+)
 
 
 @dataclass(frozen=True)
@@ -2401,8 +2405,12 @@ def _token_source_range(
 def _collect_extended_symbols(
     source_catalog: SourceCatalog,
     existing: list[SourceSymbol],
+    selected_categories: frozenset[str] | None = None,
 ) -> list[SourceSymbol]:
     """Collect the remaining categories from the compiled PySlang semantic tree."""
+
+    if selected_categories is None:
+        selected_categories = frozenset(CANONICAL_CATEGORIES)
 
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
@@ -2439,6 +2447,11 @@ def _collect_extended_symbols(
         "struct_fields",
         "union_fields",
     }
+    collect_aggregates = bool(selected_categories & aggregate_categories)
+    collect_enum_values = "enum_values" in selected_categories
+    collect_subroutines = bool(selected_categories & {"functions", "tasks"})
+    collect_arguments = "arguments" in selected_categories
+    collect_generate_blocks = "generate_blocks" in selected_categories
 
     occupied: dict[tuple[str, int, int], object] = {}
     for symbol in existing:
@@ -2559,7 +2572,8 @@ def _collect_extended_symbols(
             "occurrence_ranges": {},
             "ranges": {key},
         }
-        records.append(record)
+        if category in selected_categories:
+            records.append(record)
         declaration_records[key] = record
         occupied[key] = record
         if category == "modules":
@@ -2645,6 +2659,13 @@ def _collect_extended_symbols(
 
     def record_for_target(target: Any) -> dict[str, Any] | None:
         if target is None:
+            return None
+        target_type = type(target).__name__
+        if target_type == "SubroutineSymbol" and not collect_subroutines:
+            return None
+        if target_type in {"TypeAliasType", "TransparentMemberSymbol"} and not (
+            collect_aggregates or collect_enum_values
+        ):
             return None
         key = target_key(target)
         record = target_records.get(key) if key is not None else None
@@ -2761,16 +2782,29 @@ def _collect_extended_symbols(
                 file=definition_key[0],
                 start=definition_key[1],
             )
-        add_occurrence(
-            record,
-            _token_source_range(source_catalog, token, record["name"]),
-            "semantic_module_end_label",
-        )
+        if "modules" in selected_categories:
+            add_occurrence(
+                record,
+                _token_source_range(source_catalog, token, record["name"]),
+                "semantic_module_end_label",
+            )
 
     # Type aliases and aggregate fields are bound by TypeAliasType/canonicalType.
-    alias_nodes: list[Any] = [
-        node for node in nodes if type(node).__name__ == "TypeAliasType"
-    ]
+    alias_nodes: list[Any] = []
+    if collect_aggregates:
+        for node in nodes:
+            if type(node).__name__ != "TypeAliasType":
+                continue
+            is_aggregate = bool(
+                getattr(node, "isStruct", False)
+                or getattr(node, "isPackedUnion", False)
+            )
+            if "typedefs" in selected_categories or (
+                is_aggregate
+                and selected_categories
+                & {"struct_types", "struct_fields", "union_fields"}
+            ):
+                alias_nodes.append(node)
     for node in alias_nodes:
         declaration = _record_range(source_catalog, node)
         owner = f"type:{declaration.file}:{declaration.start}:{declaration.end}"
@@ -2823,7 +2857,7 @@ def _collect_extended_symbols(
     # Direct named assignment-pattern keys are semantic references to fields
     # owned by the expression's exact physical struct alias.  Accept only the
     # fixed typed path; unsupported pattern shapes are not traversed or guessed.
-    for node in nodes:
+    for node in nodes if collect_aggregates else ():
         if type(node).__name__ != "StructuredAssignmentPatternExpression":
             continue
         syntax = getattr(node, "syntax", None)
@@ -2994,7 +3028,7 @@ def _collect_extended_symbols(
 
     # Casts retain their semantic TypeAliasType. Only the direct type field
     # is accepted as source evidence; a missing field is fail-closed.
-    for node in nodes:
+    for node in nodes if collect_aggregates else ():
         if type(node).__name__ != "ConversionExpression":
             continue
         semantic_type = getattr(node, "type", None)
@@ -3023,6 +3057,8 @@ def _collect_extended_symbols(
         add_type_reference(token, "semantic_cast_type")
 
     def alias_record_for_declared(declared: Any) -> dict[str, Any] | None:
+        if not collect_aggregates:
+            return None
         if declared is not None:
             try:
                 declared_range = _record_range(source_catalog, declared)
@@ -3052,7 +3088,7 @@ def _collect_extended_symbols(
     # Named aggregate members are semantic syntax owned by the alias that
     # declares them.  Record their referenced alias type token before the
     # member declaration records consume the same syntax tree.
-    for alias_node, alias_record in alias_records:
+    for alias_node, alias_record in alias_records if collect_aggregates else ():
         canonical = getattr(alias_node, "canonicalType", None)
         syntax = getattr(canonical, "syntax", None)
         for member in getattr(syntax, "members", ()) if syntax is not None else ():
@@ -3062,7 +3098,7 @@ def _collect_extended_symbols(
                 add_type_reference(token, "semantic_type")
 
     # Enum values are TransparentMemberSymbols wrapping semantic EnumValue symbols.
-    for node in nodes:
+    for node in nodes if collect_enum_values else ():
         if type(node).__name__ != "TransparentMemberSymbol":
             continue
         wrapped = getattr(node, "wrapped", None)
@@ -3080,7 +3116,7 @@ def _collect_extended_symbols(
         add_target(wrapped, record)
 
     # Subroutines and formal arguments are semantic symbols with source syntax.
-    for node in nodes:
+    for node in nodes if collect_subroutines else ():
         if type(node).__name__ != "SubroutineSymbol":
             continue
         declaration = _record_range(source_catalog, node)
@@ -3125,7 +3161,7 @@ def _collect_extended_symbols(
         )
         if return_token is not None:
             add_type_reference(return_token, "semantic_return_type")
-        for argument in getattr(node, "arguments", ()):
+        for argument in getattr(node, "arguments", ()) if collect_arguments else ():
             argument_record = add_record(
                 category="arguments",
                 name=str(argument.name),
@@ -3140,6 +3176,8 @@ def _collect_extended_symbols(
         node_type = type(node).__name__
         context = context_for(node)
         if node_type == "GenerateBlockArraySymbol":
+            if "generate_blocks" not in selected_categories:
+                continue
             syntax = getattr(node, "syntax", None)
             file, start, end = _syntax_span(source_catalog, syntax)
             owner = f"generate:{file}:{start}:{end}"
@@ -3176,6 +3214,8 @@ def _collect_extended_symbols(
             category = "interface_ports" if (
                 context.kind == "interface" or node_type == "InterfacePortSymbol"
             ) else "ports"
+            if category not in selected_categories:
+                continue
             record = add_record(
                 category=category,
                 name=str(node.name),
@@ -3231,6 +3271,8 @@ def _collect_extended_symbols(
                 add_type_reference(token, "semantic_port_type")
             continue
         if node_type in {"VariableSymbol", "NetSymbol"} and context is not None and context.kind == "interface":
+            if "interface_ports" not in selected_categories:
+                continue
             record = add_record(
                 category="interface_ports",
                 name=str(node.name),
@@ -3242,6 +3284,8 @@ def _collect_extended_symbols(
             add_target(node, record)
             continue
         if node_type == "ModportSymbol":
+            if "modports" not in selected_categories:
+                continue
             if context is None or context.kind != "interface":
                 raise SymbolGraphError(
                     "SYMBOL_GRAPH_OWNER_MISMATCH",
@@ -3258,6 +3302,8 @@ def _collect_extended_symbols(
             modport_records[(str(context.owner), str(node.name))] = record
             continue
         if node_type == "ModportPortSymbol":
+            if not selected_categories & {"interface_ports", "modports"}:
+                continue
             if context is None:
                 raise SymbolGraphError(
                     "SYMBOL_GRAPH_OWNER_MISMATCH",
@@ -3283,6 +3329,8 @@ def _collect_extended_symbols(
             if not getattr(node, "isModule", False) and not getattr(node, "isInterface", False):
                 continue
             category = "interface_instances" if getattr(node, "isInterface", False) else "instances"
+            if category not in selected_categories:
+                continue
             record = add_record(
                 category=category,
                 name=str(node.name),
@@ -3296,7 +3344,7 @@ def _collect_extended_symbols(
     # declarations.  Resolve the already-registered interface/modport owners
     # in a second semantic pass so the header binding is never guessed from
     # plain text.
-    for node in nodes:
+    for node in nodes if selected_categories & {"interface_ports", "modports"} else ():
         if type(node).__name__ != "InterfacePortSymbol":
             continue
         parent = getattr(getattr(node, "syntax", None), "parent", None)
@@ -3692,7 +3740,7 @@ def _collect_extended_symbols(
     # value without exposing that nested expression as a separately visited
     # catalog node. Resolve the nested member through its semantic field and
     # alias source identities, then use only direct scoped-name fields.
-    for node in nodes:
+    for node in nodes if collect_aggregates else ():
         if type(node).__name__ not in {"ElementSelectExpression", "RangeSelectExpression"}:
             continue
         access = getattr(node, "value", None)
@@ -3774,7 +3822,9 @@ def _collect_extended_symbols(
                 reason=record["reason"],
             )
         )
-    return result
+    return [
+        symbol for symbol in result if symbol.category in selected_categories
+    ]
 
 
 def _augment_signal_member_occurrences(
@@ -4336,8 +4386,23 @@ def _apply_owner_quarantine(
     ]
 
 
-def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
-    """Build the complete vNext semantic graph from the compiled catalog view."""
+def _normalize_graph_categories(categories: object) -> frozenset[str]:
+    if categories is None:
+        return frozenset(CANONICAL_CATEGORIES)
+    try:
+        return frozenset(normalize_categories(categories, default=False))
+    except CategoryRegistryError as error:
+        raise SymbolGraphError(
+            "SYMBOL_GRAPH_CATEGORY_INVALID",
+            error.message,
+        ) from error
+
+
+def _build_symbol_graph_impl(
+    source_catalog: SourceCatalog,
+    selected_categories: frozenset[str],
+) -> SymbolGraph:
+    """Build the selected vNext semantic graph from the compiled catalog view."""
 
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
@@ -4390,7 +4455,8 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
                     excluded_ranges.add(key)
 
     declarations: dict[tuple[str, int, int], tuple[str, SourceRange, ModuleOwner]] = {}
-    for node in nodes:
+    signal_nodes = nodes if "signals" in selected_categories else ()
+    for node in signal_nodes:
         if getattr(node, "kind", None) not in (variable_kind, net_kind):
             continue
         name = str(getattr(node, "name", ""))
@@ -4430,7 +4496,7 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
         if getattr(node, "kind", None) in (element_select_kind, range_select_kind)
         and getattr(node, "value", None) is not None
     } - {None}
-    for node in nodes:
+    for node in signal_nodes:
         node_kind = getattr(node, "kind", None)
         if node_kind == pyslang.ast.ExpressionKind.HierarchicalValue:
             target = getattr(node, "symbol", None)
@@ -4549,9 +4615,13 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
         )
         occurrences[target_key][occurrence_key] = occurrence
 
-    genvar_symbols, nested_module_spans = _collect_genvar_symbols(
-        source_catalog, nodes, owners
-    )
+    if selected_categories & {"genvars", "parameters"}:
+        genvar_symbols, nested_module_spans = _collect_genvar_symbols(
+            source_catalog, nodes, owners
+        )
+    else:
+        genvar_symbols = []
+        nested_module_spans = []
     symbols_list: list[SourceSymbol] = []
     for key, (name, declaration, owner) in declarations.items():
         ordered_occurrences = tuple(
@@ -4584,20 +4654,39 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
             )
         )
 
-    type_parameter_symbols, type_parameter_owner_ids, type_parameter_symbol_ids = (
-        _collect_type_parameter_symbols(source_catalog, nodes, owners)
-    )
-    parameter_symbols, defparam_owner_ids = _collect_parameter_symbols(
-        source_catalog, nodes, owners, genvar_symbols
-    )
+    if "parameters" in selected_categories:
+        type_parameter_symbols, type_parameter_owner_ids, type_parameter_symbol_ids = (
+            _collect_type_parameter_symbols(source_catalog, nodes, owners)
+        )
+        parameter_symbols, defparam_owner_ids = _collect_parameter_symbols(
+            source_catalog, nodes, owners, genvar_symbols
+        )
+    else:
+        type_parameter_symbols = []
+        parameter_symbols = []
+        type_parameter_owner_ids = set()
+        type_parameter_symbol_ids = set()
+        defparam_owner_ids = set()
+    if "signals" not in selected_categories:
+        symbols_list = []
     symbols_list.extend(parameter_symbols)
     symbols_list.extend(type_parameter_symbols)
-    symbols_list.extend(genvar_symbols)
-    symbols_list = _augment_signal_member_occurrences(source_catalog, symbols_list)
-    symbols_list = _augment_signal_generate_connection_occurrences(
-        source_catalog, symbols_list
-    )
-    symbols_list.extend(_collect_extended_symbols(source_catalog, symbols_list))
+    if "genvars" in selected_categories:
+        symbols_list.extend(genvar_symbols)
+    if "signals" in selected_categories:
+        symbols_list = _augment_signal_member_occurrences(source_catalog, symbols_list)
+        symbols_list = _augment_signal_generate_connection_occurrences(
+            source_catalog, symbols_list
+        )
+    extended_categories = selected_categories - {"signals", "parameters", "genvars"}
+    if extended_categories:
+        symbols_list.extend(
+            _collect_extended_symbols(
+                source_catalog,
+                symbols_list,
+                selected_categories,
+            )
+        )
     macro_evidence = _active_macro_owner_evidence.get()
     if macro_evidence is None:
         raise SymbolGraphError(
@@ -4631,7 +4720,11 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
 
     symbols = tuple(
         sorted(
-            symbols_list,
+            (
+                symbol
+                for symbol in symbols_list
+                if symbol.category in selected_categories
+            ),
             key=lambda symbol: (
                 symbol.declaration.file,
                 symbol.declaration.start,
@@ -4646,10 +4739,15 @@ def _build_symbol_graph_impl(source_catalog: SourceCatalog) -> SymbolGraph:
     return result
 
 
-def build_symbol_graph(source_catalog: SourceCatalog) -> SymbolGraph:
-    """Build a SymbolGraph and clear private macro evidence on every exit."""
+def build_symbol_graph(
+    source_catalog: SourceCatalog,
+    *,
+    categories: object = None,
+) -> SymbolGraph:
+    """Build a selected SymbolGraph and clear private macro evidence on exit."""
 
+    selected_categories = _normalize_graph_categories(categories)
     try:
-        return _build_symbol_graph_impl(source_catalog)
+        return _build_symbol_graph_impl(source_catalog, selected_categories)
     finally:
         _active_macro_owner_evidence.set(None)

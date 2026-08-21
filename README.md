@@ -35,6 +35,7 @@ done
 如何判断成功：
 
 - 加密命令退出码为 `0`，终端 JSON 中 `action_counts.rename` 大于 `0`；
+- `mapping.json` 和终端 JSON 的 `summary.encryption_result` 为 `PASS_FULL` 或 `PASS_PARTIAL`；
 - `summary.strict_compile_passed` 和 `summary.restored_byte_identical` 均为 `true`；
 - 最后一条 `cmp` 没有输出，表示公开恢复结果与原文件逐字节一致。
 
@@ -77,6 +78,15 @@ python rtl_encrypt.py \
 - `preserve`：因边界或策略保持原名的对象；
 - `unsupported`：当前证据不足、为避免错误而不改名的对象；
 - `modified_tokens`：实际改写的源码 token 数。
+
+结果还会明确给出三种状态：
+
+- `PASS_FULL`：至少有一个对象改名，且所选 graph 中没有 `preserve` 或 `unsupported`；
+- `PASS_PARTIAL`：gate 和恢复验证通过，但存在保留/不支持对象，或本次没有实际改名；
+- `REFUSED_ATOMIC`：无法证明安全性或验证失败，命令非零退出并且不会发布输出目录、mapping 或 metrics。
+
+`PASS_PARTIAL` 不是完整加密支持；`rename=0` 也不能当作加密成功。只有 `PASS_FULL` 才表示本次所选
+类别在当前输入闭包内全部完成改名。
 
 `rename=0` 表示本次没有发生有效加密，不能把它理解为所选类型已经完整支持。详细记录位于：
 

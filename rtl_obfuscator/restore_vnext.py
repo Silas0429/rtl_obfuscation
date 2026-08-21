@@ -625,7 +625,21 @@ def _orchestration_summary(
     rate_enabled: bool,
 ) -> dict[str, object]:
     metrics_report = metrics.to_report()
+    effective_records = effective.records
+    action_counts = {
+        "rename": sum(record.action == "rename" for record in effective_records),
+        "preserve": sum(record.action == "preserve" for record in effective_records),
+        "unsupported": sum(record.action == "unsupported" for record in effective_records),
+    }
+    encryption_result = (
+        "PASS_FULL"
+        if action_counts["rename"] > 0
+        and action_counts["preserve"] == 0
+        and action_counts["unsupported"] == 0
+        else "PASS_PARTIAL"
+    )
     return {
+        "encryption_result": encryption_result,
         "origin": original.rewrite_policy.symbol_graph.source_catalog.source_set.origin,
         "top": original.rewrite_policy.symbol_graph.source_catalog.source_set.top,
         "rate_enabled": rate_enabled,
@@ -641,6 +655,9 @@ def _orchestration_summary(
         "occurrence_coverage": metrics_report["occurrences"]["coverage"],
         "plaintext_leakage_rate": metrics_report["plaintext_leakage_rate"],
         "effective_coverage": metrics_report["effective_coverage"],
+        "rename": action_counts["rename"],
+        "preserve": action_counts["preserve"],
+        "unsupported": action_counts["unsupported"],
     }
 
 
@@ -1020,16 +1037,19 @@ def load_restore_vnext(
     if not files:
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set has no physical files")
     _validate_gate_file_set(map_path, gate_path, report, files)
-    try:
-        source_data = {file: (source_path / file).read_bytes() for file in files}
-        catalog = build_source_catalog(source_set)
-        graph = build_symbol_graph(catalog)
-    except (OSError, ValueError, RuntimeError, SourceCatalogError, SymbolGraphError) as error:
-        _fail("RESTORE_VNEXT_INPUT_INVALID", str(error))
     original_report = report["mapping"]
     if not isinstance(original_report, dict) or not isinstance(original_report.get("selection"), dict):
         _fail("RESTORE_VNEXT_REPORT_INVALID", "original mapping report is invalid")
     selection = original_report["selection"]
+    try:
+        source_data = {file: (source_path / file).read_bytes() for file in files}
+        catalog = build_source_catalog(source_set)
+        graph = build_symbol_graph(
+            catalog,
+            categories=selection.get("selected_categories"),
+        )
+    except (OSError, ValueError, RuntimeError, SourceCatalogError, SymbolGraphError) as error:
+        _fail("RESTORE_VNEXT_INPUT_INVALID", str(error))
     try:
         policy = build_rewrite_policy(
             graph,
