@@ -99,6 +99,27 @@ class SourceSetError(ValueError):
         super().__init__(f"{code}: {message}")
 
 
+def is_canonical_compile_order(source_set: SourceSet) -> bool:
+    """Validate the one effective compile order used by all vNext stages."""
+
+    order = tuple(source_set.compile_order)
+    if len(order) != len(set(order)):
+        return False
+    if tuple(path for path in order if is_source_file(path)) != tuple(
+        source_set.ordered_source_files
+    ):
+        return False
+    context = tuple(path for path in order if not is_source_file(path))
+    if any(
+        not (is_header_file(path) or is_context_file(path)) for path in context
+    ):
+        return False
+    if source_set.origin == "filelist":
+        included = tuple(source_set.included_files)
+        return context == included[: len(context)] and set(context) <= set(included)
+    return order == tuple(source_set.ordered_source_files) and not context
+
+
 def _normalize_root(source_root: Path) -> Path:
     root = Path(source_root).expanduser().resolve()
     if not root.is_dir():
@@ -621,6 +642,9 @@ def _discover(
     public_source_files = (
         result.compile_order if origin == "project-root" else ordered_source_files
     )
+    compile_order = (
+        result.compile_order if origin == "filelist" else public_source_files
+    )
     return SourceSet(
         schema_version=1,
         origin=origin,
@@ -631,7 +655,7 @@ def _discover(
         defines=defines,
         top=top,
         top_closure_files=result.top_closure_files,
-        compile_order=public_source_files,
+        compile_order=compile_order,
     )
 
 

@@ -20,8 +20,7 @@ from .mapping_vnext import (
 )
 from .rewrite_policy import RewritePolicy, build_rewrite_policy
 from .source_catalog import SourceCatalog, SourceRange, build_source_catalog
-from .source_set import SourceSet
-from .rtl_files import is_source_file
+from .source_set import SourceSet, is_canonical_compile_order
 from .symbol_graph import SourceSymbol, SymbolGraph, SymbolOccurrence
 from .systemverilog_names import is_plain_identifier
 
@@ -678,17 +677,8 @@ def _source_set_from_mapping(
     for item, file in zip(mapping.input_manifest, physical_files):
         if not isinstance(item, InputFileDigest) or item.file != file or not isinstance(item.sha256, str):
             _fail("REWRITE_MAPPING_INVALID", "input manifest does not match physical files")
-    if not isinstance(source_set.compile_order, tuple):
+    if not isinstance(source_set.compile_order, tuple) or not is_canonical_compile_order(source_set):
         _fail("REWRITE_MAPPING_INVALID", "compile_order is not canonical")
-    if any(
-        not isinstance(file, str)
-        or not is_source_file(file)
-        or file not in source_set.ordered_source_files
-        for file in source_set.compile_order
-    ):
-        _fail("REWRITE_MAPPING_INVALID", "compile_order is not a source-file sequence")
-    if len(set(source_set.compile_order)) != len(source_set.compile_order):
-        _fail("REWRITE_MAPPING_INVALID", "compile_order contains duplicates")
     return source_set, catalog, graph
 
 

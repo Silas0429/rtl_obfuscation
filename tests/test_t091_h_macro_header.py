@@ -58,9 +58,9 @@ class HMacroHeaderTests(unittest.TestCase):
             top="t091_top",
         )
         self.assertEqual(result.ordered_source_files, ("rtl/top.sv",))
-        self.assertEqual(result.compile_order, ("rtl/top.sv",))
+        self.assertEqual(result.compile_order, ("rtl/stl_gmacro.h", "rtl/top.sv"))
         self.assertEqual(result.included_files, ("rtl/stl_gmacro.h",))
-        self.assertNotIn("rtl/stl_gmacro.h", result.compile_order)
+        self.assertIn("rtl/stl_gmacro.h", result.compile_order)
 
     def test_public_signals_gate_restore_and_h_bytes(self):
         with tempfile.TemporaryDirectory(prefix="t091-public-") as temporary:
@@ -81,7 +81,7 @@ class HMacroHeaderTests(unittest.TestCase):
             self.assertTrue((gate / "rtl/top.sv").is_file())
             self.assertEqual(
                 (gate / "design.f").read_text(encoding="utf-8"),
-                "rtl/top.sv\n",
+                "rtl/stl_gmacro.h\nrtl/top.sv\n",
             )
 
             restored = root / "restored"

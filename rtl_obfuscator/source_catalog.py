@@ -10,7 +10,7 @@ import pyslang
 
 from .project_discovery import compile_pyslang_source_set
 from .source_set import SourceSet
-from .rtl_files import is_context_file, is_source_file
+from .rtl_files import is_source_file
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,9 @@ class _CompiledView:
     root: Any
     source_manager: Any
     syntax_tree: Any
+    parse_errors: tuple[Any, ...]
+    semantic_errors: tuple[Any, ...]
+    nonblocking_errors: tuple[Any, ...]
 
 
 @dataclass(frozen=True)
@@ -106,10 +109,7 @@ class _DefinitionRecord:
 
 
 def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
-    source_files = tuple(
-        path for path in source_set.compile_order if is_source_file(path)
-    )
-    if not source_files:
+    if not any(is_source_file(path) for path in source_set.compile_order):
         raise SourceCatalogError(
             "CATALOG_EMPTY_SOURCE_SET", "SourceSet has no .sv or .v source unit"
         )
@@ -117,12 +117,7 @@ def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
     try:
         view = compile_pyslang_source_set(
             root=source_set.source_root,
-            source_files=source_files,
-            context_files=tuple(
-                path
-                for path in source_set.included_files
-                if is_context_file(path)
-            ),
+            compilation_files=source_set.compile_order,
             include_files=source_set.included_files,
             include_dirs=source_set.include_dirs,
             defines=dict(source_set.defines),
@@ -135,35 +130,14 @@ def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
         view.root,
         view.source_manager,
         view.syntax_tree,
+        view.parse_errors,
+        view.semantic_errors,
+        view.nonblocking_errors,
     )
 
 
 def _diagnostic_counts(view: _CompiledView) -> tuple[int, int]:
-    parse_diagnostics = [
-        diagnostic
-        for diagnostic in view.syntax_tree.diagnostics
-        if diagnostic.isError()
-    ]
-    parse_keys = {
-        (str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset)
-        for diagnostic in parse_diagnostics
-    }
-    diagnostics = [
-        diagnostic
-        for diagnostic in view.compilation.getAllDiagnostics()
-        if diagnostic.isError()
-    ]
-    semantic_diagnostics = [
-        diagnostic
-        for diagnostic in diagnostics
-        if (
-            str(diagnostic.code),
-            diagnostic.location.buffer,
-            diagnostic.location.offset,
-        )
-        not in parse_keys
-    ]
-    return len(parse_diagnostics), len(semantic_diagnostics)
+    return len(view.parse_errors), len(view.semantic_errors)
 
 
 def _relative_file(source_set: SourceSet, manager: Any, buffer: Any) -> str:

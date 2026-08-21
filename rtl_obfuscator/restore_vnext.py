@@ -29,7 +29,7 @@ from .rewrite_vnext import (
     restore_gate_vnext,
 )
 from .source_catalog import SourceCatalogError, SourceRange, build_source_catalog
-from .source_set import SourceSet
+from .source_set import SourceSet, is_canonical_compile_order
 from .symbol_graph import SourceSymbol, SymbolGraphError, SymbolOccurrence, build_symbol_graph
 
 
@@ -854,7 +854,7 @@ def _load_orchestration_gate_inputs_vnext(
         or len(set(ordered_source_files)) != len(ordered_source_files)
         or len(set(included_files)) != len(included_files)
         or set(ordered_source_files) & set(included_files)
-        or tuple(source_set.compile_order) != ordered_source_files
+        or not is_canonical_compile_order(source_set)
     ):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set physical order is invalid")
     files = (*ordered_source_files, *included_files)

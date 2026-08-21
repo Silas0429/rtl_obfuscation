@@ -119,8 +119,9 @@ python rtl_encrypt.py \
 
 仓库示例使用 `rtl_samples/example_fifo/design.f` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
 提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
-filelist 中的 `.sv/.v` 是 source unit；`.svh/.vh` 和显式列出的 `.h` 作为 include/context 物理文件进入 gate、mapping
-和恢复清单，不会被写入 canonical `design.f`；`.h` 不产生宏 rename edit。顶层和嵌套 filelist
+filelist 中的 `.sv/.v` 是 source unit；显式列出的 `.svh/.vh/.h` 按首次出现顺序组成 header/context
+前导，进入 gate、canonical `design.f`、mapping 和恢复清单，但不产生 rename edit；由源码 `` `include``
+发现的未列出 header 只进入物理清单，不进入 canonical `design.f`。顶层和嵌套 filelist
 中的相对路径分别以所在 filelist 目录为基准，`$NAME`/`${NAME}` 会按当前环境展开；`-f`、
 `+incdir+` 和显式物理 entry 共同推导内部路径边界，但不会把边界目录下未列出的源码自动加入候选集合。
 filelist 还可使用 `+incdir+DIR1+DIR2` 和 `+define+NAME[=VALUE]` 提供编译上下文；其中的环境变量和嵌套

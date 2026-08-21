@@ -23,7 +23,10 @@ class MacroFormalParameterTests(unittest.TestCase):
             ("rtl/asserts.h", "rtl/defaults.h"),
         )
         self.assertEqual(result.top_closure_files, ("rtl/top.sv",))
-        self.assertEqual(result.compile_order, ("rtl/top.sv",))
+        self.assertEqual(
+            result.compile_order,
+            ("rtl/asserts.h", "rtl/defaults.h", "rtl/top.sv"),
+        )
 
         context = _ProjectContext(
             FIXTURE_ROOT,

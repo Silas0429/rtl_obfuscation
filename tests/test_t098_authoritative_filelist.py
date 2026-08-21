@@ -28,7 +28,10 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
             "rtl/t098_unused.sv",
         )
         self.assertEqual(all_sources.ordered_source_files, expected_sources)
-        self.assertEqual(all_sources.compile_order, expected_sources)
+        self.assertEqual(
+            all_sources.compile_order,
+            ("include/t098_macros.h",) + expected_sources,
+        )
         self.assertEqual(all_sources.top_closure_files, ())
         self.assertEqual(all_sources.included_files, ("include/t098_macros.h",))
 
@@ -36,7 +39,10 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
             filelist=FIXTURE_ROOT / "design.f", top="t098_top"
         )
         self.assertEqual(selected.ordered_source_files, expected_sources)
-        self.assertEqual(selected.compile_order, expected_sources)
+        self.assertEqual(
+            selected.compile_order,
+            ("include/t098_macros.h",) + expected_sources,
+        )
         self.assertEqual(
             selected.top_closure_files,
             (

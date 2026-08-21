@@ -119,26 +119,27 @@ class SourceSetDiscovery:
 
 @dataclass(frozen=True)
 class PySlangCompilationView:
-    """One PySlang compilation over an explicit source/context order."""
+    """One PySlang compilation over one effective file order."""
 
     compilation: Any
     root: Any
     source_manager: Any
     syntax_tree: Any
+    raw_errors: tuple[Any, ...]
     parse_errors: tuple[Any, ...]
     semantic_errors: tuple[Any, ...]
+    nonblocking_errors: tuple[Any, ...]
 
 
 def _pyslang_source_manager(
     root: Path,
-    source_files: tuple[str, ...],
-    context_files: tuple[str, ...],
+    compilation_files: tuple[str, ...],
     include_files: tuple[str, ...],
     include_dirs: tuple[str, ...],
 ) -> pyslang.SourceManager:
     manager = pyslang.SourceManager()
     directories: list[str] = []
-    for relative in (*context_files, *source_files, *include_files):
+    for relative in (*compilation_files, *include_files):
         parent = str(PurePosixPath(relative).parent)
         if parent not in directories:
             directories.append(parent)
@@ -153,25 +154,23 @@ def _pyslang_source_manager(
 def compile_pyslang_source_set(
     *,
     root: Path,
-    source_files: Iterable[str],
-    context_files: Iterable[str] = (),
+    compilation_files: Iterable[str],
     include_files: Iterable[str] = (),
     include_dirs: Iterable[str] = (),
     defines: dict[str, str] | None = None,
     top: str | None = None,
 ) -> PySlangCompilationView:
-    """Compile exactly the supplied source/context order with PySlang.
+    """Compile exactly the supplied effective file order with PySlang.
 
     This helper is shared by the authoritative filelist adapter and the
     semantic SourceCatalog.  It deliberately does not inspect providers,
     discover candidates, or reorder source units.
     """
 
-    ordered_sources = tuple(source_files)
-    ordered_context = tuple(context_files)
+    ordered_files = tuple(compilation_files)
     ordered_includes = tuple(include_files)
     manager = _pyslang_source_manager(
-        root, ordered_sources, ordered_context, ordered_includes, tuple(include_dirs)
+        root, ordered_files, ordered_includes, tuple(include_dirs)
     )
     bag = pyslang.Bag()
     preprocessor = pyslang.parsing.PreprocessorOptions()
@@ -184,10 +183,7 @@ def compile_pyslang_source_set(
         options.topModules = {top}
     bag.compilationOptions = options
     syntax_tree = pyslang.syntax.SyntaxTree.fromFiles(
-        [
-            str(root / relative)
-            for relative in (*ordered_context, *ordered_sources)
-        ],
+        [str(root / relative) for relative in ordered_files],
         manager,
         bag,
     )
@@ -199,28 +195,41 @@ def compile_pyslang_source_set(
         for diagnostic in syntax_tree.diagnostics
         if diagnostic.isError()
     )
+    raw_errors = tuple(
+        diagnostic
+        for diagnostic in compilation.getAllDiagnostics()
+        if diagnostic.isError()
+    )
     parse_keys = {
         (str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset)
         for diagnostic in parse_errors
     }
+    semantic_candidates = tuple(
+        diagnostic
+        for diagnostic in raw_errors
+        if (
+            str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset
+        ) not in parse_keys
+    )
+    nonblocking_errors = tuple(
+        diagnostic
+        for diagnostic in semantic_candidates
+        if str(diagnostic.code) == "DiagCode(MissingTimeScale)"
+    )
     semantic_errors = tuple(
         diagnostic
-        for diagnostic in compilation.getAllDiagnostics()
-        if diagnostic.isError()
-        and (
-            str(diagnostic.code),
-            diagnostic.location.buffer,
-            diagnostic.location.offset,
-        )
-        not in parse_keys
+        for diagnostic in semantic_candidates
+        if str(diagnostic.code) != "DiagCode(MissingTimeScale)"
     )
     return PySlangCompilationView(
         compilation=compilation,
         root=root_symbol,
         source_manager=manager,
         syntax_tree=syntax_tree,
+        raw_errors=raw_errors,
         parse_errors=parse_errors,
         semantic_errors=semantic_errors,
+        nonblocking_errors=nonblocking_errors,
     )
 
 
@@ -1188,12 +1197,14 @@ def _discover_sourceset(
 
     if authoritative_filelist:
         context_files = tuple(
-            path for path in explicit_header_files if is_context_file(path)
+            path
+            for path in explicit_header_files
+            if is_header_file(path) or is_context_file(path)
         )
+        compilation_order = context_files + source_order
         compiled = compile_pyslang_source_set(
             root=root,
-            source_files=source_order,
-            context_files=context_files,
+            compilation_files=compilation_order,
             include_files=tuple(
                 path
                 for path in candidate_order
@@ -1216,9 +1227,10 @@ def _discover_sourceset(
                 raise ProjectAnalysisError(
                     "AMBIGUOUS_TOP", f"top definition is ambiguous: {top}"
                 )
-        diagnostics = (*compiled.parse_errors, *compiled.semantic_errors)
         if compiled.parse_errors:
-            details = _pyslang_diagnostic_details(root, compiled.source_manager, diagnostics)
+            details = _pyslang_diagnostic_details(
+                root, compiled.source_manager, compiled.parse_errors
+            )
             first = details[0] if details else {"path": None, "start": None}
             raise ProjectAnalysisError(
                 "PARSE_ERROR",
@@ -1256,7 +1268,7 @@ def _discover_sourceset(
         return SourceSetDiscovery(
             included_files=tuple(path for path in candidate_order if path in included_files),
             top_closure_files=top_closure_files,
-            compile_order=source_order,
+            compile_order=compilation_order,
         )
 
     context = _ProjectContext(

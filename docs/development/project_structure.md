@@ -49,10 +49,11 @@ python rtl_decrypt.py -> persisted report + actual gate
     -> byte-identical source files
 ```
 
-`.sv/.v/.svh/.vh` 共用当前 PySlang SystemVerilog 语义模式；显式 filelist 的 `.h` 只作为宏 context
-进入物理清单，不进入 source compile order，且不产生 rename edit。后缀不触发第二套 parser 或
-rewrite 分支；filelist 的 source 顺序和 listed closed world 由 PySlang 直接验证，`--top` 只从同一
-完整语义树选择 closure；project-root 不自动扫描 `.h`。
+`.sv/.v/.svh/.vh` 共用当前 PySlang SystemVerilog 语义模式；显式 filelist 的 `.h/.svh/.vh` 按首次出现
+顺序组成 header/context 前导，和 `.sv/.v` source 顺序共同形成唯一 `compile_order`，并进入 canonical
+`design.f`，但不产生 rename edit。由源码 `` `include`` 发现的未列出 header 只进入物理清单，不进入
+`compile_order`。后缀不触发第二套 parser 或 rewrite 分支；filelist 的 source 顺序和 listed closed
+world 由 PySlang 直接验证，`--top` 只从同一完整语义树选择 closure；project-root 不自动扫描 `.h`。
 
 ## 测试、脚本和样例
 

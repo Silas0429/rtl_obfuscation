@@ -86,12 +86,15 @@ class VerilogSuffixTests(unittest.TestCase):
         self.assertEqual(single.included_files, ())
         self.assertEqual(filelist.ordered_source_files, ("rtl/child.v", "rtl/top.v"))
         self.assertEqual(filelist.included_files, ("include/internal.vh",))
-        self.assertEqual(filelist.compile_order, ("rtl/child.v", "rtl/top.v"))
+        self.assertEqual(
+            filelist.compile_order,
+            ("include/internal.vh", "rtl/child.v", "rtl/top.v"),
+        )
         self.assertEqual(project.ordered_source_files, filelist.ordered_source_files)
         self.assertEqual(project.included_files, filelist.included_files)
         self.assertEqual(project.top_closure_files, filelist.top_closure_files)
-        self.assertEqual(project.compile_order, filelist.compile_order)
-        self.assertNotIn("include/internal.vh", filelist.compile_order)
+        self.assertEqual(project.compile_order, filelist.ordered_source_files)
+        self.assertIn("include/internal.vh", filelist.compile_order)
         self.assertNotIn("single.v", project.ordered_source_files)
 
     def test_filelist_preserves_mixed_sv_v_order_and_header_classification(self):
@@ -112,9 +115,9 @@ class VerilogSuffixTests(unittest.TestCase):
             result = from_filelist(filelist=filelist, source_root=root)
 
             self.assertEqual(result.ordered_source_files, ("b.v", "a.sv"))
-            self.assertEqual(result.compile_order, ("b.v", "a.sv"))
+            self.assertEqual(result.compile_order, ("shared.vh", "b.v", "a.sv"))
             self.assertEqual(result.included_files, ("shared.vh",))
-            self.assertNotIn("shared.vh", result.compile_order)
+            self.assertIn("shared.vh", result.compile_order)
 
     def test_public_three_modes_preserve_suffixes_and_header_is_actually_rewritten(self):
         with tempfile.TemporaryDirectory(prefix="t088-public-") as temporary:
@@ -149,9 +152,13 @@ class VerilogSuffixTests(unittest.TestCase):
                     {"rtl/child.v", "rtl/top.v", "include/internal.vh"},
                 )
                 self.assertTrue(all(path.endswith((".v", ".vh")) for path in physical))
+                expected_design = (
+                    "include/internal.vh\nrtl/child.v\nrtl/top.v\n"
+                    if report["source_set"]["origin"] == "filelist"
+                    else "rtl/child.v\nrtl/top.v\n"
+                )
                 self.assertEqual(
-                    (gate / "design.f").read_text(encoding="utf-8"),
-                    "rtl/child.v\nrtl/top.v\n",
+                    (gate / "design.f").read_text(encoding="utf-8"), expected_design
                 )
                 self.assertNotIn("header_wire", (gate / "include/internal.vh").read_text())
                 header_records = [
@@ -168,7 +175,7 @@ class VerilogSuffixTests(unittest.TestCase):
                     )
                 )
             self.assertEqual(
-                filelist_report["source_set"]["compile_order"],
+                filelist_report["source_set"]["ordered_source_files"],
                 project_report["source_set"]["compile_order"],
             )
 

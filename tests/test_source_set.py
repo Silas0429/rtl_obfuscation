@@ -184,7 +184,10 @@ class SourceSetTests(unittest.TestCase):
             result.ordered_source_files,
             ("rtl/top.sv", "rtl/child.sv"),
         )
-        self.assertEqual(result.compile_order, result.ordered_source_files)
+        self.assertEqual(
+            result.compile_order,
+            ("include/common.svh", "rtl/top.sv", "rtl/child.sv"),
+        )
         self.assertEqual(result.included_files, ("include/common.svh",))
         self.assertNotIn("rtl/ignored.sv", result.ordered_source_files)
         self.assertNotIn("$T087_PROJ", json.dumps(result.to_report()))

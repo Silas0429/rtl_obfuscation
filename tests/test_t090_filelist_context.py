@@ -29,7 +29,10 @@ class T090FilelistContextTests(unittest.TestCase):
         )
 
         self.assertEqual(result.ordered_source_files, ("rtl/top.v", "rtl/child.sv"))
-        self.assertEqual(result.compile_order, result.ordered_source_files)
+        self.assertEqual(
+            result.compile_order,
+            ("include/feature.vh", "rtl/top.v", "rtl/child.sv"),
+        )
         self.assertEqual(result.included_files, ("include/feature.vh",))
         self.assertEqual(result.include_dirs, ("rtl", "include"))
         self.assertEqual(

@@ -33,7 +33,9 @@ Formal 输入必须满足：
 - filelist 中的路径相对于各自的 `--gold-root` 或 `--gate-root` 可找到。
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
-- canonical `design.f` 只列 source unit；header 仍随 gate 保留并由 source 的 include 路径加载。
+- canonical `design.f` 使用加密输出的完整 `compile_order`：显式列出的 `.h/.svh/.vh` header/context
+  前导在 source unit 之前；由 `` `include`` 发现但未显式列出的 header 仍随 gate 保留，不写入
+  `design.f`。
 
 ## 多文件项目：推荐命令
 
