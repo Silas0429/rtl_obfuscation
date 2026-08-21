@@ -54,6 +54,11 @@ python rtl_decrypt.py -> persisted report + actual gate
 精确绑定 target；非 module 宏不单独阻断无关 signals。宏生成 module definition 或无法安全隔离
 的真实改写对象继续 fail-closed。
 
+物理 module inventory 与 semantic owner registry 不是双向相等关系：当前 compilation 未 elaboration
+的普通物理 module 没有 owner、graph record、mapping 或 edit，但仍作为只读物理输入进入 manifest、
+gate 和 restore；每个 semantic owner 仍必须唯一映射到物理 module span。该边界只复用现有
+`catalog_compilation.getSyntaxTrees()` 与 owner identity，不新增 collector、generate 求值或名称特判。
+
 `.sv/.v/.svh/.vh` 共用当前 PySlang SystemVerilog 语义模式；显式 filelist 的 `.h/.svh/.vh` 按首次出现
 顺序组成 header/context 前导，和 `.sv/.v` source 顺序共同形成唯一 `compile_order`，并进入 canonical
 `design.f`，但不产生 rename edit。由源码 `` `include`` 发现的未列出 header 只进入物理清单，不进入

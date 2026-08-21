@@ -2317,12 +2317,7 @@ def _physical_module_spans(
                 (declaration.file, declaration.start, declaration.end)
             )
             if owner is None:
-                raise SymbolGraphError(
-                    "SYMBOL_GRAPH_OWNER_MISMATCH",
-                    "physical module syntax does not match a catalog module declaration",
-                    file=declaration.file,
-                    start=declaration.start,
-                )
+                continue
             file, start, end = _syntax_span(source_catalog, syntax)
             source_range = SourceRange(file=file, start=start, end=end)
             previous = spans_by_owner.get(owner.owner_id)

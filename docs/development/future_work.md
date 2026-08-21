@@ -39,6 +39,11 @@ restore pipeline。19 个 canonical category 由一个 semantic owner registry �
   非 module 宏本身不再单独阻断无关 signals，但若宏生成 module definition 或某个真实待改写
   symbol 无法安全隔离，仍保持 fail-closed。宏文本展开/改写、macro argument rename、package/class/
   interface 中的宏改写、include/条件编译语义扩展仍不支持。
+- T101 已将物理 module inventory 与 semantic owner registry 收敛为单向边界：filelist 中存在但当前
+  PySlang compilation 未 elaboration 的普通 module 不建立 owner、graph record、mapping 或 edit，
+  但继续进入 gate、manifest 和 restore 并按原字节透传；每个已有 semantic owner 仍必须精确且唯一
+  对齐物理 module span，真实 owner/range 冲突继续 fail-closed。该边界不执行 generate 求值、不按
+  module 名特判，也不承诺未 elaboration module 的加密。
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
   显式改写。
 
