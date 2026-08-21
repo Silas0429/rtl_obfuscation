@@ -49,6 +49,11 @@ python rtl_decrypt.py -> persisted report + actual gate
     -> byte-identical source files
 ```
 
+宏只读是 SymbolGraph 的边界：宏定义、调用、参数、正文和展开 token 永远不是 rename target，
+也不会进入 mapping 或 edit。宏展开位置落入普通物理 module 时只局部保护该 module 及必要的
+精确绑定 target；非 module 宏不单独阻断无关 signals。宏生成 module definition 或无法安全隔离
+的真实改写对象继续 fail-closed。
+
 `.sv/.v/.svh/.vh` 共用当前 PySlang SystemVerilog 语义模式；显式 filelist 的 `.h/.svh/.vh` 按首次出现
 顺序组成 header/context 前导，和 `.sv/.v` source 顺序共同形成唯一 `compile_order`，并进入 canonical
 `design.f`，但不产生 rename edit。由源码 `` `include`` 发现的未列出 header 只进入物理清单，不进入

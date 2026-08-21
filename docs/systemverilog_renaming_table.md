@@ -4,6 +4,11 @@
 的 filelist 默认选择前 13 类；带 `--top` 的 filelist，以及只提供
 `--source-root + --top` 的项目加密，默认选择全部 19 类。
 
+宏永远不是 rename target：宏定义名、形式参数、调用名、实参 spelling、宏正文和展开 token
+不进入 mapping 或 edit。宏展开位置落入普通物理 module 时，只保护该 owner 及必要的精确绑定
+target；无宏 sibling 仍可改名。非 module 宏不单独阻断无关 signals，但宏生成 module definition
+或无法安全隔离的真实改写对象继续 fail-closed。
+
 默认选择只表示工具会检查这些类型，不表示任意工程中的每种写法都能改名。真实工程建议从少量
 `--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
 保留的对象。`rename=0` 不能视为该类型已经完整支持。
