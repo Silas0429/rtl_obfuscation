@@ -7,7 +7,7 @@
 宏对象本身不是 rename target：宏定义名、形式参数名、调用名和预处理控制结构不进入 mapping
 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理 identifier token，如果被 PySlang
 唯一绑定为 selected RTL symbol 的 declaration/occurrence，可以作为该 RTL symbol 的 edit source；
-这不是宏加密，并记录精确的 `semantic_macro_argument` 或 `semantic_macro_body` 来源。一个物理
+这不是宏加密，报告会区分宏实参来源和宏正文来源。一个物理
 宏来源被多个 symbol 占用时只对这些 symbol 标记 `macro_origin_conflict`；来源无法证明为 exact
 identifier 时只标记该 symbol 的 `macro_origin_not_exact`。所选 declaration 本身无法映射时原子
 拒绝，不发布半成品。
@@ -41,14 +41,14 @@ legacy-Verilog 方言，也不接受大写后缀或把 header 当作独立 sourc
 | `instances` | module 实例名称 | 是 | 加密 | 加密 |
 | `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
 | `typedefs` | 普通 typedef 类型名称；只有原始词法 token ranges 与 declaration 加已有语义 references ranges 精确相等时才允许改名，覆盖不完整的单条 typedef 保留 | 是 | 加密只在 module 内部使用且覆盖完整的类型 | 跨 module 使用且覆盖完整的类型及引用会一致改名；证据不足时整条 typedef 不产生 edit |
-| `struct_types` | struct 和 union 类型名称 | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
+| `struct_types` | struct 和 union 类型名称；显式 direct type cast 与 source-backed declaration/reference 可绑定，PySlang syntax-less implicit conversion 只作为语义事实、不产生伪造 occurrence | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
 | `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员；普通物理 struct alias 的 direct named assignment-pattern key 会按 exact alias owner 与字段名一致改写 | 跨 module 使用的成员及引用会一致改名；union/array/default/type/literal/宏或 anonymous pattern key 不在此闭包内 |
 | `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
 | `modules` | module 名称 | 否 | 保留 | 一致加密子 module 声明、实例化引用和直接 closing label `endmodule : name`；top module 名称及 closing label 保留 |
 | `ports` | module 端口名称 | 否 | 保留 | 加密子 module 端口和连接引用；top module 对外端口保留 |
 | `interfaces` | interface 类型名称 | 否 | 保留 | interface 类型及引用会一致改名 |
-| `interface_instances` | interface 实例名称 | 否 | 保留 | 加密符合条件的 interface 实例；top module 内直接声明的实例名当前保留 |
-| `interface_ports` | interface 端口和成员名称 | 否 | 保留 | interface 端口、成员及引用会一致改名 |
+| `interface_instances` | interface 实例名称 | 否 | 保留 | 加密符合条件的标量 interface 实例；top module 内直接声明的实例名当前保留；interface instance array 当前会原子拒绝 |
+| `interface_ports` | interface 端口和成员名称 | 否 | 保留 | interface 端口、成员及引用会一致改名；只选择本类别且 interface port 使用 modport qualifier 时当前会原子拒绝 |
 | `modports` | modport 名称 | 否 | 保留 | modport 名称及引用会一致改名 |
 
 ## 默认选择与快捷值

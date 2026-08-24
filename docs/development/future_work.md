@@ -54,6 +54,14 @@ category 选择在 SymbolGraph 入口生效。未选择类别不会因其自身 
   module 名特判，也不承诺未 elaboration module 的加密。
 - 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
   显式改写。
+- 2026-08-24 StCache 外部重跑确认：`signals` 为 `PASS_FULL`；`ports` 为带既有 top/closure preserve
+  和 18 个 `macro_origin_conflict` 的 `PASS_PARTIAL`；完整 `interface` 与 `struct` 在 mapping 前
+  `REFUSED_ATOMIC`。完整证据和不使用名称特判的稳定化方案见
+  [`architecture/stcache_core_category_stability.md`](architecture/stcache_core_category_stability.md)。
+- PySlang interface instance array 由一个有名 `InstanceArraySymbol` 和多个无名 element
+  `InstanceSymbol` 表达。当前 `interface_instances` collector 仍把 element 当作物理声明，合法数组会因
+  `semantic symbol has no source identifier` 原子拒绝；只选择 `interface_ports` 且 module header 使用
+  modport qualifier 时，当前 second pass 还会错误要求未选择的 `modports` record。
 
 ## T073 后真实工程复测边界
 
@@ -119,7 +127,10 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
 - T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
   的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
   owner/span 证据不一致和未知 reason 仍 fail-closed。
-- **syntax-less implicit typedef conversion** 没有可证明的直接源码 token 时继续 fail-closed。
+- **syntax-less implicit typedef conversion** 是 PySlang 插入且没有源码 type token 的语义节点。T105
+  已在本地 compact 流程中收敛为语义绑定事实：只有 `CastExpressionSyntax` 的 direct type identifier
+  建立 source occurrence，隐式 conversion 不产生 edit；不得使用文本恢复或类型名特判。StCache 外部
+  struct/union filelist 仍需使用新输出目录重跑确认。
 - VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
   分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。
 

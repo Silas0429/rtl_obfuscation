@@ -3128,6 +3128,8 @@ def _collect_extended_symbols(
             continue
         alias_name = str(getattr(semantic_type, "name", "")).rsplit(".", 1)[-1]
         syntax = getattr(node, "syntax", None)
+        if syntax is None or type(syntax).__name__ != "CastExpressionSyntax":
+            continue
         if _is_builtin_keyword_cast_conversion(node):
             continue
         token = _direct_expression_identifier(getattr(syntax, "left", None))
@@ -3309,7 +3311,15 @@ def _collect_extended_symbols(
             category = "interface_ports" if (
                 context.kind == "interface" or node_type == "InterfacePortSymbol"
             ) else "ports"
+            parent = getattr(getattr(node, "syntax", None), "parent", None)
+            header = getattr(parent, "header", None)
+            data_type = getattr(header, "dataType", None)
+            token = getattr(
+                getattr(data_type, "name", None), "identifier", None
+            )
             if category not in selected_categories:
+                if token is not None:
+                    add_type_reference(token, "semantic_port_type")
                 continue
             record = add_record(
                 category=category,
@@ -3320,8 +3330,6 @@ def _collect_extended_symbols(
             )
             add_target(node, record)
             add_target(getattr(node, "internalSymbol", None), record)
-            parent = getattr(getattr(node, "syntax", None), "parent", None)
-            header = getattr(parent, "header", None)
             interface_token = getattr(header, "nameOrKeyword", None)
             interface_record = interface_records.get(
                 getattr(interface_token, "rawText", "")
@@ -3353,8 +3361,6 @@ def _collect_extended_symbols(
                         ),
                         "semantic_modport_type",
                     )
-            data_type = getattr(header, "dataType", None)
-            token = getattr(getattr(data_type, "name", None), "identifier", None)
             data_interface_record = interface_records.get(
                 getattr(token, "rawText", "") if token is not None else ""
             )

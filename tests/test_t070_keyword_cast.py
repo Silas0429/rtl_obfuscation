@@ -175,19 +175,22 @@ class T070BuiltinKeywordCastTests(unittest.TestCase):
             ["semantic_cast_type"],
         )
 
-    def test_nonkeyword_typealias_wrapper_remains_stable_fail_closed(self):
+    def test_syntaxless_implicit_typealias_conversion_has_no_source_occurrence(self):
         source_set = from_filelist(
             filelist=FIXTURE_ROOT / "invalid_nonkeyword.f",
             source_root=FIXTURE_ROOT,
             top="t070_invalid_nonkeyword",
         )
         catalog = build_source_catalog(source_set)
-        with self.assertRaises(SymbolGraphError) as raised:
-            build_symbol_graph(catalog)
-        self.assertEqual(raised.exception.code, "SYMBOL_GRAPH_UNSUPPORTED_SOURCE")
-        self.assertEqual(
-            raised.exception.message,
-            "semantic cast has no direct type identifier token",
+        graph = build_symbol_graph(catalog)
+        byte_t = next(
+            symbol
+            for symbol in graph.symbols
+            if symbol.category == "typedefs" and symbol.name == "byte_t"
+        )
+        self.assertNotIn(
+            "semantic_cast_type",
+            [occurrence.provenance for occurrence in byte_t.occurrences],
         )
 
     def test_mapping_summary_and_keyword_casts_have_no_edits(self):
