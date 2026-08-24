@@ -308,8 +308,8 @@ class T103SelectedCategoryStableOutcomesTests(unittest.TestCase):
             )
             self.assertEqual(partial_result.returncode, 0, partial_result.stderr)
             partial_report = json.loads((partial / "mapping.json").read_text())
-            self.assertEqual(partial_report["summary"]["encryption_result"], "PASS_PARTIAL")
-            self.assertTrue(any(record["action"] == "unsupported" for record in partial_report["mapping"]["records"]))
+            self.assertEqual(partial_report["summary"]["encryption_result"], "PASS_FULL")
+            self.assertFalse(any(record["action"] == "unsupported" for record in partial_report["mapping"]["records"]))
 
             refused = Path(temporary) / "refused"
             refused_result = self._run_public(

@@ -228,13 +228,15 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 3, "declarations": 3, "occurrences": 0, "total_ranges": 3},
+            {"symbols": 4, "declarations": 4, "occurrences": 4, "total_ranges": 8},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        genvar = next(symbol for symbol in graph.symbols if symbol.category == "genvars")
+        self.assertEqual(genvar.name, "g")
+        self.assertEqual(genvar.support, "eligible")
+        self.assertIsNone(genvar.reason)
+        source = (INVALID_ROOT / genvar.declaration.file).read_bytes()
+        self.assertEqual(source[genvar.declaration.start : genvar.declaration.end], b"g")
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_macro_genvar_reference_safe_preserve(self):
         catalog = build_source_catalog(
@@ -246,13 +248,16 @@ class SymbolGraphGenvarTests(unittest.TestCase):
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 4, "declarations": 4, "occurrences": 3, "total_ranges": 7},
+            {"symbols": 4, "declarations": 4, "occurrences": 4, "total_ranges": 8},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        genvar = next(symbol for symbol in graph.symbols if symbol.category == "genvars")
+        self.assertEqual(genvar.support, "eligible")
+        self.assertIsNone(genvar.reason)
+        self.assertIn(
+            "semantic_macro_argument",
+            {occurrence.provenance for occurrence in genvar.occurrences},
+        )
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_nested_same_named_genvars_safe_preserve(self):
         catalog = build_source_catalog(

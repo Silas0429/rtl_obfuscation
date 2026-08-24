@@ -4,10 +4,13 @@
 的 filelist 默认选择前 13 类；带 `--top` 的 filelist，以及只提供
 `--source-root + --top` 的项目加密，默认选择全部 19 类。
 
-宏永远不是 rename target：宏定义名、形式参数、调用名、实参 spelling、宏正文和展开 token
-不进入 mapping 或 edit。宏展开位置落入普通物理 module 时，只保护该 owner 及必要的精确绑定
-target；无宏 sibling 仍可改名。非 module 宏不单独阻断无关 signals，但宏生成 module definition
-或无法安全隔离的真实改写对象继续 fail-closed。
+宏对象本身不是 rename target：宏定义名、形式参数名、调用名和预处理控制结构不进入 mapping
+或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理 identifier token，如果被 PySlang
+唯一绑定为 selected RTL symbol 的 declaration/occurrence，可以作为该 RTL symbol 的 edit source；
+这不是宏加密，并记录精确的 `semantic_macro_argument` 或 `semantic_macro_body` 来源。一个物理
+宏来源被多个 symbol 占用时只对这些 symbol 标记 `macro_origin_conflict`；来源无法证明为 exact
+identifier 时只标记该 symbol 的 `macro_origin_not_exact`。所选 declaration 本身无法映射时原子
+拒绝，不发布半成品。
 
 filelist 中列出但当前 PySlang 编译配置未使用到的普通 module 不参与改名：不会建立改名记录或源码编辑，
 但仍原样保留在 gate、manifest 和 restore 中。其他能唯一对应到源码范围的 module 按下表处理；若一个

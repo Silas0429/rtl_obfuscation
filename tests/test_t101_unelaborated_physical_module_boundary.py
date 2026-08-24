@@ -150,7 +150,8 @@ class T101UnelaboratedPhysicalModuleBoundaryTests(unittest.TestCase):
         owners = {module.name: module.owner_id for module in catalog.modules}
         macro_symbols = [symbol for symbol in graph.symbols if symbol.owner_module == owners["t101_macro_owner"]]
         self.assertTrue(macro_symbols)
-        self.assertTrue(all(symbol.reason == "owner_contains_macro_source" for symbol in macro_symbols))
+        self.assertTrue(all(symbol.support == "eligible" and symbol.reason is None for symbol in macro_symbols))
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
         clean_symbols = [symbol for symbol in graph.symbols if symbol.owner_module == owners["t101_clean"]]
         self.assertTrue(clean_symbols)
         self.assertTrue(any(symbol.support == "eligible" and symbol.reason is None for symbol in clean_symbols))
@@ -180,7 +181,7 @@ class T101UnelaboratedPhysicalModuleBoundaryTests(unittest.TestCase):
                 (gate_dir / "rtl" / "t101_candidate.sv").read_bytes(),
                 (FIXTURE_ROOT / "rtl" / "t101_candidate.sv").read_bytes(),
             )
-            self.assertEqual(
+            self.assertNotEqual(
                 (gate_dir / "rtl" / "t101_macro_owner.sv").read_bytes(),
                 (FIXTURE_ROOT / "rtl" / "t101_macro_owner.sv").read_bytes(),
             )

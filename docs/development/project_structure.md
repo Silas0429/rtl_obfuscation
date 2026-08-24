@@ -52,10 +52,13 @@ python rtl_decrypt.py -> persisted report + actual gate
 编排结果使用 `PASS_FULL`、`PASS_PARTIAL` 和 `REFUSED_ATOMIC` 三种明确状态。前两者只在 strict gate
 和逐字节恢复通过后产生；拒绝路径原子清理 gate、mapping 和 metrics，不发布半成品。
 
-宏只读是 SymbolGraph 的边界：宏定义、调用、参数、正文和展开 token 永远不是 rename target，
-也不会进入 mapping 或 edit。宏展开位置落入普通物理 module 时只局部保护该 module 及必要的
-精确绑定 target；非 module 宏不单独阻断无关 signals。宏生成 module definition 或无法安全隔离
-的真实改写对象继续 fail-closed。
+宏对象本身是 SymbolGraph 的只读边界：宏定义名、形式参数名、调用名和预处理控制结构不是
+rename target，不进入 mapping 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理
+identifier token，如果被 PySlang 唯一绑定为 selected RTL symbol 的 declaration/occurrence，
+可以作为该 RTL symbol 的 edit source，并保留 `semantic_macro_argument` 或
+`semantic_macro_body` 的精确来源。物理来源冲突只对相关 symbol 标记 `macro_origin_conflict`，
+非 exact 来源只对相关 symbol 标记 `macro_origin_not_exact`；所选 declaration 无法映射时原子
+拒绝，不发布半成品。
 
 物理 module inventory 与 semantic owner registry 不是双向相等关系：当前 compilation 未 elaboration
 的普通物理 module 没有 owner、graph record、mapping 或 edit，但仍作为只读物理输入进入 manifest、

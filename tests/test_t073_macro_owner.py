@@ -119,26 +119,22 @@ class T073MacroOwnerTests(unittest.TestCase):
         _source_set, catalog, graph = self._catalog_graph()
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 31, "declarations": 31, "occurrences": 41, "total_ranges": 72},
+            {"symbols": 32, "declarations": 32, "occurrences": 55, "total_ranges": 87},
         )
         owners = {module.name: module.owner_id for module in catalog.modules}
         expected = {
             "t073_macro_target": 4,
-            "t073_macro_owner": 8,
+            "t073_macro_owner": 9,
             "t073_macro_statement_owner": 5,
         }
         for name, count in expected.items():
             symbols = [symbol for symbol in graph.symbols if symbol.owner_module == owners[name]]
             self.assertEqual(len(symbols), count)
-            self.assertTrue(all(
-                symbol.support == "unsupported"
-                and symbol.reason == "owner_contains_macro_source"
-                for symbol in symbols
-            ))
-        self.assertNotIn("macro_state", {symbol.name for symbol in graph.symbols})
-        self.assertTrue(all(
-            occurrence.provenance != "semantic_hierarchy"
-            or symbol.owner_module != owners["t073_macro_target"]
+            self.assertTrue(all(symbol.support == "eligible" and symbol.reason is None for symbol in symbols))
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
+        self.assertIn("macro_state", {symbol.name for symbol in graph.symbols})
+        self.assertTrue(any(
+            occurrence.provenance in {"semantic_macro_argument", "semantic_macro_body"}
             for symbol in graph.symbols
             for occurrence in symbol.occurrences
         ))
@@ -157,7 +153,7 @@ class T073MacroOwnerTests(unittest.TestCase):
         for name in ("t073_macro_owner", "t073_macro_statement_owner", "t073_macro_target"):
             symbols = [symbol for symbol in graph.symbols if symbol.owner_module == owners[name]]
             self.assertTrue(symbols)
-            self.assertTrue(all(symbol.reason == "owner_contains_macro_source" for symbol in symbols))
+            self.assertTrue(all(symbol.support == "eligible" and symbol.reason is None for symbol in symbols))
         instance = next(
             symbol
             for symbol in graph.symbols
@@ -165,8 +161,8 @@ class T073MacroOwnerTests(unittest.TestCase):
             and symbol.category == "instances"
             and symbol.name == "u_target"
         )
-        self.assertEqual(instance.support, "unsupported")
-        self.assertEqual(instance.reason, "owner_contains_macro_source")
+        self.assertEqual(instance.support, "eligible")
+        self.assertIsNone(instance.reason)
         invalid_set = from_filelist(
             filelist=FIXTURE_ROOT / "invalid_module_name.f",
             source_root=FIXTURE_ROOT,
@@ -195,7 +191,7 @@ class T073MacroOwnerTests(unittest.TestCase):
         mapping = self._mapping()
         self.assertEqual(
             mapping.to_report()["summary"],
-            {"total": 31, "rename": 10, "preserve": 4, "unsupported": 17},
+            {"total": 32, "rename": 28, "preserve": 4, "unsupported": 0},
         )
         graph = mapping.rewrite_policy.symbol_graph
         symbols = {symbol.symbol_id: symbol for symbol in graph.symbols}
@@ -205,18 +201,20 @@ class T073MacroOwnerTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory(prefix="t073-edits-") as temporary:
             execution = write_gate_vnext(mapping, output_dir=Path(temporary) / "gate")
-            self.assertEqual(len(execution.edits), 23)
-            counts = {"protected": 0, "sibling": 0, "top": 0}
+            self.assertEqual(len(execution.edits), 77)
+            counts = {name: 0 for name in owners}
             for edit in execution.edits:
                 symbol = symbols[edit.symbol_id]
                 self.assertNotEqual(symbol.reason, "owner_contains_macro_source")
-                if symbol.owner_module == owners["t073_sibling"]:
-                    counts["sibling"] += 1
-                elif symbol.owner_module == owners["t073_top"]:
-                    counts["top"] += 1
-                else:
-                    self.fail(f"unclassified actual edit: {edit.symbol_id}")
-            self.assertEqual(counts, {"protected": 0, "sibling": 11, "top": 12})
+                owner_name = next(name for name, owner_id in owners.items() if owner_id == symbol.owner_module)
+                counts[owner_name] += 1
+            self.assertEqual(counts, {
+                "t073_macro_target": 11,
+                "t073_macro_owner": 27,
+                "t073_macro_statement_owner": 16,
+                "t073_sibling": 11,
+                "t073_top": 12,
+            })
 
     def test_actual_gate_strict_compile_and_restore_are_byte_identical(self):
         mapping = self._mapping()
@@ -251,7 +249,7 @@ class T073MacroOwnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="t073-formal-positive-") as temporary:
             gate_dir = Path(temporary) / "gate"
             execution = write_gate_vnext(mapping, output_dir=gate_dir)
-            self.assertEqual(len(execution.edits), 23)
+            self.assertEqual(len(execution.edits), 77)
             result, command = self._formal(gate_dir)
             print(f"T073_FORMAL_GATE {gate_dir}")
             print(f"T073_FORMAL_COMMAND {' '.join(command)}")

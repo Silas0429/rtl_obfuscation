@@ -245,13 +245,14 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 1, "declarations": 1, "occurrences": 0, "total_ranges": 1},
+            {"symbols": 2, "declarations": 2, "occurrences": 1, "total_ranges": 3},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        signal = next(symbol for symbol in graph.symbols if symbol.name == "macro_state")
+        self.assertEqual(signal.support, "eligible")
+        self.assertIsNone(signal.reason)
+        source = (INVALID_ROOT / signal.declaration.file).read_bytes()
+        self.assertEqual(source[signal.declaration.start : signal.declaration.end], b"macro_state")
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_macro_signal_reference_safe_preserve(self):
         catalog = build_source_catalog(
@@ -267,13 +268,16 @@ class SymbolGraphSignalsTests(unittest.TestCase):
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 2, "declarations": 2, "occurrences": 1, "total_ranges": 3},
+            {"symbols": 2, "declarations": 2, "occurrences": 2, "total_ranges": 4},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        signal = next(symbol for symbol in graph.symbols if symbol.name == "state")
+        self.assertEqual(signal.support, "eligible")
+        self.assertIsNone(signal.reason)
+        self.assertIn(
+            "semantic_macro_argument",
+            {occurrence.provenance for occurrence in signal.occurrences},
+        )
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_signal_bytes_changed_after_catalog_fail_with_range_invalid(self):
         with tempfile.TemporaryDirectory() as temporary:

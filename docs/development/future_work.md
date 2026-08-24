@@ -38,12 +38,15 @@ category 选择在 SymbolGraph 入口生效。未选择类别不会因其自身 
   内全部 source symbols（包括 generate block scope）保持不改名，无法证明 owner/span 的形状
   仍保持 fail-closed。nested generate 内部 genvar/层次对象改名、instance array、conditional
   generate、复杂层次路径和完整 import/export member 语义仍需要专项 semantic coverage。
-- T073/T100 已明确宏永远不是 rename target：宏定义、调用、形式参数、实参 spelling、宏正文和
-  展开 token 不进入 graph、mapping 或 edit。宏位置唯一落入普通物理 `ModuleOwner` 时，只对该
-  owner 及必要的精确绑定 target 做局部 safe-preserve；无宏的 sibling 仍可按所选 category 改名。
-  非 module 宏本身不再单独阻断无关 signals，但若宏生成 module definition 或某个真实待改写
-  symbol 无法安全隔离，仍保持 fail-closed。宏文本展开/改写、macro argument rename、package/class/
-  interface 中的宏改写、include/条件编译语义扩展仍不支持。
+- T104 已明确宏对象本身不是 rename target：宏定义名、形式参数名、调用名和预处理控制结构不进入
+  graph、mapping 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理 identifier token，
+  如果被 PySlang 唯一绑定为 selected RTL symbol 的 declaration/occurrence，可以作为该 RTL symbol
+  的 edit source，并记录 `semantic_macro_argument` 或 `semantic_macro_body` 的 exact physical
+  provenance；这不是宏加密。物理来源冲突只产生局部 `macro_origin_conflict`，非 exact 来源只产生
+  局部 `macro_origin_not_exact`；所选 declaration 无法映射时使用
+  `SYMBOL_GRAPH_MACRO_DECLARATION_UNMAPPABLE` 原子拒绝。宏文本展开/改写、macro argument rename、
+  package/class 等非本任务类别，以及 inactive conditional/include 语义扩展仍不支持；本任务覆盖的
+  interface/core group 按上述 selected-symbol 规则处理。
 - T101 已将物理 module inventory 与 semantic owner registry 收敛为单向边界：filelist 中存在但当前
   PySlang compilation 未 elaboration 的普通 module 不建立 owner、graph record、mapping 或 edit，
   但继续进入 gate、manifest 和 restore 并按原字节透传；每个已有 semantic owner 仍必须精确且唯一

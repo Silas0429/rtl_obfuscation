@@ -429,13 +429,14 @@ endmodule
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 2, "declarations": 2, "occurrences": 0, "total_ranges": 2},
+            {"symbols": 3, "declarations": 3, "occurrences": 1, "total_ranges": 4},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        parameter = next(symbol for symbol in graph.symbols if symbol.name == "MACRO_WIDTH")
+        self.assertEqual(parameter.support, "eligible")
+        self.assertIsNone(parameter.reason)
+        source = (INVALID_ROOT / parameter.declaration.file).read_bytes()
+        self.assertEqual(source[parameter.declaration.start : parameter.declaration.end], b"MACRO_WIDTH")
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_macro_parameter_reference_safe_preserve(self):
         catalog = build_source_catalog(
@@ -444,13 +445,16 @@ endmodule
         graph = build_symbol_graph(catalog)
         self.assertEqual(
             graph.to_report()["range_audit"],
-            {"symbols": 3, "declarations": 3, "occurrences": 0, "total_ranges": 3},
+            {"symbols": 3, "declarations": 3, "occurrences": 1, "total_ranges": 4},
         )
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in graph.symbols
-        ))
+        parameter = next(symbol for symbol in graph.symbols if symbol.name == "WIDTH")
+        self.assertEqual(parameter.support, "preserved")
+        self.assertEqual(parameter.reason, "module_abi_requires_top")
+        self.assertIn(
+            "semantic_macro_argument",
+            {occurrence.provenance for occurrence in parameter.occurrences},
+        )
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_type_parameter_safe_preserve(self):
         catalog = build_source_catalog(

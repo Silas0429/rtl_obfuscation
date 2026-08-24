@@ -29,8 +29,6 @@ MACRO_NAMES = {
     "DEPTH",
     "BE_W",
     "CELL_OUT",
-    "generated_data",
-    "u_macro_cell",
     "T100_CONTEXT_PARAM",
     "T100_CONTEXT_LIMIT",
 }
@@ -132,22 +130,14 @@ class T100MacroReadonlyModulePreserveTests(unittest.TestCase):
             if symbol.owner_module == owners["t100_macro_owner"]
         ]
         self.assertTrue(macro_symbols)
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in macro_symbols
-        ))
+        self.assertTrue(all(symbol.support == "eligible" and symbol.reason is None for symbol in macro_symbols))
         target_symbols = [
             symbol
             for symbol in graph.symbols
             if symbol.owner_module == owners["t100_cell"]
         ]
         self.assertTrue(target_symbols)
-        self.assertTrue(all(
-            symbol.support == "unsupported"
-            and symbol.reason == "owner_contains_macro_source"
-            for symbol in target_symbols
-        ))
+        self.assertTrue(all(symbol.support == "eligible" and symbol.reason is None for symbol in target_symbols))
         clean_symbols = [
             symbol
             for symbol in graph.symbols
@@ -162,24 +152,13 @@ class T100MacroReadonlyModulePreserveTests(unittest.TestCase):
         call_start = macro_source.index(b"`T100_MAKE_CELL")
         argument_start = macro_source.index(b"cell_data", call_start)
         cell_data = next(symbol for symbol in graph.symbols if symbol.name == "cell_data")
-        self.assertTrue(all(
-            not (
-                occurrence.source_range.file == "rtl/t100_macro_owner.sv"
-                and occurrence.source_range.start <= argument_start < occurrence.source_range.end
-            )
+        self.assertTrue(any(
+            occurrence.provenance == "semantic_macro_argument"
+            and occurrence.source_range.file == "rtl/t100_macro_owner.sv"
+            and occurrence.source_range.start <= argument_start < occurrence.source_range.end
             for occurrence in cell_data.occurrences
         ))
-        self.assertTrue(all(
-            not (
-                symbol.support == "eligible"
-                and any(
-                    occurrence.source_range.file == "rtl/t100_macro_owner.sv"
-                    and occurrence.source_range.start <= argument_start < occurrence.source_range.end
-                    for occurrence in symbol.occurrences
-                )
-            )
-            for symbol in graph.symbols
-        ))
+        self.assertNotIn("owner_contains_macro_source", {symbol.reason for symbol in graph.symbols})
 
     def test_public_signals_gate_preserves_macro_and_renames_clean(self):
         with tempfile.TemporaryDirectory(prefix="t100-public-signals-") as temporary:
@@ -199,10 +178,16 @@ class T100MacroReadonlyModulePreserveTests(unittest.TestCase):
                 if name is not None
             }
             self.assertTrue(mapping_names.isdisjoint(MACRO_NAMES))
-            self.assertEqual(
+            self.assertNotEqual(
                 (gate_dir / "rtl" / "t100_macro_owner.sv").read_bytes(),
                 (FIXTURE_ROOT / "rtl" / "t100_macro_owner.sv").read_bytes(),
             )
+            for relative in COMPILE_ORDER:
+                gold_text = (FIXTURE_ROOT / relative).read_text(encoding="utf-8")
+                gate_text = (gate_dir / relative).read_text(encoding="utf-8")
+                for macro_name in MACRO_NAMES:
+                    if macro_name in gold_text:
+                        self.assertIn(macro_name, gate_text)
             self.assertNotEqual(
                 (gate_dir / "rtl" / "t100_clean.sv").read_bytes(),
                 (FIXTURE_ROOT / "rtl" / "t100_clean.sv").read_bytes(),
