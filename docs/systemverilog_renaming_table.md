@@ -20,6 +20,10 @@ module 无法唯一对应到源码范围，工具会停止并报告错误。
 `--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
 保留的对象。`rename=0` 不能视为该类型已经完整支持。
 
+PySlang compile/elaborate 通过与“可安全改名”是两个门槛：前者证明设计可编译，后者还要求 selected
+declaration/reference 唯一对应物理源码 token。语义对象只有展开后的类型形状、却不是物理声明时，不能
+据此创建 rename record。
+
 每次运行还会给出明确结果：`PASS_FULL` 表示所选 graph 有实际改名且没有 `preserve/unsupported`；
 `PASS_PARTIAL` 表示 gate/恢复通过但存在保留、不支持或零改名；`REFUSED_ATOMIC` 表示无法证明安全性，
 不发布半成品输出。只有 `PASS_FULL` 才表示当前输入闭包内的所选类别完成了完整改名。
@@ -32,7 +36,7 @@ legacy-Verilog 方言，也不接受大写后缀或把 header 当作独立 sourc
 | `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
 | --- | --- | --- | --- | --- |
 | `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |
-| `parameters` | parameter、localparam 和 generate 参数 | 是 | 加密只在 module 内部使用的参数 | 跨 module 使用的参数及引用会一致改名 |
+| `parameters` | module value parameter、localparam 和 generate 使用的 value parameter；module `parameter type` 当前不改名，并对其物理 module owner 执行安全保留 | 是 | 加密只在 module 内部使用且符合边界的 value parameter | 跨 module 使用的 value parameter 及引用会一致改名；type parameter 仍保持原名 |
 | `enum_values` | 枚举值；仅在原始词法 token 与语义 ranges 完整一致时加密，覆盖不完整的单条枚举值保留 | 是 | 加密 | 加密 |
 | `genvars` | generate-for 使用的 genvar | 是 | 加密 | 加密 |
 | `functions` | function 名称 | 是 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 |
@@ -41,7 +45,7 @@ legacy-Verilog 方言，也不接受大写后缀或把 header 当作独立 sourc
 | `instances` | module 实例名称 | 是 | 加密 | 加密 |
 | `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
 | `typedefs` | 普通 typedef 类型名称；只有原始词法 token ranges 与 declaration 加已有语义 references ranges 精确相等时才允许改名，覆盖不完整的单条 typedef 保留 | 是 | 加密只在 module 内部使用且覆盖完整的类型 | 跨 module 使用且覆盖完整的类型及引用会一致改名；证据不足时整条 typedef 不产生 edit |
-| `struct_types` | struct 和 union 类型名称；显式 direct type cast 与 source-backed declaration/reference 可绑定，PySlang syntax-less implicit conversion 只作为语义事实、不产生伪造 occurrence | 是 | 加密只在 module 内部使用的类型 | 跨 module 使用的类型及引用会一致改名 |
+| `struct_types` | 物理 `typedef struct/union` 类型名称；显式 direct type cast 与 source-backed declaration/reference 可绑定，PySlang syntax-less implicit conversion 只作为语义事实、不产生伪造 occurrence；解析结果为 struct/union 的 `parameter type` 不是物理 aggregate typedef owner，当前遇到该引用可能原子拒绝 | 是 | 加密只在 module 内部使用且能唯一对应物理 typedef 的类型 | 跨 module 使用且能唯一对应物理 typedef 的类型及引用会一致改名 |
 | `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员；普通物理 struct alias 的 direct named assignment-pattern key 会按 exact alias owner 与字段名一致改写 | 跨 module 使用的成员及引用会一致改名；union/array/default/type/literal/宏或 anonymous pattern key 不在此闭包内 |
 | `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
 | `modules` | module 名称 | 否 | 保留 | 一致加密子 module 声明、实例化引用和直接 closing label `endmodule : name`；top module 名称及 closing label 保留 |

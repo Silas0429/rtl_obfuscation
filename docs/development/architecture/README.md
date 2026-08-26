@@ -7,4 +7,4 @@
 - [`project_root_top_roadmap.md`](project_root_top_roadmap.md)：project-root 能力路线图。
 - [`project_root_parameter_plan_draft.md`](project_root_parameter_plan_draft.md)：参数支持历史方案。
 - [`category_profile_normalization_plan.md`](category_profile_normalization_plan.md)：类别策略统一方案。
-- [`stcache_core_category_stability.md`](stcache_core_category_stability.md)：StCache 四组核心类别的真实能力边界，以及 interface/struct 稳定化设计。
+- [`stcache_core_category_stability.md`](stcache_core_category_stability.md)：StCache 四组核心类别的真实能力边界，以及 interface array、aggregate type-parameter 声明种类的稳定化设计。

@@ -24,7 +24,7 @@ operation 暂时只为历史测试和兼容保留，不是当前用户接口。�
 | `rtl_obfuscator/rtl_files.py` | 集中定义 `.sv/.v` source、`.svh/.vh` header 与显式 filelist-only `.h` context 的后缀分类。 |
 | `rtl_obfuscator/project_discovery.py` | project-root 保留自动发现；显式 filelist 使用共享 PySlang 编译 helper，不再运行 provider discovery。 |
 | `rtl_obfuscator/source_catalog.py` | 复用同一 PySlang source/context 编译 helper，建立源文件、编译上下文和模块 owner catalog。 |
-| `rtl_obfuscator/symbol_graph.py` | 按规范化 selected categories 收集可处理的 SystemVerilog 符号、声明、引用及归属关系；未选择类别不进入 graph。 |
+| `rtl_obfuscator/symbol_graph.py` | 按规范化 selected categories 收集可处理的 SystemVerilog 符号、声明、引用及归属关系；设计目标是未选择类别不进入 graph。当前已知的 aggregate type-parameter 声明种类边界见 future work。 |
 | `rtl_obfuscator/category_registry_vnext.py` | 定义 19 个 canonical category、默认集合、alias 和 ABI 可选集合。 |
 | `rtl_obfuscator/rewrite_policy.py` | 根据 category、top boundary 和 ABI 授权决定改名或保留。 |
 | `rtl_obfuscator/mapping_vnext.py` | 建立并校验统一的 MappingVNext 记录。 |
@@ -51,6 +51,11 @@ python rtl_decrypt.py -> persisted report + actual gate
 
 编排结果使用 `PASS_FULL`、`PASS_PARTIAL` 和 `REFUSED_ATOMIC` 三种明确状态。前两者只在 strict gate
 和逐字节恢复通过后产生；拒绝路径原子清理 gate、mapping 和 metrics，不发布半成品。
+
+SourceCatalog 的 PySlang compile/elaborate 与 SymbolGraph 的 rename proof 是两个独立阶段。前者证明
+filelist 能形成合法设计；后者还必须证明 selected semantic symbol 的物理 declaration 和 occurrences。
+例如 `parameter type` 可以解析为 canonical struct shape，但它的 `TypeAssignment` 声明不是物理
+`typedef struct` rename owner。当前这类引用可能在 mapping 前安全拒绝；不能把 compile 成功写成加密成功。
 
 宏对象本身是 SymbolGraph 的只读边界：宏定义名、形式参数名、调用名和预处理控制结构不是
 rename target，不进入 mapping 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理

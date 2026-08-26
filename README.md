@@ -70,6 +70,10 @@ python rtl_encrypt.py \
 `--category` 时会使用当前模式的默认范围，但这不表示任意工程的全部默认类型都已稳定支持。
 可选值和保守边界见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。
 
+PySlang compile/elaborate 成功只证明 filelist、宏、include 和语义输入能够形成完整设计；加密还必须把
+所选对象的声明与每个引用唯一映射到真实源码 identifier token。后一项证据不足时，即使原工程可以正常
+编译，工具也会 `REFUSED_ATOMIC`，而不是猜测名称或发布部分改写的 gate。
+
 ## 看懂结果
 
 加密命令的 JSON 和 `encryption_summary.txt` 会直接报告：

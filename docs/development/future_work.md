@@ -58,6 +58,11 @@ category 选择在 SymbolGraph 入口生效。未选择类别不会因其自身 
   和 18 个 `macro_origin_conflict` 的 `PASS_PARTIAL`；完整 `interface` 与 `struct` 在 mapping 前
   `REFUSED_ATOMIC`。完整证据和不使用名称特判的稳定化方案见
   [`architecture/stcache_core_category_stability.md`](architecture/stcache_core_category_stability.md)。
+- 2026-08-26 在产品提交 `950be8e` 上重跑 StCache `struct`：147 个 source、154 项 compile order 和
+  329758 个 semantic node 均已建立，失败发生在 compile/elaborate 之后。`StChReqTagRw.sv` 中的
+  `req_icmd_if_t` 引用绑定到 `SyntaxKind.TypeAssignment` 类型参数，而不是 `StChReqPath.sv` 的同名物理
+  `typedef struct`；当前 aggregate resolver 把 canonical struct shape 误当成 physical alias owner，因而
+  `REFUSED_ATOMIC`。这不是 filelist、宏或 PySlang 编译失败。
 - PySlang interface instance array 由一个有名 `InstanceArraySymbol` 和多个无名 element
   `InstanceSymbol` 表达。当前 `interface_instances` collector 仍把 element 当作物理声明，合法数组会因
   `semantic symbol has no source identifier` 原子拒绝；只选择 `interface_ports` 且 module header 使用
@@ -129,13 +134,18 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   owner/span 证据不一致和未知 reason 仍 fail-closed。
 - **syntax-less implicit typedef conversion** 是 PySlang 插入且没有源码 type token 的语义节点。T105
   已在本地 compact 流程中收敛为语义绑定事实：只有 `CastExpressionSyntax` 的 direct type identifier
-  建立 source occurrence，隐式 conversion 不产生 edit；不得使用文本恢复或类型名特判。StCache 外部
-  struct/union filelist 仍需使用新输出目录重跑确认。
+  建立 source occurrence，隐式 conversion 不产生 edit；不得使用文本恢复或类型名特判。该边界已经通过
+  compact 验收，但不覆盖解析成 aggregate shape 的 `parameter type`。
 - T106 本地已验收，并将 aggregate type reference 收敛为单一 semantic-target 路径：`TypeAliasType`
   的 semantic declaration range 必须命中当前 alias registry，再校验 source token 字节；同名 alias 不按名称或
   scope 猜 owner。compact 已覆盖 cast、aggregate member type、function return、port type 和
-  variable/net declared type，并通过 actual renamed-gate Formal 正负例；StCache 外部 struct/union
-  仍待服务器重跑，无法据此宣称完整工程支持。
+  variable/net declared type，并通过 actual renamed-gate Formal 正负例。服务器重跑已暴露未覆盖形状：
+  `TypeAssignment` 类型参数也可表现为 `TypeAliasType.isStruct=True`，但它不是 physical aggregate typedef
+  declaration。未来修复必须先按 source declaration kind 分类：只有物理 `typedef struct/union` 建立
+  `struct_types` record；选择 `parameters` 时 type parameter 继续遵守 T071 的不改名/owner
+  safe-preserve，只选择 `struct` 时不进入 aggregate graph；默认值或 override 中单独绑定物理 typedef 的
+  token 才能成为 typedef occurrence。不得按名称、filelist 顺序或 canonical shape 回退。本文记录该方向，
+  不授权实现。
 - VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
   分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。
 

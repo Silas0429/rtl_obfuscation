@@ -230,3 +230,21 @@ unselected port type 与 variable/net type 共用该规则。ports-only 明确�
 
 T106 本地 compact 与通用流水线验收完成。真实 StCache `struct`、`union_fields` 及组合结果仍是外部证据
 边界，下一步只能由用户在服务器上使用新输出目录重跑，不能用本地 compact 结果替代。
+
+## 11. Post-acceptance 外部观察（不改变 T106 验收结论）
+
+2026-08-26 用户在服务器提交 `950be8e` 上使用新输出目录重跑 StCache `--category struct`。SourceSet
+成功建立 147 个 source、154 项 compile order，PySlang catalog 成功建立 329758 个 semantic node；随后
+SymbolGraph/mapping 报告：
+
+```text
+REFUSED_ATOMIC: semantic aggregate type target does not map to one physical alias record
+reference: StChReqTagRw.sv:119:5  req_icmd_if_t req_icmd;
+semantic target: StChReqTagRw.sv:46:16  SyntaxKind.TypeAssignment
+physical typedef candidate: StChReqPath.sv:264:2  typedef struct ... req_icmd_if_t
+```
+
+该证据说明 T106 compact 的 physical `TypeAliasType` 精确绑定仍成立，但合同未覆盖解析结果为 aggregate
+shape 的 module type parameter。`TypeAliasType.isStruct=True` 不能证明目标声明本身是 physical
+`typedef struct`。T106 保持 `ACCEPTED`；StCache struct 工程支持仍未通过，未来任务必须按 source
+declaration kind 分离 typedef 与 `TypeAssignment`，不能使用同名/canonical-type fallback。

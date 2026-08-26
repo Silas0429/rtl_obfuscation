@@ -1,8 +1,9 @@
 # StCache 四组核心类别能力边界与稳定化方案
 
-- 文档状态：`T105_LOCAL_ACCEPTED / T106_LOCAL_ACCEPTED / INTERFACE_RESEARCHED`
+- 文档状态：`SIGNALS_PASS_FULL / PORTS_PASS_PARTIAL / T106_EXTERNAL_REFUSED / INTERFACE_RESEARCHED`
 - 记录日期：2026-08-26
-- 研究基线：`fb2fa29 [FIX] Add symbol-level macro provenance protection`
+- 当前产品提交：`950be8e [FIX] Bind aggregate type references semantically`
+- 最初研究基线：`fb2fa29 [FIX] Add symbol-level macro provenance protection`
 - 外部输入：`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`
 - 范围：`signals`、`ports`、`interface`、`struct/union`
 
@@ -21,6 +22,10 @@ fail-closed 边界收敛到稳定加密所需的实现设计。本文是开发�
 `REFUSED_ATOMIC` 证明工具没有发布无法审计的半成品，不等于该类别加密成功。StCache 当前尚未运行
 actual-gate Formal，因此下表中的工程结论只到 strict compile 与 restore 层。
 
+PySlang compile/elaborate 成功只位于这三层证据之前：它证明 filelist 输入能够形成合法设计，但不证明
+selected semantic symbol 已唯一对应物理 declaration/reference token。StCache 最新 struct 失败发生在
+compile/elaborate 成功后的 SymbolGraph/mapping 阶段。
+
 ## 2. 当前能力矩阵
 
 | 类别 | StCache 结果 | 已证明能力 | 当前边界 |
@@ -31,7 +36,7 @@ actual-gate Formal，因此下表中的工程结论只到 strict compile 与 res
 | `interface_instances` | `REFUSED_ATOMIC` | 普通标量实例和 compact 宏来源已有改名证据 | PySlang `InstanceArraySymbol` 下的 element `InstanceSymbol` 名称为空；当前 collector 错把 element 当物理声明 |
 | `interface_ports` | StCache 单项 `REFUSED_ATOMIC` | 普通 interface 成员、modport member occurrence 和 compact port 已有证据 | 单独选择时仍强制读取未选择的 modport record，违反 selected-category 隔离 |
 | `modports` | graph 单项 10 个 eligible | modport declaration/reference 可建立 | 尚未独立生成 StCache gate；完整 interface 先被实例数组阻断 |
-| `struct_types` / `struct_fields` | 最近一次 StCache 为 `REFUSED_ATOMIC` | T105 compact 中类型、字段、隐式 conversion、direct cast、strict/restore 和 actual-gate Formal 已验收 | 通用修复已完成；StCache 仍需用新输出目录重跑，不能沿用旧失败结果推断工程结论 |
+| `struct_types` / `struct_fields` | T106 后服务器重跑仍为 `REFUSED_ATOMIC` | T105/T106 compact 中类型、字段、隐式 conversion、direct cast、同名物理 alias、strict/restore 和 actual-gate Formal 已验收 | `TypeAssignment` 类型参数 alias 被误当成物理 aggregate typedef record；StCache struct 尚未工程通过 |
 | `union_fields` | StCache 未单独测试 | compact union 字段及宏来源已有改名证据 | `--category struct` 不包含 `union_fields`；完整 StCache union 能力尚无外部证据 |
 
 ports 的 18 个 unsupported 来自两个物理宏 token：`ASSERT_DEFAULT_CLK` 正文中的 `clk` 和
@@ -46,10 +51,12 @@ PySlang semantic tree 同时包含：
 - elaboration alias/wrapper：例如 interface instance array 的每个 element；
 - implicit semantic conversion：编译器为赋值或连接插入，但源码没有显式类型名；
 - system/compiler metadata：例如 `SystemCallInfo`。
+- canonical aggregate alias：类型参数可以解析成 struct/union shape，但其源码声明仍是
+  `TypeAssignment`，不是物理 `typedef struct/union`。
 
 当前 `_collect_extended_symbols()` 在部分路径中把“存在 semantic object”近似为“必须存在 source
-identifier”。这会让合法且已通过 compile/elaborate 的代码在 mapping 前失败。稳定实现必须冻结下面的
-唯一规则：
+identifier”，或把“canonical type 是 aggregate”近似为“目标是物理 aggregate typedef”。这会让合法且已
+通过 compile/elaborate 的代码在 mapping 前失败。稳定实现必须冻结下面的唯一规则：
 
 ```text
 只有 source-backed selected declaration 建立一个 rename record；
@@ -145,7 +152,7 @@ value = {a, b};        // implicit ConversionExpression.syntax == None
 T105 已在本地 compact filelist 中落实并验收这条边界：`struct_types`、`struct_fields` 和
 `union_fields` 均产生真实 rename，strict compile、byte-identical restore 以及 actual renamed-gate Formal
 正负例通过；Formal 正例直接比较公开生成的 `formal.sv` gate，且证明锥包含真实改名的 aggregate type/field。
-这不是 StCache 外部工程的完成声明，外部 filelist 仍需单独重跑。
+这不是 StCache 外部工程的完成声明；后续服务器重跑已经证明仍存在 type-parameter 声明种类边界。
 
 ### 5.2 T105 本地验收与外部边界
 
@@ -159,7 +166,8 @@ T105 本地验收已经覆盖：
 6. `struct_types`、`struct_fields`、`union_fields` 单项以及 `struct + union_fields` 组合；
 7. strict gate、range/manifest audit、byte-identical restore、actual renamed-gate Formal 正负例；
 
-第 8 项仍是外部验收：StCache struct/union 分项与组合运行应不再因无源码 implicit conversion 原子拒绝。
+第 8 项外部验收已经执行：StCache 不再停在无源码 implicit conversion，却在后续 type-parameter alias
+边界原子拒绝。因此 T105 compact 结论保持有效，但 StCache struct/union 工程能力仍未通过。
 
 T106 本地已验收，并在 compact filelist 中进一步验证了同名 aggregate alias 的 semantic-target 绑定：每个
 `TypeAliasType` 先按 semantic declaration range 落到唯一 physical alias record，再校验源码 token
@@ -167,17 +175,42 @@ T106 本地已验收，并在 compact filelist 中进一步验证了同名 aggre
 cast、member named type、function return、selected/unselected port type 和 variable/net declared type
 均有逐 occurrence 的 declaration/range/source-byte 证据；ports-only 不进入 aggregate resolver。T106
 compact gate 为 `PASS_FULL`，strict compile、range/manifest audit、byte-identical restore、actual
-renamed-gate Formal 正负例均通过。StCache 外部 struct/union 仍需服务器使用新输出目录重跑，不能用
-compact 结果替代工程证据。
+renamed-gate Formal 正负例均通过。该局部验收不覆盖 `parameter type` whose resolved/canonical type is
+aggregate。
+
+### 5.3 T106 后 StCache 外部失败：typedef 与 type parameter 必须按声明种类分离
+
+服务器在产品提交 `950be8e` 上使用新输出目录重跑 `--category struct`，SourceSet 为 147 个 source、
+compile order 154，PySlang catalog 有 329758 个 semantic node，说明 filelist 已成功 compile/elaborate。
+随后 mapping 在 `StChReqTagRw.sv:119` 的 `req_icmd_if_t req_icmd` 原子拒绝：
+
+- 该引用的直接语义目标是同文件第 46 行的 `TypeAssignment` 类型参数；
+- 真正物理 `typedef struct req_icmd_if_t` 位于 `StChReqPath.sv:264`；
+- PySlang 对类型参数报告 `TypeAliasType.isStruct=True`，表达其解析后的 canonical shape；
+- 当前 collector 因目标不在 physical aggregate registry 中，报告
+  `semantic aggregate type target does not map to one physical alias record`。
+
+因此，正确边界不是把该引用按同名或 canonical type 回退到 `StChReqPath.sv` 的 typedef。稳定设计必须：
+
+1. 只有 source-backed `typedef struct/union` 声明建立 `struct_types` rename record；
+2. `SyntaxKind.TypeAssignment` 的 module type parameter 不是 aggregate record；选择 `parameters` 时继续遵守
+   T071 的不改名和 owner safe-preserve，只选择 `struct` 时不得进入 aggregate graph；
+3. type parameter 的默认值或 override 中真实拼写的 typedef token，只有在它自身语义绑定物理 typedef 时才
+   作为该 typedef occurrence 处理；
+4. 使用 declaration kind 和 exact semantic target/range，不按名称、filelist 顺序或 canonical shape 猜 owner；
+5. 真正物理 typedef target 无法映射时仍 fail-closed。
+
+该设计尚未实现，也没有活动实现任务；本文只固化当前证据和下一实现输入。
 
 union/array/default/type/literal/macro/anonymous pattern key 等既有未授权形状不随本修复自动扩张；它们需要
 各自的 exact semantic owner 和 physical token 证据。
 
 ## 6. 后续实现顺序
 
-为保持任务小而可验收，实施只分两步，不再继续按具体工程名称、类型名或语句逐项补丁：
+为保持任务小而可验收，剩余实施仍只分两步，不按具体工程名称、类型名或语句逐项补丁：
 
-1. struct/union：T105 已完成 source-occurrence 修复、compact 与 Formal 本地验收；StCache 外部重跑待用户执行；
+1. struct/union：按第 5.3 节用 declaration kind 分离 physical typedef 与 type parameter，完成 compact、
+   Formal 和 StCache 分项验收；
 2. interface：再引入 source-backed `InstanceArraySymbol` record、element semantic alias 和独立 category
    依赖，并完成 compact、Formal 和 StCache 验收。
 
