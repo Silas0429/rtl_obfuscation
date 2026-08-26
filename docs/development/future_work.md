@@ -131,6 +131,11 @@ strict compile 只能排除语法和绑定错误，不得代替可运行时的 a
   已在本地 compact 流程中收敛为语义绑定事实：只有 `CastExpressionSyntax` 的 direct type identifier
   建立 source occurrence，隐式 conversion 不产生 edit；不得使用文本恢复或类型名特判。StCache 外部
   struct/union filelist 仍需使用新输出目录重跑确认。
+- T106 本地已验收，并将 aggregate type reference 收敛为单一 semantic-target 路径：`TypeAliasType`
+  的 semantic declaration range 必须命中当前 alias registry，再校验 source token 字节；同名 alias 不按名称或
+  scope 猜 owner。compact 已覆盖 cast、aggregate member type、function return、port type 和
+  variable/net declared type，并通过 actual renamed-gate Formal 正负例；StCache 外部 struct/union
+  仍待服务器重跑，无法据此宣称完整工程支持。
 - VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
   分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。
 

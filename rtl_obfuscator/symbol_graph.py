@@ -616,12 +616,33 @@ def _direct_expression_identifier(syntax: Any) -> Any | None:
     identifier = getattr(syntax, "identifier", None)
     if identifier is not None and getattr(identifier, "rawText", ""):
         return identifier
+    if type(syntax).__name__ == "ScopedNameSyntax":
+        identifier = getattr(getattr(syntax, "right", None), "identifier", None)
+        if identifier is not None and getattr(identifier, "rawText", ""):
+            return identifier
     if type(syntax).__name__ == "ParenthesizedExpressionSyntax":
         expression = getattr(syntax, "expression", None)
         identifier = getattr(expression, "identifier", None)
         if identifier is not None and getattr(identifier, "rawText", ""):
             return identifier
     return None
+
+
+def _direct_type_identifier(syntax: Any) -> Any | None:
+    """Return the final source identifier of a fixed named-type syntax path."""
+
+    if syntax is None or type(syntax).__name__ != "NamedTypeSyntax":
+        return None
+    name = getattr(syntax, "name", None)
+    if type(name).__name__ == "IdentifierNameSyntax":
+        identifier = getattr(name, "identifier", None)
+    elif type(name).__name__ == "ScopedNameSyntax":
+        identifier = getattr(getattr(name, "right", None), "identifier", None)
+    else:
+        return None
+    if identifier is None or not getattr(identifier, "rawText", ""):
+        return None
+    return identifier
 
 
 def _direct_member_identifier(syntax: Any) -> Any | None:
@@ -2515,7 +2536,6 @@ def _collect_extended_symbols(
     field_records_by_alias: dict[tuple[str, int, int, str], dict[str, Any]] = {}
     field_records_by_owner: dict[tuple[str, str], dict[str, Any]] = {}
     alias_records: list[tuple[Any, dict[str, Any]]] = []
-    alias_contexts: dict[tuple[str, int, int], _SemanticScope | None] = {}
     existing_by_declaration = {
         (symbol.declaration.file, symbol.declaration.start, symbol.declaration.end): symbol
         for symbol in existing
@@ -2900,7 +2920,6 @@ def _collect_extended_symbols(
             record["declaration"].start,
             record["declaration"].end,
         )
-        alias_contexts[alias_key] = context
         add_target(node, record)
         add_target(getattr(node, "targetType", None), record)
         canonical = getattr(node, "canonicalType", None)
@@ -3041,65 +3060,46 @@ def _collect_extended_symbols(
                 "semantic_struct_pattern_key",
             )
 
-    aliases_by_name: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
-    for alias_node, alias_record in alias_records:
-        aliases_by_name.setdefault(str(alias_node.name), []).append(
-            (alias_node, alias_record)
-        )
+    alias_records_by_declaration: dict[
+        tuple[str, int, int], dict[str, Any]
+    ] = {}
+    for _alias_node, alias_record in alias_records:
+        alias_records_by_declaration[record_key(alias_record)] = alias_record
 
-    def resolve_alias_token(token: Any) -> dict[str, Any] | None:
-        name = str(getattr(token, "rawText", ""))
-        candidates = aliases_by_name.get(name, [])
-        if not candidates:
-            return None
-        file, offset = _location_start(source_catalog, getattr(token, "location", None))
-        context = _scope_at(scopes, file, offset)
-        if context is not None:
-            scoped = [
-                record
-                for alias_node, record in candidates
-                if alias_contexts.get(
-                    (
-                        record["declaration"].file,
-                        record["declaration"].start,
-                        record["declaration"].end,
-                    )
-                ) is not None
-                and alias_contexts[
-                    (
-                        record["declaration"].file,
-                        record["declaration"].start,
-                        record["declaration"].end,
-                    )
-                ].owner == context.owner
-            ]
-            if len(scoped) == 1:
-                return scoped[0]
-        unit = [
-            record
-            for alias_node, record in candidates
-            if alias_contexts.get(
-                (
-                    record["declaration"].file,
-                    record["declaration"].start,
-                    record["declaration"].end,
-                )
-            ) is None
-        ]
-        if len(unit) == 1:
-            return unit[0]
-        if len(candidates) == 1:
-            return candidates[0][1]
-        raise SymbolGraphError(
-            "SYMBOL_GRAPH_OWNER_MISMATCH",
-            "type reference resolves to multiple semantic aliases",
-            file=file,
-            start=offset,
-        )
-
-    def add_type_reference(token: Any, provenance: str) -> None:
-        record = resolve_alias_token(token)
+    def add_type_reference(
+        token: Any, semantic_target: Any, provenance: str
+    ) -> None:
+        if not collect_aggregates or token is None:
+            return
+        if semantic_target is None:
+            file, offset = _location_start(
+                source_catalog, getattr(token, "location", None)
+            )
+            raise SymbolGraphError(
+                "SYMBOL_GRAPH_OWNER_MISMATCH",
+                "semantic type reference has no exact semantic target",
+                file=file,
+                start=offset,
+            )
+        target_type = type(semantic_target).__name__
+        if target_type != "TypeAliasType":
+            return
+        target_range = target_key(semantic_target)
+        record = alias_records_by_declaration.get(target_range)
         if record is None:
+            if bool(
+                getattr(semantic_target, "isStruct", False)
+                or getattr(semantic_target, "isPackedUnion", False)
+            ):
+                file, offset = _location_start(
+                    source_catalog, getattr(token, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "semantic aggregate type target does not map to one physical alias record",
+                    file=file,
+                    start=offset,
+                )
             return
         name = str(record["name"])
         if getattr(token, "rawText", "") != name:
@@ -3148,7 +3148,7 @@ def _collect_extended_symbols(
                 file=file,
                 start=offset,
             )
-        add_type_reference(token, "semantic_cast_type")
+        add_type_reference(token, semantic_type, "semantic_cast_type")
 
     def alias_record_for_declared(declared: Any) -> dict[str, Any] | None:
         if not collect_aggregates:
@@ -3187,9 +3187,64 @@ def _collect_extended_symbols(
         syntax = getattr(canonical, "syntax", None)
         for member in getattr(syntax, "members", ()) if syntax is not None else ():
             data_type = getattr(member, "type", None)
-            token = getattr(getattr(data_type, "name", None), "identifier", None)
-            if token is not None:
-                add_type_reference(token, "semantic_type")
+            token = _direct_type_identifier(data_type)
+            if token is None:
+                continue
+            declarators = tuple(getattr(member, "declarators", ()))
+            field_symbols: list[Any] = []
+            semantic_fields: list[Any] = []
+            if canonical is not None:
+                visit = getattr(canonical, "visit", None)
+                if visit is not None:
+                    visit(
+                        lambda item: semantic_fields.append(item)
+                        if type(item).__name__ == "FieldSymbol"
+                        else None
+                    )
+            for declarator in declarators:
+                field_name = getattr(declarator, "name", None)
+                if field_name is None:
+                    continue
+                field_name_range = _resolve_source_range(
+                    source_catalog,
+                    getattr(field_name, "location", None),
+                    str(getattr(field_name, "rawText", "")),
+                    declaration=True,
+                )
+                candidates = []
+                for field in semantic_fields:
+                    try:
+                        field_range = _record_range(source_catalog, field)
+                    except (AttributeError, SymbolGraphError):
+                        continue
+                    if field_range == field_name_range:
+                        candidates.append(field)
+                if len(candidates) == 1:
+                    field_symbols.append(candidates[0])
+            if len(field_symbols) != len(declarators) or not field_symbols:
+                file, offset = _location_start(
+                    source_catalog, getattr(token, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_UNSUPPORTED_SOURCE",
+                    "aggregate member type has no one-to-one semantic field",
+                    file=file,
+                    start=offset,
+                )
+            field_targets = [getattr(field, "type", None) for field in field_symbols]
+            field_target_keys = {target_key(target) for target in field_targets}
+            if len(field_target_keys) != 1:
+                file, offset = _location_start(
+                    source_catalog, getattr(token, "location", None)
+                )
+                raise SymbolGraphError(
+                    "SYMBOL_GRAPH_OWNER_MISMATCH",
+                    "aggregate member type has multiple semantic field targets",
+                    file=file,
+                    start=offset,
+                )
+            semantic_target = field_targets[0]
+            add_type_reference(token, semantic_target, "semantic_type")
 
     # Enum values are TransparentMemberSymbols wrapping semantic EnumValue symbols.
     for node in nodes if collect_enum_values else ():
@@ -3210,63 +3265,69 @@ def _collect_extended_symbols(
         add_target(wrapped, record)
 
     # Subroutines and formal arguments are semantic symbols with source syntax.
-    for node in nodes if collect_subroutines else ():
+    # Aggregate references in function return types remain relevant even when
+    # the function category itself is not selected.
+    for node in nodes if (collect_subroutines or collect_aggregates) else ():
         if type(node).__name__ != "SubroutineSymbol":
             continue
-        declaration = _record_range(source_catalog, node)
-        owner = f"subroutine:{declaration.file}:{declaration.start}:{declaration.end}"
-        context = context_for(node)
-        syntax_kind = str(getattr(getattr(node, "syntax", None), "kind", ""))
-        category = "tasks" if "TaskDeclaration" in syntax_kind else "functions"
-        function_record = add_record(
-            category=category,
-            name=str(node.name),
-            declaration=declaration,
-            owner=owner,
-            context=context,
-        )
-        add_target(node, function_record)
-        add_target(getattr(node, "returnValVar", None), function_record)
         syntax = getattr(node, "syntax", None)
-        if category == "functions" and isinstance(
-            syntax, pyslang.syntax.FunctionDeclarationSyntax
-        ):
-            end_block_name = getattr(syntax, "endBlockName", None)
-            if end_block_name is not None:
-                token = getattr(end_block_name, "name", None)
-                if token is None or bool(getattr(token, "isMissing", False)):
-                    raise SymbolGraphError(
-                        "SYMBOL_GRAPH_SOURCE_INVALID",
-                        "function closing label has no physical identifier token",
-                        file=declaration.file,
-                        start=declaration.start,
-                    )
-                add_occurrence(
-                    function_record,
-                    _token_source_range(
-                        source_catalog,
-                        token,
-                        function_record["name"],
-                        issue_key=record_key(function_record),
-                    ),
-                    "semantic_function_end_label",
-                )
-        prototype = getattr(getattr(node, "syntax", None), "prototype", None)
-        return_type = getattr(prototype, "returnType", None)
-        return_token = getattr(
-            getattr(return_type, "name", None), "identifier", None
-        )
-        if return_token is not None:
-            add_type_reference(return_token, "semantic_return_type")
-        for argument in getattr(node, "arguments", ()) if collect_arguments else ():
-            argument_record = add_record(
-                category="arguments",
-                name=str(argument.name),
-                declaration=_record_range(source_catalog, argument),
+        if collect_subroutines:
+            declaration = _record_range(source_catalog, node)
+            owner = f"subroutine:{declaration.file}:{declaration.start}:{declaration.end}"
+            context = context_for(node)
+            syntax_kind = str(getattr(syntax, "kind", ""))
+            category = "tasks" if "TaskDeclaration" in syntax_kind else "functions"
+            function_record = add_record(
+                category=category,
+                name=str(node.name),
+                declaration=declaration,
                 owner=owner,
                 context=context,
             )
-            add_target(argument, argument_record)
+            add_target(node, function_record)
+            add_target(getattr(node, "returnValVar", None), function_record)
+            if category == "functions" and isinstance(
+                syntax, pyslang.syntax.FunctionDeclarationSyntax
+            ):
+                end_block_name = getattr(syntax, "endBlockName", None)
+                if end_block_name is not None:
+                    token = getattr(end_block_name, "name", None)
+                    if token is None or bool(getattr(token, "isMissing", False)):
+                        raise SymbolGraphError(
+                            "SYMBOL_GRAPH_SOURCE_INVALID",
+                            "function closing label has no physical identifier token",
+                            file=declaration.file,
+                            start=declaration.start,
+                        )
+                    add_occurrence(
+                        function_record,
+                        _token_source_range(
+                            source_catalog,
+                            token,
+                            function_record["name"],
+                            issue_key=record_key(function_record),
+                        ),
+                        "semantic_function_end_label",
+                    )
+            for argument in getattr(node, "arguments", ()) if collect_arguments else ():
+                argument_record = add_record(
+                    category="arguments",
+                    name=str(argument.name),
+                    declaration=_record_range(source_catalog, argument),
+                    owner=owner,
+                    context=context,
+                )
+                add_target(argument, argument_record)
+        if collect_aggregates:
+            prototype = getattr(syntax, "prototype", None)
+            return_type = getattr(prototype, "returnType", None)
+            return_token = _direct_type_identifier(return_type)
+            if return_token is not None:
+                add_type_reference(
+                    return_token,
+                    getattr(getattr(node, "returnValVar", None), "type", None),
+                    "semantic_return_type",
+                )
 
     # Elaborated generate arrays, ports, interface fields, modports, and instances.
     for node in nodes:
@@ -3314,12 +3375,12 @@ def _collect_extended_symbols(
             parent = getattr(getattr(node, "syntax", None), "parent", None)
             header = getattr(parent, "header", None)
             data_type = getattr(header, "dataType", None)
-            token = getattr(
-                getattr(data_type, "name", None), "identifier", None
-            )
+            token = _direct_type_identifier(data_type)
             if category not in selected_categories:
                 if token is not None:
-                    add_type_reference(token, "semantic_port_type")
+                    add_type_reference(
+                        token, getattr(node, "type", None), "semantic_port_type"
+                    )
                 continue
             record = add_record(
                 category=category,
@@ -3376,7 +3437,9 @@ def _collect_extended_symbols(
                     "semantic_type",
                 )
             if token is not None:
-                add_type_reference(token, "semantic_port_type")
+                add_type_reference(
+                    token, getattr(node, "type", None), "semantic_port_type"
+                )
             continue
         if node_type in {"VariableSymbol", "NetSymbol"} and context is not None and context.kind == "interface":
             if "interface_ports" not in selected_categories:
@@ -3818,9 +3881,11 @@ def _collect_extended_symbols(
         data_type = getattr(syntax, "type", None)
         if data_type is None:
             data_type = getattr(syntax, "dataType", None)
-        type_token = getattr(getattr(data_type, "name", None), "identifier", None)
+        type_token = _direct_type_identifier(data_type)
         if type_token is not None:
-            add_type_reference(type_token, "semantic_type")
+            add_type_reference(
+                type_token, getattr(node, "type", None), "semantic_type"
+            )
         if alias_record is not None:
             # The semantic type token was already added above.  Keep the
             # declared-type binding as an explicit fail-closed check.

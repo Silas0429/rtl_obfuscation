@@ -1,7 +1,7 @@
 # StCache 四组核心类别能力边界与稳定化方案
 
-- 文档状态：`T105_LOCAL_ACCEPTED / INTERFACE_RESEARCHED`
-- 记录日期：2026-08-24
+- 文档状态：`T105_LOCAL_ACCEPTED / T106_LOCAL_ACCEPTED / INTERFACE_RESEARCHED`
+- 记录日期：2026-08-26
 - 研究基线：`fb2fa29 [FIX] Add symbol-level macro provenance protection`
 - 外部输入：`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`
 - 范围：`signals`、`ports`、`interface`、`struct/union`
@@ -160,6 +160,15 @@ T105 本地验收已经覆盖：
 7. strict gate、range/manifest audit、byte-identical restore、actual renamed-gate Formal 正负例；
 
 第 8 项仍是外部验收：StCache struct/union 分项与组合运行应不再因无源码 implicit conversion 原子拒绝。
+
+T106 本地已验收，并在 compact filelist 中进一步验证了同名 aggregate alias 的 semantic-target 绑定：每个
+`TypeAliasType` 先按 semantic declaration range 落到唯一 physical alias record，再校验源码 token
+字节；aggregate member 通过语义 `FieldSymbol` 的 declaration range 绑定，不再按名称选择 owner。显式
+cast、member named type、function return、selected/unselected port type 和 variable/net declared type
+均有逐 occurrence 的 declaration/range/source-byte 证据；ports-only 不进入 aggregate resolver。T106
+compact gate 为 `PASS_FULL`，strict compile、range/manifest audit、byte-identical restore、actual
+renamed-gate Formal 正负例均通过。StCache 外部 struct/union 仍需服务器使用新输出目录重跑，不能用
+compact 结果替代工程证据。
 
 union/array/default/type/literal/macro/anonymous pattern key 等既有未授权形状不随本修复自动扩张；它们需要
 各自的 exact semantic owner 和 physical token 证据。
