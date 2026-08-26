@@ -97,3 +97,55 @@ class T108PublicCoreFlowTests(unittest.TestCase):
                     sort_keys=True,
                 )
             )
+
+    def test_macro_backed_interface_locations_complete_schema_two_flow(self):
+        with tempfile.TemporaryDirectory(prefix="t108-macro-interface-") as temp:
+            root = Path(temp)
+            gate = root / "gate"
+            encrypted = self._run(
+                ROOT / "rtl_encrypt.py",
+                "--filelist", str(FIXTURE / "macro_interface.f"),
+                "--top", "macro_interface_top",
+                "--category", "interface",
+                "--output-dir", str(gate),
+            )
+            self.assertEqual(encrypted.returncode, 0, encrypted.stderr)
+            payload = json.loads(encrypted.stdout)
+            self.assertEqual(payload["schema_version"], 2)
+            report = json.loads((gate / "mapping.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["mapping"]["schema_version"], 2)
+            outcome = next(
+                item
+                for item in report["mapping"]["category_outcomes"]
+                if item["category"] == "interface"
+            )
+            self.assertEqual(outcome["status"], "preserved")
+            self.assertGreater(outcome["rename"], 0)
+            self.assertEqual(outcome["preserve"], 2)
+            self.assertFalse(
+                any(issue["message"] == "source_binding_incomplete" for issue in outcome["issues"])
+            )
+            actions = {
+                item["original_name"]: item["action"]
+                for item in report["mapping"]["records"]
+                if item["category"] == "interface"
+            }
+            self.assertEqual(actions["macro_if"], "rename")
+            self.assertEqual(actions["value"], "rename")
+            self.assertEqual(actions["macro_mp"], "rename")
+            self.assertEqual(actions["if0"], "preserve")
+            self.assertEqual(actions["if_array"], "preserve")
+            restored = root / "restored"
+            decrypted = self._run(
+                ROOT / "rtl_decrypt.py",
+                "--map", str(gate / "mapping.json"),
+                "--gate-dir", str(gate),
+                "--output-dir", str(restored),
+            )
+            self.assertEqual(decrypted.returncode, 0, decrypted.stderr)
+            self.assertEqual(json.loads(decrypted.stdout)["schema_version"], 2)
+            for file in ("macro_interface.svh", "macro_interface.sv"):
+                self.assertEqual(
+                    (restored / file).read_bytes(),
+                    (FIXTURE / file).read_bytes(),
+                )

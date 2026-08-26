@@ -8,8 +8,11 @@ from rtl_obfuscator.mapping_vnext import build_mapping_vnext
 from rtl_obfuscator.rename_index import (
     SymbolOccurrence,
     _WorkingSymbol,
+    _apply_group_binding_issues,
     _claim_occurrence,
+    _range_for_token,
     _resolve_range_claims,
+    _safe_occurrence_range,
     build_rename_index,
 )
 from rtl_obfuscator.rewrite_vnext import restore_gate_vnext, write_gate_vnext
@@ -31,6 +34,12 @@ class T108RenameIndexTests(unittest.TestCase):
             filelist=FIXTURE / "boundary.f", top="boundary_top"
         )
         cls.boundary_catalog = build_source_catalog(cls.boundary_source_set)
+        cls.macro_interface_source_set = from_filelist(
+            filelist=FIXTURE / "macro_interface.f", top="macro_interface_top"
+        )
+        cls.macro_interface_catalog = build_source_catalog(
+            cls.macro_interface_source_set
+        )
 
     def test_modport_ports_are_alias_occurrences_of_interface_members(self):
         index = build_rename_index(self.catalog, categories=("interface",))
@@ -298,6 +307,99 @@ class T108RenameIndexTests(unittest.TestCase):
         self.assertEqual(
             sum(symbol.kind == "interface_instance_array" for symbol in index.symbols),
             2,
+        )
+
+    def test_macro_backed_interface_declaration_and_invalid_typed_token_are_fail_closed(self):
+        index = build_rename_index(
+            self.macro_interface_catalog, categories=("interface",)
+        )
+        self.assertTrue(index.symbols)
+        self.assertFalse(any(symbol.name == "" for symbol in index.symbols))
+        outcome = next(
+            item for item in index.category_outcomes if item["category"] == "interface"
+        )
+        self.assertEqual(outcome["status"], "preserved")
+        self.assertGreater(outcome["rename"], 0)
+        self.assertEqual(outcome["preserve"], 2)
+        self.assertFalse(
+            any(issue["message"] == "source_binding_incomplete" for issue in outcome["issues"])
+        )
+        self.assertEqual(
+            {
+                symbol.name
+                for symbol in index.symbols
+                if symbol.support == "eligible"
+            },
+            {"macro_if", "macro_mp", "value"},
+        )
+        self.assertEqual(
+            {
+                symbol.name
+                for symbol in index.symbols
+                if symbol.support == "preserved"
+            },
+            {"if0", "if_array"},
+        )
+
+        class InvalidToken:
+            rawText = b"macro_mp"
+
+            @property
+            def location(self):
+                raise RuntimeError("invalid typed-token location")
+
+        class InvalidNode:
+            syntax = InvalidToken()
+
+        declaration = SourceRange("design.sv", 0, 6)
+        record = _WorkingSymbol(
+            symbol_id="interface:invalid",
+            category="interface",
+            kind="interface_member",
+            semantic_kind="ModportPortSymbol",
+            name="macro_mp",
+            declaration=declaration,
+            owner_module="interface",
+            semantic_owner="interface",
+            impact="interface_member",
+            abi="internal",
+        )
+        binding_issues = {}
+        source_range = _safe_occurrence_range(
+            self.macro_interface_catalog,
+            binding_issues,
+            record,
+            InvalidNode(),
+            lambda: _range_for_token(
+                self.macro_interface_catalog, InvalidToken(), "macro_mp"
+            ),
+        )
+        self.assertIsNone(source_range)
+        self.assertEqual(record.support, "preserved")
+        self.assertEqual(record.reason, "source_binding_incomplete")
+        self.assertEqual(record.occurrences, {})
+        self.assertEqual(binding_issues["interface"][0]["semantic_kind"], "ModportPortSymbol")
+        self.assertEqual(binding_issues["interface"][0]["name"], "macro_mp")
+        other = _WorkingSymbol(
+            symbol_id="interface:other",
+            category="interface",
+            kind="interface_member",
+            semantic_kind="VariableSymbol",
+            name="other",
+            declaration=SourceRange("design.sv", 7, 12),
+            owner_module="interface",
+            semantic_owner="interface",
+            impact="interface_member",
+            abi="internal",
+        )
+        records = {record.symbol_id: record, other.symbol_id: other}
+        _apply_group_binding_issues(records, binding_issues)
+        self.assertTrue(
+            all(
+                item.support == "preserved"
+                and item.reason == "source_binding_incomplete"
+                for item in records.values()
+            )
         )
 
     def test_all_four_groups_have_real_candidates_and_compile_safe_mapping(self):

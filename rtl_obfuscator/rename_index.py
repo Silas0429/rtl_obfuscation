@@ -141,6 +141,13 @@ def _kind_name(value: object) -> str:
     return str(value).rsplit(".", 1)[-1]
 
 
+def _safe_attr(value: object, name: str, default: object = None) -> object:
+    try:
+        return getattr(value, name, default)
+    except Exception:
+        return default
+
+
 def _source_bytes(catalog: SourceCatalog, file: str) -> bytes:
     try:
         return (Path(catalog.source_catalog_root) / file).read_bytes()
@@ -159,13 +166,30 @@ def _file_for_buffer(catalog: SourceCatalog, buffer: object) -> str:
         raise RenameIndexError("RENAME_INDEX_RANGE_INVALID", "semantic location is outside SourceSet") from error
 
 
+def _physical_location(catalog: SourceCatalog, location: object) -> object:
+    """Map one PySlang location to its physical source location.
+
+    Macro expansion is the only supported virtual-location case.  The
+    SourceManager is the authority for the original token; no textual search
+    is performed after this conversion.
+    """
+
+    if location is None:
+        return None
+    manager = catalog.catalog_source_manager
+    if manager.isMacroLoc(location):
+        return manager.getFullyOriginalLoc(location)
+    return location
+
+
 def _range_for_location(catalog: SourceCatalog, location: object, name: str) -> SourceRange:
     if location is None or not name:
         raise RenameIndexError("RENAME_INDEX_SOURCE_INVALID", "source-backed semantic object has no identifier")
     try:
+        location = _physical_location(catalog, location)
         file = _file_for_buffer(catalog, location.buffer)
         start = int(location.offset)
-    except (AttributeError, TypeError, ValueError) as error:
+    except Exception as error:
         raise RenameIndexError("RENAME_INDEX_RANGE_INVALID", "semantic location is invalid") from error
     result = SourceRange(file, start, start + len(name.encode("utf-8")))
     data = _source_bytes(catalog, file)
@@ -180,36 +204,228 @@ def _range_for_location(catalog: SourceCatalog, location: object, name: str) -> 
 
 
 def _range_for_token(catalog: SourceCatalog, token: object, expected: str) -> SourceRange | None:
-    if token is None or getattr(token, "isMissing", False):
-        return None
-    raw_value = getattr(token, "rawText", b"")
-    raw = raw_value.encode("utf-8") if isinstance(raw_value, str) else bytes(raw_value)
+    try:
+        if token is None or _safe_attr(token, "isMissing", False):
+            return None
+        raw_value = _safe_attr(token, "rawText", b"")
+        raw = raw_value.encode("utf-8") if isinstance(raw_value, str) else bytes(raw_value)
+        location = _safe_attr(token, "location")
+    except Exception as error:
+        raise RenameIndexError("RENAME_INDEX_RANGE_INVALID", "typed token is invalid") from error
     if raw != expected.encode("utf-8"):
         return None
-    return _range_for_location(catalog, token.location, expected)
+    return _range_for_location(catalog, location, expected)
+
+
+def _declaration_token(node_type: str, syntax: object) -> object:
+    """Return the syntax-owned typed declaration token for one semantic kind."""
+
+    if syntax is None:
+        return None
+    if node_type == "ModportSymbol":
+        return _safe_attr(syntax, "name")
+    if node_type in {"InstanceSymbol", "InstanceArraySymbol"}:
+        return _safe_attr(_safe_attr(syntax, "decl"), "name")
+    if node_type in {"InstanceBodySymbol", "DefinitionSymbol"}:
+        return _safe_attr(_safe_attr(syntax, "header"), "name")
+    return _safe_attr(syntax, "name")
+
+
+def _declaration_range(
+    catalog: SourceCatalog,
+    semantic: object,
+    syntax: object,
+    expected: str,
+) -> SourceRange:
+    """Resolve a declaration from typed syntax, then direct semantic location.
+
+    The typed token is preferred because it identifies the exact declaration
+    token even when the semantic wrapper's location points into an expansion.
+    A macro location is converted only by SourceManager and every candidate is
+    checked against the original source bytes.  The semantic location is a
+    second piece of direct evidence, never a name lookup fallback.
+    """
+
+    typed_error: RenameIndexError | None = None
+    token = _declaration_token(type(semantic).__name__, syntax)
+    if token is not None:
+        try:
+            result = _range_for_token(catalog, token, expected)
+        except RenameIndexError as error:
+            typed_error = error
+        else:
+            if result is not None:
+                return result
+    try:
+        return _range_for_location(catalog, _safe_attr(semantic, "location"), expected)
+    except RenameIndexError as semantic_error:
+        if typed_error is not None:
+            raise typed_error
+        raise semantic_error
+
+
+def _try_declaration_range(
+    catalog: SourceCatalog,
+    binding_issues: dict[str, list[dict[str, object]]],
+    category: str,
+    semantic: object,
+    syntax: object,
+    name: str,
+    *,
+    candidates: tuple[object, ...] = (),
+) -> SourceRange | None:
+    """Resolve one declaration and centralize fail-closed diagnostics."""
+
+    try:
+        return _declaration_range(catalog, semantic, syntax, name)
+    except RenameIndexError as error:
+        if name:
+            _append_binding_issue(
+                catalog,
+                binding_issues,
+                category,
+                semantic_kind=type(semantic).__name__,
+                name=name,
+                candidates=candidates or (semantic, syntax),
+                detail=error.message,
+            )
+        return None
+
+
+def _diagnostic_location(
+    catalog: SourceCatalog, *candidates: object
+) -> tuple[str, int] | None:
+    """Return only directly exposed source evidence for a diagnostic.
+
+    This is intentionally not an edit-range resolver.  It may use a direct
+    semantic location, its direct syntax location, or a direct syntax source
+    range start to explain a failed binding.  It never searches source text or
+    chooses an identifier by name.
+    """
+
+    manager = catalog.catalog_source_manager
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        locations: list[object] = [candidate]
+        try:
+            locations.append(getattr(candidate, "location", None))
+        except Exception:
+            pass
+        try:
+            source_range = getattr(candidate, "sourceRange", None)
+            if source_range is not None:
+                locations.append(getattr(source_range, "start", None))
+        except Exception:
+            pass
+        for location in locations:
+            if location is None:
+                continue
+            try:
+                if manager.isMacroLoc(location):
+                    location = manager.getFullyOriginalLoc(location)
+                file = _file_for_buffer(catalog, location.buffer)
+                return file, int(location.offset)
+            except Exception:
+                continue
+    return None
+
+
+def _append_binding_issue(
+    catalog: SourceCatalog,
+    binding_issues: dict[str, list[dict[str, object]]],
+    category: str,
+    *,
+    semantic_kind: str,
+    name: str,
+    candidates: tuple[object, ...] = (),
+    detail: str | None = None,
+) -> None:
+    """Record a source-backed binding failure without inventing a range."""
+
+    issue: dict[str, object] = {
+        "message": "source_binding_incomplete",
+        "semantic_kind": semantic_kind,
+        "name": name,
+    }
+    location = _diagnostic_location(catalog, *candidates)
+    if location is not None:
+        issue["file"], issue["start"] = location
+    if detail:
+        issue["detail"] = detail
+    existing = binding_issues.setdefault(category, [])
+    if issue not in existing:
+        existing.append(issue)
+
+
+def _safe_occurrence_range(
+    catalog: SourceCatalog,
+    binding_issues: dict[str, list[dict[str, object]]],
+    record: _WorkingSymbol,
+    node: object,
+    resolver: Any,
+) -> SourceRange | None:
+    """Resolve one typed-token range or turn its failure into a group issue."""
+
+    try:
+        result = resolver()
+    except Exception as error:
+        _append_binding_issue(
+            catalog,
+            binding_issues,
+            record.category,
+            semantic_kind=record.semantic_kind,
+            name=record.name,
+            candidates=(node, _safe_attr(node, "syntax")),
+            detail=getattr(error, "message", str(error)),
+        )
+        if record.support == "eligible":
+            record.support = "preserved"
+            record.reason = "source_binding_incomplete"
+        return None
+    if result is None and _diagnostic_location(catalog, node) is not None:
+        _append_binding_issue(
+            catalog,
+            binding_issues,
+            record.category,
+            semantic_kind=record.semantic_kind,
+            name=record.name,
+            candidates=(node,),
+            detail="semantic target has no unique physical typed token",
+        )
+        if record.support == "eligible":
+            record.support = "preserved"
+            record.reason = "source_binding_incomplete"
+    return result
 
 
 def _syntax_identifier_range(catalog: SourceCatalog, syntax: object, expected: str) -> SourceRange | None:
     if syntax is None:
         return None
-    # Only use a typed identifier property.  Walking all tokens and choosing a
-    # matching name would lose the semantic target when a syntax contains two
-    # equal identifiers (for example a scoped member access).
-    if type(syntax).__name__ == "Token":
-        return _range_for_token(catalog, syntax, expected)
-    identifier = getattr(syntax, "identifier", None)
-    direct = _range_for_token(catalog, identifier, expected)
-    if direct is not None:
-        return direct
-    if _kind_name(getattr(syntax, "kind", None)) == "ScopedName":
-        right = getattr(syntax, "right", None)
-        return _syntax_identifier_range(catalog, right, expected)
-    if _kind_name(getattr(syntax, "kind", None)) == "ModportNamedPort":
-        return _range_for_token(catalog, getattr(syntax, "name", None), expected)
-    if _kind_name(getattr(syntax, "kind", None)) == "NamedType":
-        name = getattr(syntax, "name", None)
-        return _syntax_identifier_range(catalog, name, expected)
-    return None
+    try:
+        # Only use a typed identifier property.  Walking all tokens and
+        # choosing a matching name would lose the semantic target when a
+        # syntax contains two equal identifiers (for example a scoped member
+        # access).
+        if type(syntax).__name__ == "Token":
+            return _range_for_token(catalog, syntax, expected)
+        identifier = _safe_attr(syntax, "identifier")
+        direct = _range_for_token(catalog, identifier, expected)
+        if direct is not None:
+            return direct
+        if _kind_name(_safe_attr(syntax, "kind")) == "ScopedName":
+            right = _safe_attr(syntax, "right")
+            return _syntax_identifier_range(catalog, right, expected)
+        if _kind_name(_safe_attr(syntax, "kind")) == "ModportNamedPort":
+            return _range_for_token(catalog, _safe_attr(syntax, "name"), expected)
+        if _kind_name(_safe_attr(syntax, "kind")) == "NamedType":
+            name = _safe_attr(syntax, "name")
+            return _syntax_identifier_range(catalog, name, expected)
+        return None
+    except RenameIndexError:
+        raise
+    except Exception as error:
+        raise RenameIndexError("RENAME_INDEX_RANGE_INVALID", "typed syntax is invalid") from error
 
 
 def _expression_range(catalog: SourceCatalog, expression: object, expected: str) -> SourceRange | None:
@@ -265,17 +481,21 @@ def _semantic_expression_range(
                 return _range_for_location(catalog, original, expected), provenance
             except RenameIndexError:
                 return None, provenance
-    except (AttributeError, RuntimeError, TypeError, ValueError):
+    except Exception:
         return None, "semantic_reference"
     return _expression_range(catalog, expression, expected), "semantic_reference"
 
 
-def _definition_range(catalog: SourceCatalog, definition: object) -> SourceRange | None:
+def _definition_range(
+    catalog: SourceCatalog, definition: object, syntax: object = None
+) -> SourceRange | None:
     if definition is None:
         return None
-    name = str(getattr(definition, "name", ""))
+    name = str(_safe_attr(definition, "name", ""))
     try:
-        return _range_for_location(catalog, getattr(definition, "location", None), name)
+        if syntax is not None:
+            return _declaration_range(catalog, definition, syntax, name)
+        return _range_for_location(catalog, _safe_attr(definition, "location"), name)
     except RenameIndexError:
         return None
 
@@ -447,7 +667,7 @@ def _record_for_semantic_target(
     if symbol_id is not None:
         return symbol_id
     name = str(getattr(target, "name", ""))
-    location = getattr(target, "location", None)
+    location = _safe_attr(target, "location")
     if not name or location is None:
         return None
     try:
@@ -491,12 +711,15 @@ def _category_support(
 def _interface_leaf_elements(node: object) -> tuple[object, ...]:
     """Flatten semantic interface arrays without creating element records."""
 
-    if getattr(node, "isInterface", False):
-        return (node,)
-    result: list[object] = []
-    for element in tuple(getattr(node, "elements", ())):
-        result.extend(_interface_leaf_elements(element))
-    return tuple(result)
+    try:
+        if getattr(node, "isInterface", False):
+            return (node,)
+        result: list[object] = []
+        for element in tuple(getattr(node, "elements", ())):
+            result.extend(_interface_leaf_elements(element))
+        return tuple(result)
+    except Exception:
+        return ()
 
 
 def _register_structs(
@@ -509,6 +732,7 @@ def _register_structs(
     modules_by_definition: dict[int, ModuleOwner],
     interfaces_by_definition: dict[int, str],
     active_types: set[tuple[str, int, int]],
+    binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
     if "struct" not in selected:
         return
@@ -523,7 +747,10 @@ def _register_structs(
         if aggregate_kind not in {"StructType", "UnionType"}:
             continue
         name = str(getattr(node, "name", ""))
-        declaration = _range_for_token(catalog, getattr(syntax, "name", None), name)
+        declaration = _try_declaration_range(
+            catalog, binding_issues, "struct", node, syntax, name,
+            candidates=(node, syntax),
+        )
         if declaration is None:
             continue
         definition = getattr(node, "declaringDefinition", None)
@@ -551,26 +778,74 @@ def _register_structs(
         canonical = getattr(node, "canonicalType", None)
         try:
             semantic_fields = tuple(canonical) if canonical is not None else ()
-        except (TypeError, RuntimeError):
+        except Exception:
             semantic_fields = ()
             record.support = "preserved"
             record.reason = "source_binding_incomplete"
+            _append_binding_issue(
+                catalog,
+                binding_issues,
+                "struct",
+                semantic_kind=type(node).__name__,
+                name=name,
+                candidates=(node, syntax),
+                detail="aggregate FieldSymbol enumeration is unavailable",
+            )
 
         field_bindings: list[tuple[object, SourceRange, str]] = []
         binding_incomplete = canonical is None
         for field in semantic_fields:
             if type(field).__name__ != "FieldSymbol":
                 binding_incomplete = True
+                _append_binding_issue(
+                    catalog,
+                    binding_issues,
+                    "struct",
+                    semantic_kind=type(field).__name__,
+                    name=str(getattr(field, "name", "")),
+                    candidates=(field, node, syntax),
+                    detail="aggregate member is not a FieldSymbol",
+                )
                 continue
             field_name = str(getattr(field, "name", ""))
             if not field_name:
                 binding_incomplete = True
-                continue
-            try:
-                field_range = _range_for_location(
-                    catalog, getattr(field, "location", None), field_name
+                _append_binding_issue(
+                    catalog,
+                    binding_issues,
+                    "struct",
+                    semantic_kind=type(field).__name__,
+                    name=field_name,
+                    candidates=(field, node, syntax),
+                    detail="FieldSymbol has no semantic name",
                 )
-            except RenameIndexError:
+                continue
+            field_location = _safe_attr(field, "location")
+            try:
+                field_is_macro = (
+                    field_location is not None
+                    and catalog.catalog_source_manager.isMacroLoc(field_location)
+                )
+            except Exception:
+                field_is_macro = True
+            if field_is_macro:
+                binding_incomplete = True
+                _append_binding_issue(
+                    catalog,
+                    binding_issues,
+                    "struct",
+                    semantic_kind=type(field).__name__,
+                    name=field_name,
+                    candidates=(field, node, syntax),
+                    detail="macro-generated aggregate field shape is not source-backed",
+                )
+                continue
+            field_range = _try_declaration_range(
+                catalog, binding_issues, "struct", field,
+                _safe_attr(field, "syntax"), field_name,
+                candidates=(field, node, syntax),
+            )
+            if field_range is None:
                 binding_incomplete = True
                 continue
             field_bindings.append((field, field_range, field_name))
@@ -610,6 +885,7 @@ def _register_core_declarations(
     modules_by_definition: dict[int, ModuleOwner],
     interfaces_by_definition: dict[int, str],
     active_interfaces: set[tuple[str, int, int]],
+    binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
     port_ranges: set[tuple[str, int, int]] = set()
     for node in nodes:
@@ -617,7 +893,9 @@ def _register_core_declarations(
             continue
         name = str(getattr(node, "name", ""))
         try:
-            declaration = _range_for_location(catalog, getattr(node, "location", None), name)
+            declaration = _declaration_range(
+                catalog, node, _safe_attr(node, "syntax"), name
+            )
         except RenameIndexError:
             continue
         port_ranges.add((declaration.file, declaration.start, declaration.end))
@@ -627,18 +905,19 @@ def _register_core_declarations(
         if not name:
             continue
         if node_type in {"VariableSymbol", "NetSymbol"}:
-            try:
-                declaration = _range_for_location(catalog, getattr(node, "location", None), name)
-            except RenameIndexError:
-                # A macro-generated declaration has no physical identifier
-                # owned by this source unit.  It is semantic evidence only,
-                # never a fabricated edit target.
-                continue
-            key = (declaration.file, declaration.start, declaration.end)
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, module, owner_kind = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
             )
+            category = "interface" if owner_kind == "interface" else "signals"
+            declaration = _try_declaration_range(
+                catalog, binding_issues, category, node,
+                _safe_attr(node, "syntax"), name,
+                candidates=(node, _safe_attr(node, "syntax")),
+            )
+            if declaration is None:
+                continue
+            key = (declaration.file, declaration.start, declaration.end)
             if key in port_ranges:
                 if "ports" not in selected and owner_kind != "interface":
                     continue
@@ -667,14 +946,18 @@ def _register_core_declarations(
                     impact="interface_member", abi=abi, targets=(node,), support=support, reason=reason,
                 )
         elif node_type == "PortSymbol":
-            try:
-                declaration = _range_for_location(catalog, getattr(node, "location", None), name)
-            except RenameIndexError:
-                continue
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, module, owner_kind = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
             )
+            category = "interface" if owner_kind == "interface" else "ports"
+            declaration = _try_declaration_range(
+                catalog, binding_issues, category, node,
+                _safe_attr(node, "syntax"), name,
+                candidates=(node, _safe_attr(node, "syntax")),
+            )
+            if declaration is None:
+                continue
             if owner_kind == "module" and "ports" in selected:
                 support, reason, abi = _category_support(
                     "ports", module, top=catalog.source_set.top,
@@ -695,11 +978,17 @@ def _register_core_declarations(
                     impact="interface_member", abi="internal", targets=(node,),
                 )
         elif node_type == "ModportSymbol" and "interface" in selected:
-            declaration = _range_for_location(catalog, getattr(node, "location", None), name)
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, _module, _ = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
             )
+            declaration = _try_declaration_range(
+                catalog, binding_issues, "interface", node,
+                _safe_attr(node, "syntax"), name,
+                candidates=(node, _safe_attr(node, "syntax")),
+            )
+            if declaration is None:
+                continue
             _add_working(
                 records, target_map, catalog=catalog, category="interface",
                 kind="modport" if node_type == "ModportSymbol" else "modport_member",
@@ -708,11 +997,17 @@ def _register_core_declarations(
                 impact="interface_abi", abi="internal", targets=(node,),
             )
         elif node_type == "InstanceSymbol" and getattr(node, "isInterface", False) and "interface" in selected:
-            declaration = _range_for_location(catalog, getattr(node, "location", None), name)
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, module, _ = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
             )
+            declaration = _try_declaration_range(
+                catalog, binding_issues, "interface", node,
+                _safe_attr(node, "syntax"), name,
+                candidates=(node, _safe_attr(node, "syntax")),
+            )
+            if declaration is None:
+                continue
             support, reason, abi = _category_support(
                 "interface", module, top=catalog.source_set.top,
                 interface_active=True, aggregate_active=True, interface_instance=True,
@@ -726,12 +1021,28 @@ def _register_core_declarations(
         elif node_type == "InstanceArraySymbol" and "interface" in selected:
             elements = _interface_leaf_elements(node)
             if not elements:
+                if name:
+                    _append_binding_issue(
+                        catalog,
+                        binding_issues,
+                        "interface",
+                        semantic_kind=node_type,
+                        name=name,
+                        candidates=(node, _safe_attr(node, "syntax")),
+                        detail="source-backed interface array has no semantic elements",
+                    )
                 continue
-            declaration = _range_for_location(catalog, getattr(node, "location", None), name)
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, module, _ = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
             )
+            declaration = _try_declaration_range(
+                catalog, binding_issues, "interface", node,
+                _safe_attr(node, "syntax"), name,
+                candidates=(node, _safe_attr(node, "syntax")),
+            )
+            if declaration is None:
+                continue
             support, reason, abi = _category_support(
                 "interface", module, top=catalog.source_set.top,
                 interface_active=True, aggregate_active=True, interface_instance=True,
@@ -850,6 +1161,7 @@ def _resolve_range_claims(
 
 def _apply_group_binding_issues(
     records: dict[str, _WorkingSymbol],
+    binding_issues: dict[str, list[dict[str, object]]],
 ) -> dict[str, tuple[dict[str, object], ...]]:
     """Make every unknown binding issue transactional at core-group scope."""
 
@@ -862,6 +1174,12 @@ def _apply_group_binding_issues(
     for record in records.values():
         if record.reason is not None and record.reason not in known_per_record_reasons:
             unknown_by_category.setdefault(record.category, []).append(record)
+    for category, category_issues in binding_issues.items():
+        if any(
+            issue.get("message") == "source_binding_incomplete"
+            for issue in category_issues
+        ):
+            unknown_by_category.setdefault(category, [])
 
     issues: dict[str, tuple[dict[str, object], ...]] = {}
     for category, unknown in unknown_by_category.items():
@@ -874,7 +1192,7 @@ def _apply_group_binding_issues(
                 item.reason or "",
             ),
         )
-        primary_reason = ordered[0].reason or "unknown_binding_issue"
+        primary_reason = ordered[0].reason if ordered else "source_binding_incomplete"
         for record in records.values():
             if record.category == category and record.support == "eligible":
                 record.support = "preserved"
@@ -896,18 +1214,31 @@ def _collect_occurrences(
     target_map: dict[int, str],
     alias_map: dict[tuple[str, int, int], str],
     records: dict[str, _WorkingSymbol],
+    binding_issues: dict[str, list[dict[str, object]]],
 ) -> dict[str, tuple[dict[str, object], ...]]:
     range_claims: dict[tuple[str, int, int], dict[str, set[str]]] = {}
     for node in nodes:
         node_type = type(node).__name__
+        if node_type == "InstanceSymbol" and not str(_safe_attr(node, "name", "")):
+            # Array elements are elaboration-only aliases.  Their semantic
+            # target is represented by the source-backed array root; an
+            # element without its own name must never create a diagnostic or
+            # physical edit.
+            continue
         if node_type == "ModportPortSymbol":
             symbol_id = _record_for_semantic_target(
                 catalog, records, target_map, getattr(node, "internalSymbol", None)
             )
             if symbol_id is not None:
                 record = records[symbol_id]
-                source_range = _syntax_identifier_range(
-                    catalog, getattr(node, "syntax", None), record.name
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _syntax_identifier_range(
+                        catalog, getattr(node, "syntax", None), record.name
+                    ),
                 )
                 if source_range is not None:
                     _claim_occurrence(
@@ -923,7 +1254,22 @@ def _collect_occurrences(
                 continue
             record = records[symbol_id]
             value = record.name
-            source_range, provenance = _semantic_expression_range(catalog, node, value)
+            try:
+                source_range, provenance = _semantic_expression_range(catalog, node, value)
+            except Exception as error:
+                _append_binding_issue(
+                    catalog,
+                    binding_issues,
+                    record.category,
+                    semantic_kind=record.semantic_kind,
+                    name=record.name,
+                    candidates=(node, _safe_attr(node, "syntax")),
+                    detail=getattr(error, "message", str(error)),
+                )
+                if record.support == "eligible":
+                    record.support = "preserved"
+                    record.reason = "source_binding_incomplete"
+                continue
             if source_range is None:
                 continue
             occurrence = SymbolOccurrence(source_range, provenance)
@@ -935,7 +1281,13 @@ def _collect_occurrences(
                 continue
             record = records[symbol_id]
             syntax = getattr(node, "syntax", None)
-            source_range = _syntax_identifier_range(catalog, syntax, record.name)
+            source_range = _safe_occurrence_range(
+                catalog,
+                binding_issues,
+                record,
+                node,
+                lambda: _syntax_identifier_range(catalog, syntax, record.name),
+            )
             if source_range is None:
                 continue
             occurrence = SymbolOccurrence(source_range, "semantic_member")
@@ -946,9 +1298,15 @@ def _collect_occurrences(
             alias_key = _definition_key(catalog, target)
             symbol_id = alias_map.get(alias_key) if alias_key is not None else None
             if symbol_id is not None:
-                source_range = _type_occurrence_range(catalog, node, records[symbol_id].name)
+                record = records[symbol_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _type_occurrence_range(catalog, node, record.name),
+                )
                 if source_range is not None:
-                    record = records[symbol_id]
                     _claim_occurrence(
                         record,
                         SymbolOccurrence(source_range, "semantic_type"),
@@ -960,9 +1318,17 @@ def _collect_occurrences(
             symbol_id = alias_map.get(alias_key) if alias_key is not None else None
             if symbol_id is not None:
                 syntax = getattr(node, "syntax", None)
-                source_range = _syntax_identifier_range(catalog, getattr(syntax, "left", None), records[symbol_id].name)
+                record = records[symbol_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _syntax_identifier_range(
+                        catalog, getattr(syntax, "left", None), record.name
+                    ),
+                )
                 if source_range is not None:
-                    record = records[symbol_id]
                     _claim_occurrence(
                         record,
                         SymbolOccurrence(source_range, "semantic_cast"),
@@ -978,10 +1344,17 @@ def _collect_occurrences(
                         interface_id = candidate.symbol_id
                         break
             if interface_id is not None:
-                source_range = _instance_type_occurrence(catalog, node, records[interface_id].name)
+                record = records[interface_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _instance_type_occurrence(catalog, node, record.name),
+                )
                 if source_range is not None:
                     _claim_occurrence(
-                        records[interface_id],
+                        record,
                         SymbolOccurrence(source_range, "semantic_interface_type"),
                         range_claims,
                     )
@@ -998,12 +1371,19 @@ def _collect_occurrences(
                 syntax = getattr(node, "syntax", None)
                 header = getattr(getattr(syntax, "parent", None), "header", None)
                 type_syntax = getattr(header, "dataType", None)
-                source_range = _syntax_identifier_range(
-                    catalog, type_syntax, records[interface_id].name
+                record = records[interface_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _syntax_identifier_range(
+                        catalog, type_syntax, record.name
+                    ),
                 )
                 if source_range is not None:
                     _claim_occurrence(
-                        records[interface_id],
+                        record,
                         SymbolOccurrence(source_range, "semantic_interface_port_type"),
                         range_claims,
                     )
@@ -1020,12 +1400,19 @@ def _collect_occurrences(
                         break
             if interface_id is not None:
                 parent = getattr(getattr(node, "syntax", None), "parent", None)
-                source_range = _range_for_token(
-                    catalog, getattr(parent, "type", None), records[interface_id].name
+                record = records[interface_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _range_for_token(
+                        catalog, getattr(parent, "type", None), record.name
+                    ),
                 )
                 if source_range is not None:
                     _claim_occurrence(
-                        records[interface_id],
+                        record,
                         SymbolOccurrence(source_range, "semantic_interface_array_type"),
                         range_claims,
                     )
@@ -1044,7 +1431,13 @@ def _collect_occurrences(
                     continue
                 label = getattr(connection_syntax, "name", None)
                 record = records[symbol_id]
-                source_range = _range_for_token(catalog, label, record.name)
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    connection_syntax,
+                    lambda: _range_for_token(catalog, label, record.name),
+                )
                 if source_range is None:
                     continue
                 _claim_occurrence(
@@ -1063,6 +1456,7 @@ def _register_interface_types(
     nodes: list[Any],
     interfaces_by_definition: dict[int, str],
     active_interfaces: set[tuple[str, int, int]],
+    binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
     if "interface" not in selected:
         return
@@ -1073,10 +1467,13 @@ def _register_interface_types(
         if _kind_name(getattr(syntax, "kind", None)) != "InterfaceDeclaration":
             continue
         definition = getattr(node, "definition", None)
-        declaration = _definition_range(catalog, definition)
+        name = str(getattr(definition, "name", ""))
+        declaration = _try_declaration_range(
+            catalog, binding_issues, "interface", definition, syntax, name,
+            candidates=(definition, node, syntax),
+        )
         if declaration is None:
             continue
-        name = str(getattr(definition, "name", ""))
         key = (declaration.file, declaration.start, declaration.end)
         support = "eligible"
         reason = None
@@ -1123,7 +1520,7 @@ def _category_outcomes(
             continue
         items = by_category[category]
         if not items:
-            status = "empty"
+            status = "preserved" if range_issues.get(category) else "empty"
         elif any(item.support == "unsupported" for item in items):
             status = "preserved"
         elif any(item.support == "preserved" for item in items):
@@ -1170,22 +1567,29 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
     records: dict[str, _WorkingSymbol] = {}
     target_map: dict[int, str] = {}
     alias_map: dict[tuple[str, int, int], str] = {}
+    binding_issues: dict[str, list[dict[str, object]]] = {}
     _register_interface_types(
         source_catalog, set(selected), records, target_map, nodes,
-        interfaces_by_definition, active_interfaces,
+        interfaces_by_definition, active_interfaces, binding_issues,
     )
     _register_structs(
         source_catalog, set(selected), records, target_map, alias_map, nodes,
-        modules_by_definition, interfaces_by_definition, active_types,
+        modules_by_definition, interfaces_by_definition, active_types, binding_issues,
     )
     _register_core_declarations(
         source_catalog, set(selected), records, target_map, nodes,
-        modules_by_definition, interfaces_by_definition, active_interfaces,
+        modules_by_definition, interfaces_by_definition, active_interfaces, binding_issues,
     )
     range_issues = _collect_occurrences(
-        source_catalog, nodes, target_map, alias_map, records
+        source_catalog, nodes, target_map, alias_map, records, binding_issues
     )
-    group_issues = _apply_group_binding_issues(records)
+    group_issues = _apply_group_binding_issues(records, binding_issues)
+    for category, category_issues in binding_issues.items():
+        existing = list(range_issues.get(category, ()))
+        for issue in category_issues:
+            if issue not in existing:
+                existing.append(issue)
+        range_issues[category] = tuple(existing)
     for category, category_issues in group_issues.items():
         existing = list(range_issues.get(category, ()))
         for issue in category_issues:

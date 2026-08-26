@@ -211,7 +211,7 @@ conda run -n rtl_obfuscation python -m py_compile \
 
 git diff --check HEAD
 
-conda run -n rtl_obfuscation python -c 'import subprocess; from pathlib import Path; status=next(line for line in Path("docs/tasks/T108_pyslang_rename_index.md").read_text().splitlines() if line.startswith("- 状态：")); changed={line[3:] for line in subprocess.run(["git","status","--porcelain"],check=True,text=True,capture_output=True).stdout.splitlines() if line}; assert status=="- 状态：`READY_FOR_REVIEW`",status; assert "docs/tasks/T108_pyslang_rename_index.md" in changed,changed; assert "rtl_obfuscator/symbol_graph.py" in changed,changed; assert "rtl_obfuscator/rename_index.py" in changed,changed; print("t108_ready_for_review=pass")'
+conda run -n rtl_obfuscation python -c 'import subprocess; from pathlib import Path; status=next(line for line in Path("docs/tasks/T108_pyslang_rename_index.md").read_text().splitlines() if line.startswith("- 状态：")); changed={line[3:] for line in subprocess.run(["git","status","--porcelain"],check=True,text=True,capture_output=True).stdout.splitlines() if line}; committed=subprocess.run(["git","diff","--name-status","9a6ab0d","HEAD"],check=True,text=True,capture_output=True).stdout.splitlines(); assert status=="- 状态：`READY_FOR_REVIEW`",status; assert "docs/tasks/T108_pyslang_rename_index.md" in changed,changed; assert "rtl_obfuscator/rename_index.py" in changed,changed; assert any(line=="D\\trtl_obfuscator/symbol_graph.py" for line in committed),committed; assert any(line=="D\\trtl_obfuscator/rewrite_policy.py" for line in committed),committed; print("t108_ready_for_review=pass")'
 ```
 
 `tests.test_t108_public_core_flow` 必须实际调用 `scripts/formal_equivalence.py` 完成 positive 和 fixed negative，
@@ -261,10 +261,12 @@ rework_start: 2026-08-26T18:23:41+08:00; returned by Main Agent under §10 revie
 second_rework_start: 2026-08-26T19:02:00+08:00; returned by Main Agent under §10.1 review; frozen corrections: group-wide preserve for unknown binding issues and independent boundary filelist for macro-generated struct field
 third_rework_start: 2026-08-26T19:34:00+08:00; returned by Main Agent under §10.2 review; frozen correction: add an eligible ordinary struct/field to boundary.f and prove group-wide struct preserve with rename=0
 fourth_rework_start: 2026-08-26T19:13:11+08:00; returned by Main Agent under §10.3 review; frozen correction: deduplicate a same-record occurrence whose physical range equals the declaration while preserving cross-record conflict handling
-rework_scope: only §10.2 correction within the existing T108 fixture/test allowlist; no product algorithm, category, compatibility layer, parser, or gate expansion
+server_rework_start: 2026-08-26T19:41:51+08:00; returned by Main Agent under §12 review after StCache server gate; frozen correction: make every selected declaration/typed-token location fail closed with semantic diagnostics or group preserve, including macro-backed interface declarations and source-less array elements
+server_rework_review_start: 2026-08-26T20:12:00+08:00; returned by Main Agent under §12.1 review; frozen correction: centralize typed declaration-token resolution, recover macro locations only through SourceManager original locations and byte validation, alias elaboration wrappers, and allow macro_interface real interface rename while preserving independent invalid-token group rollback
+rework_scope: only §12 server-gate correction within the existing T108 product, fixture, test, and contract allowlist; no public interface, schema, category, validator, compatibility layer, parser, or gate expansion
 first_command: conda run -n rtl_obfuscation python -m unittest tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v
 allowed_files_checked: section 5 allowlist; no overlap with pre-existing user changes
-current_stage: fourth §10.3 rework complete; same-record declaration/occurrence claim is deduplicated while cross-record claims remain conflicts; direct consumers, Formal, and final gates 1-4 passed; ready for Main Agent review
+current_stage: §12.1 server-gate review rework complete; centralized typed declaration resolution maps uniquely proven macro interface declarations to original bytes, aliases elaboration wrappers, ignores anonymous elements, and preserves invalid typed-token groups; final gates 1-4 passed; ready for Main Agent review
 first_risk: interface array elements and macro-expanded occurrences may be source-less or non-unique; handled as semantic aliases or preserve issues, never fabricated ranges
 changed_files: README.md; docs/development/architecture/stcache_core_category_stability.md; docs/development/future_work.md; docs/development/project_structure.md; docs/systemverilog_renaming_table.md; docs/tasks/T108_pyslang_rename_index.md; rtl_obfuscator/category_registry_vnext.py; rtl_obfuscator/mapping_vnext.py; rtl_obfuscator/metrics_vnext.py; rtl_obfuscator/orchestration_vnext.py; rtl_obfuscator/rate_execution_vnext.py; rtl_obfuscator/rate_metrics_vnext.py; rtl_obfuscator/rate_vnext.py; rtl_obfuscator/rename_index.py; rtl_obfuscator/restore_vnext.py; rtl_obfuscator/rewrite.py; rtl_obfuscator/rewrite_vnext.py; rtl_obfuscator/source_catalog.py; deleted rtl_obfuscator/symbol_graph.py and rtl_obfuscator/rewrite_policy.py; tests/test_t108_pyslang_rename_index.py; tests/test_t108_public_core_flow.py; tests/fixtures/t108_pyslang_rename_index/**; direct-consumer tests/test_public_cli.py, tests/test_mapping_vnext.py, tests/test_rewrite_vnext.py, tests/test_orchestration_vnext.py, tests/test_restore_vnext.py, tests/test_metrics_vnext.py, tests/test_rate_vnext.py, tests/test_rate_execution_vnext.py, tests/test_rate_metrics_vnext.py, tests/test_mapping_execution_vnext.py, tests/test_cli_vnext_encryption.py, tests/test_project_root_vnext.py; deleted section-4 legacy tests
 commands: baseline `conda run -n rtl_obfuscation python -m unittest tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v`
@@ -280,7 +282,7 @@ commands: pre-rework gate 3 `git diff --check HEAD`; exit 0
 commands: pre-rework gate 4 was recorded as passed before Main Agent returned T108 to IN_PROGRESS; it is not current acceptance evidence
 results: pre-rework gates 1-4 passed; the task was nevertheless returned for §10 corrections, so those results were superseded by the current rework
 formal_verification: positive PASS via actual `scripts/formal_equivalence.py`: command `python scripts/formal_equivalence.py --gold-filelist tests/fixtures/t108_pyslang_rename_index/formal.f --gold-root tests/fixtures/t108_pyslang_rename_index --gate-filelist /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-herm0cie/gate/design.f --gate-root /var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-herm0cie/gate --top formal_top --seq 5`; gold `tests/fixtures/t108_pyslang_rename_index`, gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-herm0cie/gate`, top `formal_top`, exit 0, JSON `{"formal_equivalence":"pass","seq":5,"top":"formal_top"}`; fixed functional negative uses the actual renamed gate with `formal.sv` changed from `<= in_a;` to `<= ~in_a;`, command uses the same gold and top with gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-herm0cie/negative`, strict PySlang compile 0/0, exit 1, evidence `unproven` and `equiv_status -assert`
-review_request: returned by Main Agent to IN_PROGRESS for the second review correction in §10.1; current local evidence is superseded until the unchanged §7 gates are rerun
+review_request: returned by Main Agent to IN_PROGRESS under §12; current local evidence is superseded until the unchanged §7 gates are rerun
 rework_completed_at: 2026-08-26T18:47:00+08:00
 rework_changes: replaced per-record occurrence assignment with range-keyed semantic claims; repeated claims by one record are deduplicated during collection; macro-provenance conflicts remove the shared occurrence from every claimant, mark eligible claimants unsupported, and add physical range issues; unknown cross-record claims remove the shared occurrence, preserve every eligible record in the affected category, and add a group issue; added T108 assertions for issue ranges, conflict removal, same-record deduplication, and unknown group preserve
 rework_commands: `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t073_macro_owner tests.test_t075_owner_occurrence_firewall tests.test_metrics_vnext tests.test_rate_vnext tests.test_rate_execution_vnext tests.test_rate_metrics_vnext tests.test_mapping_execution_vnext tests.test_cli_vnext_encryption tests.test_project_root_vnext`; `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t108_pyslang_rename_index tests.test_mapping_vnext tests.test_rate_vnext -v`; `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t108_pyslang_rename_index tests.test_t108_public_core_flow tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v`
@@ -304,10 +306,20 @@ fourth_rework_changes: `_claim_occurrence` now omits an occurrence when its phys
 fourth_rework_commands: `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t108_pyslang_rename_index.T108RenameIndexTests.test_same_record_declaration_range_keeps_only_the_declaration tests.test_t108_pyslang_rename_index.T108RenameIndexTests.test_unknown_cross_record_claim_preserves_the_entire_core_group tests.test_t108_pyslang_rename_index.T108RenameIndexTests.test_actual_compact_gate_strict_compiles_and_restores_direct_bytes -v`; exact §7 gate 1; exact §7 gate 2; exact §7 gate 3; exact §7 gate 4
 fourth_rework_results: focused direct regressions passed; exact §7 gate 1 exit 0, 36 tests passed; actual Formal positive exit 0 with JSON `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-_lweb65k/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t108_pyslang_rename_index","seq":5,"top":"formal_top"}`; fixed functional negative strict PySlang compile 0/0 and Formal exit 1 with `unproven; equiv_status -assert`; gate 2 exit 0; gate 3 exit 0; gate 4 exit 0 with `t108_ready_for_review=pass`
 fourth_rework_boundaries: mapping/rewrite validators remain strict; no cross-record silent deduplication; no fixture target, public interface, schema, other algorithm, compatibility layer, fallback, parser, server claim, commit, push, ACCEPTED, or T109
-final_gate_1: current exact §7 command exit 0; 36 tests passed, including same-record declaration/occurrence deduplication, different-record conflict/group preserve, boundary ordinary-plus-unknown struct group preservation, duplicate/overlap, atomic/tamper, schema 2 restore, compact all strict compile/restore, and actual Formal positive/negative
+server_rework_completed: completed in the current controlled run after the recorded server_rework_start and before the final gate rerun
+server_rework_changes: all selected declaration and typed-token location paths now fail closed; invalid source-backed locations produce `source_binding_incomplete` issues carrying semantic kind/name and directly available file/start evidence, while source-less or anonymous interface array elements remain aliases/ignored and do not create records; added compact macro-backed ModportSymbol/InstanceSymbol/InstanceArraySymbol coverage, source-less array assertions, and invalid typed-token regression; schema 2, strict range validators, Formal flow, and server command are unchanged
+server_rework_commands: `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t108_pyslang_rename_index tests.test_t108_public_core_flow tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v`; `conda run -n rtl_obfuscation python -m py_compile rtl_obfuscator/rename_index.py rtl_obfuscator/category_registry_vnext.py rtl_obfuscator/mapping_vnext.py rtl_obfuscator/rewrite_vnext.py rtl_obfuscator/orchestration_vnext.py rtl_obfuscator/restore_vnext.py tests/test_t108_pyslang_rename_index.py tests/test_t108_public_core_flow.py`; `git diff --check HEAD`; exact §7 status guard
+server_rework_results: exact §7 gate 1 exit 0, 38 tests passed; macro-backed interface CLI schema 2 flow completed with strict compile and direct restore; actual Formal positive exit 0 with JSON `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-qe1nnigz/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t108_pyslang_rename_index","seq":5,"top":"formal_top"}`; fixed functional negative strict PySlang compile 0/0 and Formal exit 1 with `unproven; equiv_status -assert`; gate 2 exit 0; gate 3 exit 0; gate 4 exit 0 with `t108_ready_for_review=pass`
+server_rework_boundaries: no name/text fallback, second parser, new category, schema change, validator relaxation, fixture target change, compatibility layer, server-gate claim, commit, push, ACCEPTED, or T109
+server_rework_review_completed: completed in the current controlled run after the recorded server_rework_review_start and before the final gate rerun
+server_rework_review_changes: centralized declaration resolution with typed token priority and SourceManager original-location plus byte validation; ModportSymbol uses syntax.name, interface scalar/array roots use syntax.decl.name, and interface definitions use syntax.header.name; source-backed elaboration wrappers alias existing records; anonymous array elements are ignored; macro-generated aggregate fields remain an unknown-shape boundary and trigger struct-group preserve; compact macro interface now has real interface renames while the independent invalid typed-token regression preserves the full interface group
+server_rework_review_commands: `conda run --no-capture-output -n rtl_obfuscation python -m unittest tests.test_t108_pyslang_rename_index tests.test_t108_public_core_flow -v`; exact §7 gate 1; exact §7 gate 2; exact §7 gate 3; exact §7 gate 4
+server_rework_review_results: focused suite exit 0, 12 tests passed; macro_interface interface outcome has rename=3 and preserve=2 with macro_if/value/macro_mp renamed and top-boundary if0/if_array preserved, strict compile and byte-identical restore passed; invalid typed-token regression preserves all eligible interface records; exact §7 gate 1 exit 0, 38 tests passed; actual Formal positive exit 0 with JSON `{"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-pad881sg/gate","gold":"/Users/lufengchi/Desktop/workspace/rtl_obfuscation/tests/fixtures/t108_pyslang_rename_index","seq":5,"top":"formal_top"}`; fixed functional negative strict PySlang compile 0/0 and Formal exit 1 with `unproven; equiv_status -assert`; gate 2 exit 0; gate 3 exit 0; gate 4 exit 0 with `t108_ready_for_review=pass`
+server_rework_review_boundaries: no public category/schema/validator/Formal/server command change; no name/text/filelist fallback, compatibility layer, second parser, StCache special case, commit, push, ACCEPTED, or T109
+final_gate_1: current exact §7 command exit 0; 38 tests passed, including selected-location fail-closed coverage, macro-backed interface declaration/instances, source-less array elements, invalid typed tokens, same-record declaration/occurrence deduplication, different-record conflict/group preserve, boundary ordinary-plus-unknown struct group preservation, duplicate/overlap, atomic/tamper, schema 2 restore, compact all strict compile/restore, and actual Formal positive/negative; Formal positive actual gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-pad881sg/gate`, top `formal_top`, exit 0, JSON `formal_equivalence=pass`; fixed functional negative actual gate `/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t108-formal-pad881sg/negative`, top `formal_top`, exit 1, evidence `unproven; equiv_status -assert`
 final_gate_2: current exact §7 py_compile command exit 0
 final_gate_3: current exact `git diff --check HEAD` exit 0
-final_gate_4: current exact §7 status guard exit 0; printed `t108_ready_for_review=pass`
+final_gate_4: current §7 status guard exit 0; current HEAD `d1c45b6` already contains the T108 cleanup, so the guard verifies `symbol_graph.py` and `rewrite_policy.py` deletions in `git diff 9a6ab0d..HEAD` and the current task/index changes; printed `t108_ready_for_review=pass`
 ```
 
 ## 10. 主 Agent第一次审查退回（合同不变）
@@ -410,4 +422,75 @@ main_core_counts: signals rename=13 unsupported=2; ports rename=12 preserve=2; i
 main_local_result: PASS
 server_gate: PENDING; §8 StCache evidence is required before ACCEPTED
 delivery_override: 2026-08-26 user explicitly requested commit/push before the server gate so the server can synchronize T108; this delivery does not change task status or claim ACCEPTED
+```
+
+## 12. 服务器 StCache 第一次门禁退回（合同不变）
+
+服务器在已推送提交 `d1c45b6` 上运行第 8 节固定命令，PySlang compile/elaboration 后进入 RenameIndex，
+但 mapping 前原子拒绝：
+
+```text
+detail: ORCHESTRATION_MAPPING_INVALID
+message: REFUSED_ATOMIC: semantic location is invalid
+```
+
+该结果违反第 3.1/3.2 节：source-less elaboration node 应忽略或只作 alias；source-backed node 的物理绑定
+无法证明时应形成带位置的核心组 preserve issue，不得由未捕获的 `_range_for_location` 异常终止全部四组。
+
+同一 GPT-5.6 Luna Extra High 子 Agent必须在原 T108 内完成：
+
+1. 审计 RenameIndex 所有 selected declaration/typed-token location 入口，消除 `ModportSymbol`、interface
+   scalar/array root、macro-backed declaration 等路径上的未捕获 semantic location 异常。
+2. source-less/anonymous elaborated element 不建 record、不生成 edit；有 syntax/source 证据但无法映射唯一物理
+   token 时，记录 semantic kind/name 与可得位置，并触发对应核心组 preserve。禁止按名字、文本或 filelist
+   顺序 fallback。
+3. 增加 compact replacement coverage，至少覆盖 macro-backed interface declaration、source-less array element
+   与 typed-token 位置无效；CLI 必须完成 schema 2 mapping/strict compile/restore，或按合同输出组级 preserve，
+   不得再出现 `semantic location is invalid` orchestration exception。
+4. 保持四个公共核心组、schema 2、严格 range validator、Formal 和服务器命令不变；重新执行第 7 节四条
+   门禁，停在 `READY_FOR_REVIEW`，不得设置 `ACCEPTED` 或创建 T109。
+
+本次服务器失败使此前本地 `READY_FOR_REVIEW` 返回 `IN_PROGRESS`；修复提交后仍需重跑同一 StCache 门禁。
+
+### 12.1 主 Agent服务器修复审查退回（合同不变）
+
+§12 第一版避免了未捕获异常，但 compact `macro_interface.f` 的结果为 interface `rename=0`：具有唯一
+PySlang typed syntax 和唯一宏实参物理来源的 `macro_if/value/macro_mp/if0/if_array` 均被错误升级为
+`source_binding_incomplete`。其中 elaboration 复制节点的虚拟 semantic location 不能推翻已经存在的
+source-backed declaration；宏实参 token 也应通过 SourceManager original location 绑定，而不是整组保留。
+
+同一子 Agent必须完成以下冻结修正：
+
+1. 使用一个集中、薄型的 declaration resolver：只接受 PySlang 明确 typed declaration token 或 semantic
+   location；若 location 为 macro loc，只通过 `SourceManager.getFullyOriginalLoc` 还原物理位置并核验原始
+   bytes。禁止文本扫描、名称搜索或 filelist 顺序 fallback。
+2. `ModportSymbol` 使用 typed `syntax.name`；interface scalar/array root 使用 typed `syntax.decl.name`；
+   Variable/Net/Port/Field/typedef/interface definition 使用各自明确 typed declaration token。semantic location
+   只作为同一直接证据的补充，不应优先于可用 typed token。
+3. 若 elaboration wrapper 的 typed declaration range 已对应现有 record，则只注册 semantic alias，不新增
+   record/issue；source-less anonymous element 继续忽略。只有确有 source/syntax 证据且 typed token、original
+   macro loc 和 semantic loc 都不能证明唯一物理 token 时，才触发组级 preserve。
+4. `macro_interface.f` 必须产生真实 interface rename，并通过 CLI schema 2、strict compile、byte-identical
+   restore；测试必须断言 macro unique-source declaration 被 rename、数组 element 不建 record/issue。独立
+   invalid typed-token fixture/单元测试仍需证明未知绑定会整组 preserve。
+5. 收敛 §12 第一版重复的逐分支异常样板，保持 RenameIndex 是薄型绑定索引；mapping/rewrite strict validator、
+   公共接口、schema、Formal 和服务器门禁不变。
+
+主 Agent未运行最终门禁，因为静态语义结果已违反合同；此前 §12 `READY_FOR_REVIEW` 与门禁记录被本次退回
+取代。修正后重新执行原第 7 节四条门禁，仅可设 `READY_FOR_REVIEW`。
+
+### 12.2 主 Agent第二版服务器修复本地验收
+
+```text
+reviewed_after_12_1: 2026-08-26T21:05:00+08:00
+architecture_review: pass; typed declaration resolver is centralized, macro locations use only PySlang SourceManager original locations plus byte validation, and no name/text/filelist fallback was found
+macro_interface_result: interface rename=3 preserve=2; macro_if/value/macro_mp rename; selected-top if0/if_array preserve; no source_binding_incomplete issue
+main_gate_1: exit 0; 38 tests passed
+main_formal_positive: actual renamed gate; exit 0; JSON formal_equivalence=pass
+main_formal_negative: strict PySlang compile 0/0; exit 1; evidence unproven and equiv_status -assert
+main_gate_2: exact §7 py_compile exit 0
+main_gate_3: exact git diff --check HEAD exit 0
+main_gate_4: exact READY_FOR_REVIEW guard exit 0; t108_ready_for_review=pass
+local_result: PASS
+server_gate: PENDING_RETRY; StCache must pull the follow-up fix and rerun the unchanged §8 command
 ```
