@@ -1,99 +1,57 @@
 # SystemVerilog 可加密类型表
 
-`python rtl_encrypt.py` 使用 `--category` 选择要加密的名称类型。单文件和不带 `--top`
-的 filelist 默认选择前 13 类；带 `--top` 的 filelist，以及只提供
-`--source-root + --top` 的项目加密，默认选择全部 19 类。
+当前公共接口只有四个核心组和一个快捷值：`signals`、`ports`、`interface`、`struct`、`all`。
+`--category` 必须至少出现一次；旧的细分类和旧别名均报 `CLI_VNEXT_CATEGORY_INVALID`。
 
-宏对象本身不是 rename target：宏定义名、形式参数名、调用名和预处理控制结构不进入 mapping
-或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理 identifier token，如果被 PySlang
-唯一绑定为 selected RTL symbol 的 declaration/occurrence，可以作为该 RTL symbol 的 edit source；
-这不是宏加密，报告会区分宏实参来源和宏正文来源。一个物理
-宏来源被多个 symbol 占用时只对这些 symbol 标记 `macro_origin_conflict`；来源无法证明为 exact
-identifier 时只标记该 symbol 的 `macro_origin_not_exact`。所选 declaration 本身无法映射时原子
-拒绝，不发布半成品。
+| `--category` | 识别对象 | 不建立改名记录的对象 |
+| --- | --- | --- |
+| `signals` | PySlang module-owned `VariableSymbol/NetSymbol` | module 端口、parameter、interface 成员、struct/union 字段 |
+| `ports` | source-backed module `PortSymbol` | selected top 的 ABI 端口按边界保留 |
+| `interface` | source-backed interface 类型、标量/数组实例、成员、modport | 匿名 elaboration element、`SystemCallInfo` 等无源码节点 |
+| `struct` | 物理 `typedef struct/union` 类型及 `FieldSymbol` 字段 | parameter type、隐式 conversion、canonical aggregate shape |
 
-filelist 中列出但当前 PySlang 编译配置未使用到的普通 module 不参与改名：不会建立改名记录或源码编辑，
-但仍原样保留在 gate、manifest 和 restore 中。其他能唯一对应到源码范围的 module 按下表处理；若一个
-module 无法唯一对应到源码范围，工具会停止并报告错误。
+## 唯一绑定规则
 
-默认选择只表示工具会检查这些类型，不表示任意工程中的每种写法都能改名。真实工程建议从少量
-`--category` 开始；结果中的 `rename` 是实际改名，`preserve` 和 `unsupported` 是为避免错误而
-保留的对象。`rename=0` 不能视为该类型已经完整支持。
+PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-backed semantic declaration；occurrence
+只来自 PySlang 直接 target binding，并且必须有唯一物理 identifier token 和源码字节证据。
 
-PySlang compile/elaborate 通过与“可安全改名”是两个门槛：前者证明设计可编译，后者还要求 selected
-declaration/reference 唯一对应物理源码 token。语义对象只有展开后的类型形状、却不是物理声明时，不能
-据此创建 rename record。
+- 同一个 interface 的 `ModportPortSymbol` 是已有 interface member 的 semantic alias/occurrence，不是新记录。
+- struct member reference 使用 PySlang 直接 `FieldSymbol` target 的 declaration location 绑定；不按名称、文件顺序或 token 顺序选择。
+- interface instance array 只为 source-backed array root 建记录，elaborated element 只作 alias，不产生空名称或伪造 range。
+- source-less semantic node、隐式 conversion 和 compiler metadata 不产生 edit。
+- 不能证明唯一 owner、semantic target 或物理 range 时，相关对象/核心组安全保留并报告位置；绝不猜测。
 
-每次运行还会给出明确结果：`PASS_FULL` 表示所选 graph 有实际改名且没有 `preserve/unsupported`；
-`PASS_PARTIAL` 表示 gate/恢复通过但存在保留、不支持或零改名；`REFUSED_ATOMIC` 表示无法证明安全性，
-不发布半成品输出。只有 `PASS_FULL` 才表示当前输入闭包内的所选类别完成了完整改名。
+宏对象本身不加密。宏正文或实参中的 identifier 只有在 PySlang 直接绑定某个选中 RTL symbol 且物理来源
+唯一时才作为该 symbol 的 occurrence；多个 symbol 共享同一物理 token 时报告 `macro_origin_conflict` 并保留。
 
-文件后缀不是新的加密类别：`.sv`、`.v` source unit 以及被 include 的 `.svh`、`.vh` 共用同一条
-PySlang SystemVerilog 语义流水线；显式 filelist 还可提供只读 `.h` 宏 context header。`.h` 不进入
-compile order、不产生宏 rename，也不被 single-file 或 project-root 自动扫描。工具不承诺 strict
-legacy-Verilog 方言，也不接受大写后缀或把 header 当作独立 source unit。
+## 结果状态
 
-| `--category` 值 | 加密内容 | 默认 13 类 | 未提供 `--top` | filelist/项目加密提供 `--top` |
-| --- | --- | --- | --- | --- |
-| `signals` | module 内的变量和连线 | 是 | 加密 module 内部名称 | 加密 module 内部名称 |
-| `parameters` | module value parameter、localparam 和 generate 使用的 value parameter；module `parameter type` 当前不改名，并对其物理 module owner 执行安全保留 | 是 | 加密只在 module 内部使用且符合边界的 value parameter | 跨 module 使用的 value parameter 及引用会一致改名；type parameter 仍保持原名 |
-| `enum_values` | 枚举值；仅在原始词法 token 与语义 ranges 完整一致时加密，覆盖不完整的单条枚举值保留 | 是 | 加密 | 加密 |
-| `genvars` | generate-for 使用的 genvar | 是 | 加密 | 加密 |
-| `functions` | function 名称 | 是 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 | 普通物理 function 的 declaration、return-name references、calls 与直接 closing label `endfunction : name` 使用同一名称；无 closing label 时不新增引用，宏生成 label 不支持 |
-| `tasks` | task 名称 | 是 | 加密 | 加密 |
-| `arguments` | function 和 task 的参数 | 是 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 | 普通物理 function 参数的 declaration、body references 与 named-call label 使用同一名称；task/method/macro named label 不支持 |
-| `instances` | module 实例名称 | 是 | 加密 | 加密 |
-| `generate_blocks` | 命名 generate block | 是 | 加密 | 加密 |
-| `typedefs` | 普通 typedef 类型名称；只有原始词法 token ranges 与 declaration 加已有语义 references ranges 精确相等时才允许改名，覆盖不完整的单条 typedef 保留 | 是 | 加密只在 module 内部使用且覆盖完整的类型 | 跨 module 使用且覆盖完整的类型及引用会一致改名；证据不足时整条 typedef 不产生 edit |
-| `struct_types` | 物理 `typedef struct/union` 类型名称；显式 direct type cast 与 source-backed declaration/reference 可绑定，PySlang syntax-less implicit conversion 只作为语义事实、不产生伪造 occurrence；解析结果为 struct/union 的 `parameter type` 不是物理 aggregate typedef owner，当前遇到该引用可能原子拒绝 | 是 | 加密只在 module 内部使用且能唯一对应物理 typedef 的类型 | 跨 module 使用且能唯一对应物理 typedef 的类型及引用会一致改名 |
-| `struct_fields` | struct 成员名称 | 是 | 加密只在 module 内部使用的成员；普通物理 struct alias 的 direct named assignment-pattern key 会按 exact alias owner 与字段名一致改写 | 跨 module 使用的成员及引用会一致改名；union/array/default/type/literal/宏或 anonymous pattern key 不在此闭包内 |
-| `union_fields` | union 成员名称 | 是 | 加密只在 module 内部使用的成员 | 跨 module 使用的成员及引用会一致改名 |
-| `modules` | module 名称 | 否 | 保留 | 一致加密子 module 声明、实例化引用和直接 closing label `endmodule : name`；top module 名称及 closing label 保留 |
-| `ports` | module 端口名称 | 否 | 保留 | 加密子 module 端口和连接引用；top module 对外端口保留 |
-| `interfaces` | interface 类型名称 | 否 | 保留 | interface 类型及引用会一致改名 |
-| `interface_instances` | interface 实例名称 | 否 | 保留 | 加密符合条件的标量 interface 实例；top module 内直接声明的实例名当前保留；interface instance array 当前会原子拒绝 |
-| `interface_ports` | interface 端口和成员名称 | 否 | 保留 | interface 端口、成员及引用会一致改名；只选择本类别且 interface port 使用 modport qualifier 时当前会原子拒绝 |
-| `modports` | modport 名称 | 否 | 保留 | modport 名称及引用会一致改名 |
+每个核心组在 mapping 的 `category_outcomes` 中按固定顺序输出 `renamed`、`preserved` 或 `empty`，并给出
+candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `rename`、`preserve`、`unsupported`。
 
-## 默认选择与快捷值
+- `PASS_FULL`：至少有真实改名，且选中的记录没有保留或不支持对象；
+- `PASS_PARTIAL`：gate 严格编译和逐字节恢复通过，但存在明确边界或保留对象；
+- `REFUSED_ATOMIC`：绑定、range、编译或恢复校验失败，不发布半成品。
 
-- 不提供 `--category` 时，单文件和不带 `--top` 的 filelist 加密表中的默认 13 类。
-- 不提供 `--category` 时，带 `--top` 的 filelist 和项目加密会处理全部 19 类。
-- 一旦手动使用 `--category`，工具只处理用户选择的类型，不再追加默认类型。
-- 快捷值 `all`（`--category all`）：选择全部 19 类。
-- 快捷值 `struct`（`--category struct`）：等同于
-  `--category struct_types --category struct_fields`。
-- 快捷值 `interface`（`--category interface`）：等同于
-  `--category interfaces --category interface_instances --category interface_ports --category modports`。
+合法的 SystemVerilog 不保证每个 semantic node 都有可编辑的物理 token；稳定性优先于猜测改名。
 
-filelist 提供 `--top`，或者只提供 `--source-root + --top` 进行项目加密后，工具会自动
-保证所选类型在子 module 定义和调用位置使用同一个新名称。top module 名称和对外端口
-始终保留。
+## 文件后缀
 
-当前版本会保留 top module 内部直接声明的 interface 实例名；interface 类型和成员仍会
-加密。
+`.sv`、`.v` 使用同一条 PySlang SystemVerilog 语义前端；`.svh`、`.vh` 是 include header；显式 filelist
+还可列出只读 `.h` 宏 context header。`.h` 不进入 source unit，也不是宏 rename target。
 
-## 常用示例
-
-只加密信号和 module 实例：
+## 示例
 
 ```sh
---category signals --category instances
+python rtl_encrypt.py \
+  --filelist design.f \
+  --top <可选顶层> \
+  --category signals \
+  --category interface \
+  --output-dir <尚不存在的目录>
 ```
 
-只加密 struct/union 类型和 struct 成员：
-
-```sh
---category struct --category union_fields
-```
-
-在带 `--top` 的 filelist 或项目加密中，只加密子 module 名称、端口和 interface：
-
-```sh
---category modules --category ports --category interface
-```
-
-选择当前支持的全部类型：
+选择四组：
 
 ```sh
 --category all

@@ -22,7 +22,7 @@ from .rate_metrics_vnext import (
 )
 from .rate_vnext import RateSelectionVNext, RateVNextError, build_rate_selection_vnext
 from .category_registry_vnext import CategoryRegistryError, normalize_categories
-from .rewrite_policy import RewritePolicyError, build_rewrite_policy
+from .rename_index import RenameIndexError, build_rename_index
 from .rewrite_vnext import (
     CompileEvidence,
     MappingExecutionVNext,
@@ -35,7 +35,6 @@ from .rewrite_vnext import (
 )
 from .source_catalog import SourceCatalogError, build_source_catalog
 from .source_set import SourceSet
-from .symbol_graph import SymbolGraphError, build_symbol_graph
 from .systemverilog_names import secure_name_factory
 
 
@@ -169,29 +168,25 @@ def _build_mapping(
     source_set: SourceSet,
     *,
     categories: Iterable[str],
-    abi_categories: Iterable[str],
     name_length: int,
     name_factory: NameFactory,
 ) -> MappingVNext:
     try:
         selected_categories = normalize_categories(categories, default=False)
         catalog = build_source_catalog(source_set)
-        graph = build_symbol_graph(catalog, categories=selected_categories)
-        policy = build_rewrite_policy(
-            graph,
+        rename_index = build_rename_index(
+            catalog,
             categories=selected_categories,
-            abi_categories=abi_categories,
         )
         return build_mapping_vnext(
-            policy,
+            rename_index,
             name_length=name_length,
             name_factory=name_factory,
         )
     except (
         CategoryRegistryError,
         SourceCatalogError,
-        SymbolGraphError,
-        RewritePolicyError,
+        RenameIndexError,
     ) as error:
         _fail("ORCHESTRATION_MAPPING_INVALID", str(error).split(": ", 1)[-1])
     except Exception as error:
@@ -218,7 +213,7 @@ def _validate_pipeline_identity(
     if rate_metrics is not None and not isinstance(rate_metrics, RateMetricsVNext):
         _fail("ORCHESTRATION_AUDIT_INVALID", "rate metrics is not RateMetricsVNext")
     try:
-        mapping_source_set = mapping.rewrite_policy.symbol_graph.source_catalog.source_set
+        mapping_source_set = mapping.rename_index.source_catalog.source_set
     except AttributeError as error:
         _fail("ORCHESTRATION_AUDIT_INVALID", f"mapping source identity is unavailable: {error}")
     if mapping_source_set is not source_set:
@@ -254,7 +249,7 @@ class OrchestrationVNext:
 
     def to_report(self) -> dict[str, object]:
         _validate_source_set(self.source_set)
-        if type(self.schema_version) is not int or self.schema_version != 1:
+        if type(self.schema_version) is not int or self.schema_version != 2:
             _fail("ORCHESTRATION_AUDIT_INVALID", "orchestration schema is invalid")
         _validate_pipeline_identity(
             self.source_set,
@@ -385,7 +380,6 @@ def run_vnext(
     source_set: SourceSet,
     *,
     categories: Iterable[str],
-    abi_categories: Iterable[str] = (),
     name_length: int = 20,
     name_factory: NameFactory = secure_name_factory,
     encryption_rate: str | None = None,
@@ -401,7 +395,6 @@ def run_vnext(
         mapping = _build_mapping(
             source_set,
             categories=categories,
-            abi_categories=abi_categories,
             name_length=name_length,
             name_factory=name_factory,
         )
@@ -430,7 +423,7 @@ def run_vnext(
             rate_metrics,
         )
         result = OrchestrationVNext(
-            schema_version=1,
+            schema_version=2,
             source_set=source_set,
             mapping_vnext=mapping,
             effective_mapping_vnext=effective_mapping,

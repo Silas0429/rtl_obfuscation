@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .mapping_vnext import InputFileDigest, MappingRecord, MappingVNext
-from .rewrite_policy import RewritePolicy
+from .rename_index import RenameIndex, SourceSymbol, SymbolOccurrence
 from .source_catalog import SourceCatalog, SourceRange
 from .source_set import SourceSet
-from .symbol_graph import SourceSymbol, SymbolGraph, SymbolOccurrence
 
 
 _ALGORITHM = "greedy_unique_line_v1"
@@ -57,7 +56,7 @@ class RateSelectionVNext:
             "format": "rtl-obfuscation.rate-selection-vnext",
             "schema_version": self.schema_version,
             "state": "planned",
-            "mapping_format": "rtl-obfuscation.mapping-vnext",
+            "mapping_format": "rtl-obfuscation.mapping",
             "algorithm": self.algorithm,
             "target": float(self.target),
             "total_lines": self.total_lines,
@@ -100,6 +99,10 @@ def _is_schema_one(value: object) -> bool:
     return type(value) is int and value == 1
 
 
+def _is_schema_two(value: object) -> bool:
+    return type(value) is int and value == 2
+
+
 def _portable_file(value: object) -> bool:
     if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value:
         return False
@@ -115,15 +118,12 @@ def _valid_sha256(value: object) -> bool:
 def _mapping_context(mapping: object) -> _MappingContext:
     if not isinstance(mapping, MappingVNext):
         _fail("RATE_MAPPING_INVALID", "input is not MappingVNext")
-    if mapping.format != "rtl-obfuscation.mapping-vnext" or not _is_schema_one(mapping.schema_version):
+    if mapping.format != "rtl-obfuscation.mapping" or not _is_schema_two(mapping.schema_version):
         _fail("RATE_MAPPING_INVALID", "mapping format or schema is invalid")
-    policy = mapping.rewrite_policy
-    if not isinstance(policy, RewritePolicy):
-        _fail("RATE_MAPPING_INVALID", "mapping policy is invalid")
-    graph = policy.symbol_graph
-    if not isinstance(graph, SymbolGraph) or not _is_schema_one(graph.schema_version):
-        _fail("RATE_MAPPING_INVALID", "mapping graph is invalid")
-    catalog = graph.source_catalog
+    rename_index = mapping.rename_index
+    if not isinstance(rename_index, RenameIndex) or not _is_schema_two(rename_index.schema_version):
+        _fail("RATE_MAPPING_INVALID", "mapping rename index is invalid")
+    catalog = rename_index.source_catalog
     if not isinstance(catalog, SourceCatalog) or not _is_schema_one(catalog.schema_version):
         _fail("RATE_MAPPING_INVALID", "mapping catalog is invalid")
     source_set = catalog.source_set
@@ -166,27 +166,28 @@ def _mapping_context(mapping: object) -> _MappingContext:
             _fail("RATE_MAPPING_INVALID", f"source manifest hash differs: {file}")
         source_data[file] = content
 
-    _validate_records(mapping, graph, policy, tuple(files), source_data)
+    _validate_records(mapping, rename_index, tuple(files), source_data)
     return _MappingContext(mapping, source_set, tuple(files), source_data)
 
 
 def _validate_records(
     mapping: MappingVNext,
-    graph: SymbolGraph,
-    policy: RewritePolicy,
+    rename_index: RenameIndex,
     files: tuple[str, ...],
     source_data: dict[str, bytes],
 ) -> None:
-    if not isinstance(mapping.records, tuple) or not isinstance(graph.symbols, tuple) or not isinstance(policy.decisions, tuple):
+    if not isinstance(mapping.records, tuple) or not isinstance(rename_index.symbols, tuple) or not isinstance(rename_index.decisions, tuple):
         _fail("RATE_MAPPING_INVALID", "mapping records, symbols, or decisions are not canonical")
-    if len(mapping.records) != len(graph.symbols) or len(mapping.records) != len(policy.decisions):
+    if len(mapping.records) != len(rename_index.symbols) or len(mapping.records) != len(rename_index.decisions):
         _fail("RATE_MAPPING_INVALID", "mapping records are not one-to-one")
-    for record, symbol, decision in zip(mapping.records, graph.symbols, policy.decisions):
+    for record, symbol, decision in zip(mapping.records, rename_index.symbols, rename_index.decisions):
         if not isinstance(record, MappingRecord) or not isinstance(symbol, SourceSymbol):
             _fail("RATE_MAPPING_INVALID", "mapping record or symbol is invalid")
         expected_fields = (
             (record.symbol_id, symbol.symbol_id),
             (record.category, getattr(decision, "category", None)),
+            (record.kind, symbol.kind),
+            (record.semantic_kind, symbol.semantic_kind),
             (record.action, getattr(decision, "action", None)),
             (record.reason, getattr(decision, "reason", None)),
             (record.original_name, symbol.name),
@@ -198,7 +199,7 @@ def _validate_records(
             (record.abi, symbol.abi),
         )
         if any(actual_value != expected_value for actual_value, expected_value in expected_fields):
-            _fail("RATE_MAPPING_INVALID", "mapping record identity differs from established graph/policy")
+            _fail("RATE_MAPPING_INVALID", "mapping record identity differs from established rename index")
         if record.action not in {"rename", "preserve", "unsupported"}:
             _fail("RATE_MAPPING_INVALID", "mapping record action is invalid")
         if record.action == "rename":
@@ -403,7 +404,7 @@ def _validate_selection(
     expected_candidates: tuple[RateCandidateVNext, ...],
     total_lines: int,
 ) -> tuple[RateCandidateVNext, ...]:
-    if not isinstance(selection, RateSelectionVNext) or not _is_schema_one(selection.schema_version):
+    if not isinstance(selection, RateSelectionVNext) or not _is_schema_two(selection.schema_version):
         _fail("RATE_MAPPING_INVALID", "selection schema is invalid")
     if selection.mapping_vnext is not context.mapping:
         _fail("RATE_MAPPING_INVALID", "selection mapping identity differs")
@@ -469,7 +470,7 @@ def build_rate_selection_vnext(mapping_vnext: MappingVNext, rate: str) -> RateSe
     )
     selected_lines = len(_candidate_union(selected_candidates[index] for index in selected_flags))
     selection = RateSelectionVNext(
-        schema_version=1,
+        schema_version=2,
         mapping_vnext=mapping_vnext,
         algorithm=_ALGORITHM,
         target=target,

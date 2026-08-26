@@ -8,7 +8,6 @@ from pathlib import Path
 from . import rewrite_vnext
 from .mapping_vnext import MappingRecord, MappingVNext
 from .rate_vnext import RateCandidateVNext, RateSelectionVNext, RateVNextError
-from .rewrite_policy import RewriteDecision, RewritePolicy
 
 
 @dataclass(frozen=True)
@@ -86,7 +85,7 @@ def _selection_candidates(
         _fail("RATE_EXECUTION_INVALID", "inputs are not MappingVNext and RateSelectionVNext")
     if rate_selection.mapping_vnext is not mapping_vnext:
         _fail("RATE_EXECUTION_INVALID", "rate selection mapping identity differs")
-    if type(rate_selection.schema_version) is not int or rate_selection.schema_version != 1:
+    if type(rate_selection.schema_version) is not int or rate_selection.schema_version != 2:
         _fail("RATE_EXECUTION_INVALID", "rate selection schema is invalid")
     try:
         rate_selection.to_report()
@@ -130,16 +129,16 @@ def build_rate_selected_mapping_vnext(
         mapping_vnext,
         rate_selection,
     )
-    policy = mapping_vnext.rewrite_policy
-    if not isinstance(policy, RewritePolicy) or not isinstance(policy.decisions, tuple):
-        _fail("RATE_MAPPING_INVALID", "mapping policy or decisions are invalid")
-    if len(policy.decisions) != len(mapping_vnext.records):
+    rename_index = mapping_vnext.rename_index
+    if not isinstance(rename_index.decisions, tuple):
+        _fail("RATE_MAPPING_INVALID", "rename index decisions are invalid")
+    if len(rename_index.decisions) != len(mapping_vnext.records):
         _fail("RATE_MAPPING_INVALID", "mapping records and decisions are not one-to-one")
 
     records: list[MappingRecord] = []
-    decisions: list[RewriteDecision] = []
-    for record, decision in zip(mapping_vnext.records, policy.decisions):
-        if not isinstance(record, MappingRecord) or not isinstance(decision, RewriteDecision):
+    decisions = []
+    for record, decision in zip(mapping_vnext.records, rename_index.decisions):
+        if not isinstance(record, MappingRecord):
             _fail("RATE_MAPPING_INVALID", "mapping record or decision is invalid")
         if record.action == "rename":
             if record.symbol_id in selected_ids:
@@ -161,10 +160,10 @@ def build_rate_selected_mapping_vnext(
             records.append(record)
             decisions.append(decision)
 
-    materialized_policy = replace(policy, decisions=tuple(decisions))
+    materialized_index = replace(rename_index, decisions=tuple(decisions))
     return replace(
         mapping_vnext,
-        rewrite_policy=materialized_policy,
+        rename_index=materialized_index,
         records=tuple(records),
     )
 
@@ -190,7 +189,7 @@ def _map_rewrite_error(error: rewrite_vnext.RewriteVNextError, *, restoring: boo
 
 
 def _validate_rate_execution(rate_execution: object) -> RateRewriteExecutionVNext:
-    if not isinstance(rate_execution, RateRewriteExecutionVNext) or type(rate_execution.schema_version) is not int or rate_execution.schema_version != 1:
+    if not isinstance(rate_execution, RateRewriteExecutionVNext) or type(rate_execution.schema_version) is not int or rate_execution.schema_version != 2:
         _fail("RATE_EXECUTION_INVALID", "rate execution schema is invalid")
     mapping, selection, _candidates, _selected_ids = _selection_candidates(
         rate_execution.rate_selection.mapping_vnext,
@@ -200,7 +199,7 @@ def _validate_rate_execution(rate_execution: object) -> RateRewriteExecutionVNex
         _fail("RATE_EXECUTION_INVALID", "rewrite execution is invalid")
     expected_mapping = build_rate_selected_mapping_vnext(mapping, selection)
     actual_mapping = rate_execution.rewrite_execution.mapping_vnext
-    if actual_mapping != expected_mapping or actual_mapping.rewrite_policy.decisions != expected_mapping.rewrite_policy.decisions:
+    if actual_mapping != expected_mapping or actual_mapping.rename_index.decisions != expected_mapping.rename_index.decisions:
         _fail("RATE_MAPPING_INVALID", "rewrite execution does not reference materialized mapping")
     evidence = rate_execution.rewrite_execution.compile_evidence
     if not isinstance(evidence, rewrite_vnext.CompileEvidence) or not _strict_compile_passed(evidence):
@@ -227,7 +226,7 @@ def write_rate_selected_gate_vnext(
     except rewrite_vnext.RewriteVNextError as error:
         _map_rewrite_error(error, restoring=False)
     execution = RateRewriteExecutionVNext(
-        schema_version=1,
+        schema_version=2,
         rate_selection=rate_selection,
         rewrite_execution=rewrite_execution,
     )

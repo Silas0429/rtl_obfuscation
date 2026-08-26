@@ -1,4 +1,4 @@
-"""Fail-closed planned mapping vNext over an established RewritePolicy."""
+"""Schema-2 mapping built from the PySlang RenameIndex."""
 
 from __future__ import annotations
 
@@ -6,16 +6,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import hashlib
 from pathlib import Path
-import re
 from stat import S_ISREG
 from typing import Any
 
-from .rewrite_policy import RewritePolicy, build_rewrite_policy
 from .source_catalog import SourceCatalog, SourceRange
 from .source_set import SourceSet
-from .symbol_graph import (
+from .rename_index import (
+    RenameIndex,
+    RenameDecision,
     SourceSymbol,
-    SymbolGraph,
     SymbolOccurrence,
 )
 from .systemverilog_names import is_plain_identifier
@@ -34,6 +33,8 @@ class InputFileDigest:
 class MappingRecord:
     symbol_id: str
     category: str
+    kind: str
+    semantic_kind: str
     action: str
     reason: str | None
     original_name: str
@@ -50,13 +51,13 @@ class MappingRecord:
 class MappingVNext:
     format: str
     schema_version: int
-    rewrite_policy: RewritePolicy = field(repr=False, compare=False)
+    rename_index: RenameIndex = field(repr=False, compare=False)
     name_length: int
     input_manifest: tuple[InputFileDigest, ...]
     records: tuple[MappingRecord, ...]
 
     def to_report(self) -> dict[str, object]:
-        source_set = self.rewrite_policy.symbol_graph.source_catalog.source_set
+        source_set = self.rename_index.source_catalog.source_set
         return {
             "format": self.format,
             "schema_version": self.schema_version,
@@ -64,9 +65,9 @@ class MappingVNext:
             "source_set": _source_set_report(source_set),
             "selection": {
                 "selected_categories": list(
-                    self.rewrite_policy.selected_categories
+                    self.rename_index.selected_categories
                 ),
-                "abi_categories": list(self.rewrite_policy.abi_categories),
+                "abi_categories": [],
                 "preserve_top_boundary": True,
             },
             "name_length": self.name_length,
@@ -75,6 +76,7 @@ class MappingVNext:
                 for digest in self.input_manifest
             ],
             "records": [_record_report(record) for record in self.records],
+            "category_outcomes": [dict(item) for item in self.rename_index.category_outcomes],
             "summary": _summary(self.records),
             "range_audit": {
                 "declarations": len(self.records),
@@ -95,9 +97,6 @@ class MappingVNextError(ValueError):
         self.code = code
         self.message = message
         super().__init__(f"{code}: {message}")
-
-
-_LEXICAL_IDENTIFIER = re.compile(rb"[A-Za-z][A-Za-z0-9_]*")
 
 
 def _raise(code: str, message: str) -> None:
@@ -130,8 +129,11 @@ def _range_report(source_range: SourceRange) -> dict[str, object]:
 
 def _record_report(record: MappingRecord) -> dict[str, object]:
     return {
+        "record_id": record.symbol_id,
         "symbol_id": record.symbol_id,
         "category": record.category,
+        "kind": record.kind,
+        "semantic_kind": record.semantic_kind,
         "action": record.action,
         "reason": record.reason,
         "original_name": record.original_name,
@@ -165,55 +167,33 @@ def _summary(records: tuple[MappingRecord, ...]) -> dict[str, int]:
     }
 
 
-def _schema_one(value: object) -> bool:
-    return type(value) is int and value == 1
-
-
-def _validate_policy(
-    rewrite_policy: RewritePolicy,
-) -> tuple[SymbolGraph, SourceCatalog, SourceSet]:
-    if not isinstance(rewrite_policy, RewritePolicy):
-        _raise("MAPPING_POLICY_INVALID", "input is not a RewritePolicy")
-    if not _schema_one(rewrite_policy.schema_version):
-        _raise("MAPPING_POLICY_INVALID", "RewritePolicy schema_version is not 1")
-
-    graph = rewrite_policy.symbol_graph
-    if not isinstance(graph, SymbolGraph) or not _schema_one(graph.schema_version):
-        _raise("MAPPING_POLICY_INVALID", "SymbolGraph schema_version is not 1")
-    catalog = graph.source_catalog
-    if not isinstance(catalog, SourceCatalog) or not _schema_one(catalog.schema_version):
-        _raise("MAPPING_POLICY_INVALID", "SourceCatalog schema_version is not 1")
+def _validate_index(
+    rename_index: RenameIndex,
+) -> tuple[RenameIndex, SourceCatalog, SourceSet]:
+    if not isinstance(rename_index, RenameIndex):
+        _raise("MAPPING_INDEX_INVALID", "input is not a RenameIndex")
+    if type(rename_index.schema_version) is not int or rename_index.schema_version != 2:
+        _raise("MAPPING_INDEX_INVALID", "RenameIndex schema_version is not 2")
+    catalog = rename_index.source_catalog
+    if not isinstance(catalog, SourceCatalog) or catalog.schema_version != 1:
+        _raise("MAPPING_SOURCE_INVALID", "SourceCatalog schema_version is not 1")
     source_set = catalog.source_set
-    if not isinstance(source_set, SourceSet) or not _schema_one(source_set.schema_version):
-        _raise("MAPPING_POLICY_INVALID", "SourceSet schema_version is not 1")
-    if not isinstance(rewrite_policy.selected_categories, tuple):
-        _raise("MAPPING_POLICY_INVALID", "selected_categories is not canonical")
-    if not isinstance(rewrite_policy.abi_categories, tuple):
-        _raise("MAPPING_POLICY_INVALID", "abi_categories is not canonical")
-    if not isinstance(rewrite_policy.decisions, tuple):
-        _raise("MAPPING_POLICY_INVALID", "decisions are not canonical")
-    if not isinstance(graph.symbols, tuple):
-        _raise("MAPPING_POLICY_INVALID", "symbols are not canonical")
-
-    try:
-        expected = build_rewrite_policy(
-            graph,
-            categories=rewrite_policy.selected_categories,
-            abi_categories=rewrite_policy.abi_categories,
-        )
-    except Exception as error:
-        _raise("MAPPING_POLICY_INVALID", f"canonical policy rebuild failed: {error}")
-    if rewrite_policy.selected_categories != expected.selected_categories:
-        _raise("MAPPING_POLICY_INVALID", "selected_categories differ from canonical policy")
-    if rewrite_policy.abi_categories != expected.abi_categories:
-        _raise("MAPPING_POLICY_INVALID", "abi_categories differ from canonical policy")
-    if len(rewrite_policy.decisions) != len(expected.decisions):
-        _raise("MAPPING_POLICY_INVALID", "decision count differs from canonical policy")
-    if rewrite_policy.decisions != expected.decisions:
-        _raise("MAPPING_POLICY_INVALID", "decisions differ from canonical policy")
-    if len(graph.symbols) != len(rewrite_policy.decisions):
-        _raise("MAPPING_POLICY_INVALID", "graph and policy are not one-to-one")
-    return graph, catalog, source_set
+    if not isinstance(source_set, SourceSet) or source_set.schema_version != 1:
+        _raise("MAPPING_SOURCE_INVALID", "SourceSet schema_version is not 1")
+    if not isinstance(rename_index.selected_categories, tuple):
+        _raise("MAPPING_INDEX_INVALID", "selected_categories is not canonical")
+    if not isinstance(rename_index.symbols, tuple) or not isinstance(rename_index.decisions, tuple):
+        _raise("MAPPING_INDEX_INVALID", "symbols and decisions are not canonical")
+    if len(rename_index.symbols) != len(rename_index.decisions):
+        _raise("MAPPING_INDEX_INVALID", "symbols and decisions are not one-to-one")
+    for symbol, decision in zip(rename_index.symbols, rename_index.decisions):
+        if not isinstance(symbol, SourceSymbol) or not isinstance(decision, RenameDecision):
+            _raise("MAPPING_INDEX_INVALID", "RenameIndex contains an invalid symbol or decision")
+        if decision.symbol_id != symbol.symbol_id or decision.category != symbol.category:
+            _raise("MAPPING_INDEX_INVALID", "RenameIndex decision does not match symbol")
+        if decision.action not in {"rename", "preserve", "unsupported"}:
+            _raise("MAPPING_INDEX_INVALID", "RenameIndex action is not canonical")
+    return rename_index, catalog, source_set
 
 
 def _physical_files(source_set: SourceSet) -> tuple[str, ...]:
@@ -248,7 +228,7 @@ def _physical_files(source_set: SourceSet) -> tuple[str, ...]:
 
 def _validate_owners(
     catalog: SourceCatalog,
-    graph: SymbolGraph,
+    rename_index: RenameIndex,
     physical_files: tuple[str, ...],
 ) -> dict[str, Any]:
     if not isinstance(catalog.modules, tuple):
@@ -277,12 +257,13 @@ def _validate_owners(
         _raise("MAPPING_SOURCE_INVALID", "SourceCatalog semantic owner registry is incomplete")
     if any(owner_id not in registered for owner_id in owners):
         _raise("MAPPING_SOURCE_INVALID", "module owner is absent from semantic owner registry")
+    module_names = {getattr(module, "name", "") for module in catalog.modules}
 
     physical = set(physical_files)
-    for symbol in graph.symbols:
+    for symbol in rename_index.symbols:
         if not isinstance(symbol, SourceSymbol):
-            _raise("MAPPING_SOURCE_INVALID", "graph contains a non-source symbol")
-        if symbol.owner_module not in registered:
+            _raise("MAPPING_SOURCE_INVALID", "RenameIndex contains a non-source symbol")
+        if symbol.owner_module not in module_names and not symbol.owner_module.startswith("interface:") and symbol.owner_module != "$unit":
             _raise("MAPPING_SOURCE_INVALID", "symbol owner_module is not in SourceCatalog")
         if symbol.semantic_owner not in registered:
             _raise("MAPPING_SOURCE_INVALID", "symbol semantic_owner is not in SourceCatalog")
@@ -316,13 +297,13 @@ def _read_sources(
 
 
 def _validate_ranges(
-    graph: SymbolGraph,
+    rename_index: RenameIndex,
     physical_files: tuple[str, ...],
     sources: dict[str, bytes],
 ) -> None:
     ranges: list[tuple[str, int, int]] = []
     physical = set(physical_files)
-    for symbol in graph.symbols:
+    for symbol in rename_index.symbols:
         if not isinstance(symbol.name, str) or not symbol.name:
             _raise("MAPPING_RANGE_INVALID", "symbol original name is invalid")
         for source_range in (
@@ -372,18 +353,16 @@ def _semantic_names(catalog: SourceCatalog) -> set[str]:
 def _unavailable_names(
     catalog: SourceCatalog,
     sources: dict[str, bytes],
-    graph: SymbolGraph,
+    rename_index: RenameIndex,
 ) -> set[str]:
     unavailable: set[str] = set()
-    for data in sources.values():
-        unavailable.update(match.decode("ascii") for match in _LEXICAL_IDENTIFIER.findall(data))
     unavailable.update(_semantic_names(catalog))
-    unavailable.update(symbol.name for symbol in graph.symbols)
+    unavailable.update(symbol.name for symbol in rename_index.symbols)
     return unavailable
 
 
 def build_mapping_vnext(
-    rewrite_policy: RewritePolicy,
+    rename_index: RenameIndex,
     *,
     name_length: int,
     name_factory: NameFactory,
@@ -395,16 +374,18 @@ def build_mapping_vnext(
     if not callable(name_factory):
         _raise("MAPPING_NAME_FACTORY_INVALID", "name_factory must be callable")
 
-    graph, catalog, source_set = _validate_policy(rewrite_policy)
+    rename_index, catalog, source_set = _validate_index(rename_index)
     physical_files = _physical_files(source_set)
-    _validate_owners(catalog, graph, physical_files)
+    _validate_owners(catalog, rename_index, physical_files)
     sources, manifest = _read_sources(source_set, physical_files)
-    _validate_ranges(graph, physical_files, sources)
+    _validate_ranges(rename_index, physical_files, sources)
 
     records = tuple(
         MappingRecord(
             symbol_id=symbol.symbol_id,
             category=decision.category,
+            kind=symbol.kind,
+            semantic_kind=symbol.semantic_kind,
             action=decision.action,
             reason=decision.reason,
             original_name=symbol.name,
@@ -416,10 +397,10 @@ def build_mapping_vnext(
             impact=symbol.impact,
             abi=symbol.abi,
         )
-        for symbol, decision in zip(graph.symbols, rewrite_policy.decisions)
+        for symbol, decision in zip(rename_index.symbols, rename_index.decisions)
     )
 
-    unavailable = _unavailable_names(catalog, sources, graph)
+    unavailable = _unavailable_names(catalog, sources, rename_index)
     renamed_records: list[MappingRecord] = []
     for record in records:
         if record.action != "rename":
@@ -445,9 +426,9 @@ def build_mapping_vnext(
         renamed_records.append(replace(record, renamed_name=candidate))
 
     return MappingVNext(
-        format="rtl-obfuscation.mapping-vnext",
-        schema_version=1,
-        rewrite_policy=rewrite_policy,
+        format="rtl-obfuscation.mapping",
+        schema_version=2,
+        rename_index=rename_index,
         name_length=name_length,
         input_manifest=manifest,
         records=tuple(renamed_records),

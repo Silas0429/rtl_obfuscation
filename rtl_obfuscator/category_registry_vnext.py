@@ -9,54 +9,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 
-CANONICAL_CATEGORIES = (
-    "signals",
-    "parameters",
-    "enum_values",
-    "genvars",
-    "functions",
-    "tasks",
-    "arguments",
-    "instances",
-    "generate_blocks",
-    "typedefs",
-    "struct_types",
-    "struct_fields",
-    "union_fields",
-    "modules",
-    "ports",
-    "interfaces",
-    "interface_instances",
-    "interface_ports",
-    "modports",
-)
+CANONICAL_CATEGORIES = ("signals", "ports", "interface", "struct")
 
-DEFAULT_CATEGORIES = CANONICAL_CATEGORIES[:13]
-ALIASES = {
-    "struct": ("struct_types", "struct_fields"),
-    "interface": (
-        "interfaces",
-        "interface_instances",
-        "interface_ports",
-        "modports",
-    ),
-}
+DEFAULT_CATEGORIES = CANONICAL_CATEGORIES
+ALIASES: dict[str, tuple[str, ...]] = {}
 GROUPS = {category: (category,) for category in CANONICAL_CATEGORIES}
-GROUPS.update(ALIASES)
-GROUPS["all"] = DEFAULT_CATEGORIES
-MODULE_ABI_CATEGORIES = (
-    "parameters",
-    "typedefs",
-    "struct_types",
-    "struct_fields",
-    "union_fields",
-    "modules",
-    "ports",
-    "interfaces",
-    "interface_instances",
-    "interface_ports",
-    "modports",
-)
+GROUPS["all"] = CANONICAL_CATEGORIES
 
 
 class CategoryRegistryError(ValueError):
@@ -93,21 +51,6 @@ def normalize_categories(
             )
         expanded.update(GROUPS[value])
     return tuple(category for category in CANONICAL_CATEGORIES if category in expanded)
-
-
-def normalize_abi_categories(values: Iterable[str] | None) -> tuple[str, ...]:
-    requested = _items(values, label="abi_categories")
-    unknown = [
-        value
-        for value in requested
-        if not isinstance(value, str) or value not in MODULE_ABI_CATEGORIES
-    ]
-    if unknown:
-        raise CategoryRegistryError(
-            "CATEGORY_REGISTRY_UNKNOWN_ABI", f"unknown ABI category: {unknown[0]!r}"
-        )
-    selected = set(requested)
-    return tuple(category for category in MODULE_ABI_CATEGORIES if category in selected)
 
 
 def category_is_known(value: object) -> bool:

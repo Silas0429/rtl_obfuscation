@@ -20,9 +20,7 @@ from rtl_obfuscator import orchestration_vnext
 from rtl_obfuscator import restore_vnext
 from rtl_obfuscator.category_registry_vnext import (
     CANONICAL_CATEGORIES,
-    MODULE_ABI_CATEGORIES,
     CategoryRegistryError,
-    normalize_abi_categories,
     normalize_categories,
 )
 from rtl_obfuscator.source_set import (
@@ -32,10 +30,6 @@ from rtl_obfuscator.source_set import (
     from_single_file,
     infer_filelist_root,
 )
-from rtl_obfuscator.symbol_graph import _semantic_scopes, _syntax_span
-
-
-
 def _write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
@@ -84,9 +78,7 @@ class _PublicArgumentParser(argparse.ArgumentParser):
         )
 
 
-_CLI_VNEXT_DEFAULT_CATEGORIES = tuple(CANONICAL_CATEGORIES[:13])
 _CLI_VNEXT_CATEGORIES = frozenset(CANONICAL_CATEGORIES)
-_CLI_VNEXT_ABI_CATEGORIES = frozenset(MODULE_ABI_CATEGORIES)
 _CLI_VNEXT_PATH_FIELDS = ("output_dir", "map_file", "metrics_file")
 _CLI_VNEXT_PUBLIC_INPUT_HINT = (
     "请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，"
@@ -194,7 +186,6 @@ def _cli_vnext_validate_arguments(
 ) -> tuple[
     Path,
     tuple[Path, Path, Path],
-    tuple[str, ...],
     tuple[str, ...],
     int,
     str | None,
@@ -308,35 +299,27 @@ def _cli_vnext_validate_arguments(
     try:
         if public_cli:
             if args.category is None:
-                categories = (
-                    tuple(CANONICAL_CATEGORIES)
-                    if public_top_scope
-                    else _CLI_VNEXT_DEFAULT_CATEGORIES
+                _cli_vnext_fail(
+                    "CLI_VNEXT_CATEGORY_REQUIRED",
+                    "--category must be provided at least once",
+                    detail="allowed=signals,ports,interface,struct,all",
                 )
-            else:
-                requested: list[str] = []
-                for category in args.category:
-                    requested.extend(
-                        CANONICAL_CATEGORIES if category == "all" else (category,)
-                    )
+            requested: list[str] = []
+            for category in args.category:
+                requested.extend(
+                    CANONICAL_CATEGORIES if category == "all" else (category,)
+                )
+            try:
                 categories = normalize_categories(requested, default=False)
-            abi_categories = (
-                tuple(
-                    category
-                    for category in MODULE_ABI_CATEGORIES
-                    if category in categories
+            except CategoryRegistryError as error:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_CATEGORY_INVALID",
+                    error.message,
+                    detail="allowed=signals,ports,interface,struct,all",
                 )
-                if public_top_scope
-                else ()
-            )
         else:
-            categories = normalize_categories(args.category, default=True)
-            abi_categories = normalize_abi_categories(args.abi_category or ())
+            categories = normalize_categories(args.category, default=False)
     except CategoryRegistryError:
-        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
-    if any(category not in categories for category in abi_categories):
-        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
-    if abi_categories and args.top is None:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID")
     try:
         name_length = int(args.name_length)
@@ -382,7 +365,6 @@ def _cli_vnext_validate_arguments(
         source_root,
         (output_dir, map_file, metrics_file),
         categories,
-        abi_categories,
         name_length,
         rate,
         (map_default, metrics_default),
@@ -512,165 +494,8 @@ def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
 
 
-def _cli_vnext_scope_spans(
-    source_catalog: object,
-) -> tuple[
-    tuple[tuple[str, int, int, str], ...],
-    tuple[tuple[str, int, int], ...],
-]:
-    try:
-        nodes: list[object] = []
-        source_catalog.catalog_root.visit(nodes.append)
-        scopes = _semantic_scopes(source_catalog, nodes)
-    except (AttributeError, RuntimeError, TypeError, ValueError) as error:
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID", str(error))
-    module_spans = tuple(
-        (scope.file, scope.start, scope.end, scope.name)
-        for scope in scopes
-        if scope.kind == "module"
-    )
-    generate_spans = tuple(
-        sorted(
-            {
-                _syntax_span(source_catalog, node.syntax)
-                for node in nodes
-                if type(node).__name__
-                in {"GenerateBlockArraySymbol", "GenerateBlockSymbol"}
-                and getattr(node, "syntax", None) is not None
-            },
-            key=lambda span: (span[0], span[1], span[2]),
-        )
-    )
-    return module_spans, generate_spans
-
-
-def _cli_vnext_owner_details(
-    owner: str,
-    source_root: Path,
-    source_cache: dict[str, bytes],
-) -> tuple[str, str, int, int, bytes] | None:
-    if owner == "$unit":
-        return None
-    try:
-        owner_kind_file, start_text, end_text = owner.rsplit(":", 2)
-        owner_kind, file = owner_kind_file.split(":", 1)
-        start = int(start_text)
-        end = int(end_text)
-        if file not in source_cache:
-            source_path = (source_root / file).resolve()
-            source_path.relative_to(source_root)
-            source_cache[file] = source_path.read_bytes()
-        content = source_cache[file]
-        if start < 0 or start >= end or end > len(content):
-            raise ValueError("owner range is outside source bytes")
-    except (OSError, UnicodeError, ValueError, TypeError):
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    if owner_kind not in {"module", "generate", "subroutine", "type", "interface"}:
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    return owner_kind, file, start, end, content
-
-
-def _cli_vnext_module_name(
-    declaration: dict[str, object],
-    module_spans: tuple[tuple[str, int, int, str], ...],
-) -> str:
-    file = declaration.get("file")
-    start = declaration.get("start")
-    if not isinstance(file, str) or type(start) is not int:
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    matches = [
-        scope
-        for scope in module_spans
-        if scope[0] == file and scope[1] <= start < scope[2]
-    ]
-    if not matches:
-        return "global"
-    return max(matches, key=lambda scope: (scope[2] - scope[1], -scope[1]))[3]
-
-
-def _cli_vnext_scope_name(
-    record: dict[str, object],
-    source_root: Path,
-    source_cache: dict[str, bytes],
-    generate_spans: tuple[tuple[str, int, int], ...],
-) -> str:
-    declaration = record.get("declaration")
-    if isinstance(declaration, dict):
-        file = declaration.get("file")
-        start = declaration.get("start")
-        if isinstance(file, str) and type(start) is int:
-            matches = [
-                span
-                for span in generate_spans
-                if span[0] == file and span[1] <= start < span[2]
-            ]
-            if matches:
-                _span_file, span_start, span_end = min(
-                    matches,
-                    key=lambda span: (span[2] - span[1], span[1]),
-                )
-                if file not in source_cache:
-                    try:
-                        source_path = (source_root / file).resolve()
-                        source_path.relative_to(source_root)
-                        source_cache[file] = source_path.read_bytes()
-                    except (OSError, RuntimeError, ValueError) as error:
-                        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID", str(error))
-                content = source_cache[file]
-                segment = content[span_start:span_end]
-                begin = re.search(rb"\bbegin\b", segment)
-                if begin is not None:
-                    label = re.match(
-                        rb"\s*:\s*([A-Za-z_][A-Za-z0-9_$]*)",
-                        segment[begin.end() :],
-                    )
-                    if label is not None:
-                        return f"generate:{label.group(1).decode('utf-8')}"
-                line = content[:span_start].count(b"\n") + 1
-                return f"generate:line {line}"
-    owner = record.get("owner_module")
-    if not isinstance(owner, str):
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    details = _cli_vnext_owner_details(owner, source_root, source_cache)
-    if details is None:
-        return "global"
-    owner_kind, _file, start, end, content = details
-    if owner_kind == "module":
-        return "module"
-    if owner_kind == "generate":
-        segment = content[start:end]
-        begin = re.search(rb"\bbegin\b", segment)
-        if begin is not None:
-            label = re.match(
-                rb"\s*:\s*([A-Za-z_][A-Za-z0-9_$]*)",
-                segment[begin.end() :],
-            )
-            if label is not None:
-                return f"generate:{label.group(1).decode('utf-8')}"
-        line = content[:start].count(b"\n") + 1
-        return f"generate:line {line}"
-    try:
-        name = content[start:end].decode("utf-8")
-    except UnicodeError as error:
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID", str(error))
-    if not name:
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    if owner_kind == "subroutine":
-        prefix = {
-            "functions": "function",
-            "tasks": "task",
-        }.get(record.get("category"), "subroutine")
-        return f"{prefix}:{name}"
-    if owner_kind in {"type", "interface"}:
-        return f"{owner_kind}:{name}"
-    return f"{owner_kind}:{name}"
-
-
 def _cli_vnext_mapping_table(
     report: dict[str, Any],
-    source_root: Path,
-    module_spans: tuple[tuple[str, int, int, str], ...],
-    generate_spans: tuple[tuple[str, int, int], ...],
 ) -> str:
     mapping = report.get("mapping")
     if not isinstance(mapping, dict) or not isinstance(mapping.get("records"), list):
@@ -700,13 +525,8 @@ def _cli_vnext_mapping_table(
         writer.writerow(
             (
                 declaration["file"],
-                _cli_vnext_module_name(declaration, module_spans),
-                _cli_vnext_scope_name(
-                    record,
-                    source_root,
-                    source_cache,
-                    generate_spans,
-                ),
+                record["owner_module"],
+                record["kind"],
                 record["category"],
                 record["original_name"],
                 record["renamed_name"],
@@ -821,7 +641,6 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         source_root,
         (output_dir, map_file, metrics_file),
         categories,
-        abi_categories,
         name_length,
         rate,
         (map_default, metrics_default),
@@ -838,7 +657,6 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             result = orchestration_vnext.run_vnext(
                 source_set,
                 categories=categories,
-                abi_categories=abi_categories,
                 name_length=name_length,
                 encryption_rate=rate,
                 gate_dir=gate_dir,
@@ -871,19 +689,11 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         staged_metrics = gate_dir / "metrics.json" if metrics_default else staging_root / "metrics.json"
         staged_mapping_table = gate_dir / "mapping_table.csv"
         staged_encryption_summary = gate_dir / "encryption_summary.txt"
-        module_spans, generate_spans = _cli_vnext_scope_spans(
-            result.mapping_vnext.rewrite_policy.symbol_graph.source_catalog
-        )
         _cli_vnext_write_json_atomic(staged_map, report)
         _cli_vnext_write_json_atomic(staged_metrics, metrics_report)
         _cli_vnext_write_text_atomic(
             staged_mapping_table,
-            _cli_vnext_mapping_table(
-                report,
-                source_root,
-                module_spans,
-                generate_spans,
-            ),
+            _cli_vnext_mapping_table(report),
         )
         _cli_vnext_write_text_atomic(
             staged_encryption_summary,
@@ -897,7 +707,7 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         _cli_vnext_publish(artifacts)
         return {
             "format": "rtl-obfuscation.cli-vnext",
-            "schema_version": 1,
+            "schema_version": 2,
             "state": "restored",
             "action_counts": action_counts,
             "summary": summary,
@@ -960,7 +770,7 @@ def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         restore_vnext.publish_restore_vnext(artifacts)
         return {
             "format": "rtl-obfuscation.restore-vnext-cli",
-            "schema_version": 1,
+            "schema_version": 2,
             "state": "restored",
             "summary": restored.report["summary"],
         }
@@ -1028,8 +838,6 @@ def _register_encrypt_arguments(
         default=None,
         help=public_help["category"] if public_cli else None,
     )
-    if not public_cli:
-        parser.add_argument("--abi-category", action="append", default=None)
     parser.add_argument(
         "--encryption-rate",
         help=public_help["encryption_rate"] if public_cli else None,

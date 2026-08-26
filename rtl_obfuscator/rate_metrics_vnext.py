@@ -100,7 +100,7 @@ def _validate_rate_execution_input(
 ) -> rate_execution_vnext.RateRewriteExecutionVNext:
     if not isinstance(rate_execution, rate_execution_vnext.RateRewriteExecutionVNext):
         _fail("RATE_METRICS_EXECUTION_INVALID", "input is not RateRewriteExecutionVNext")
-    if type(rate_execution.schema_version) is not int or rate_execution.schema_version != 1:
+    if type(rate_execution.schema_version) is not int or rate_execution.schema_version != 2:
         _fail("RATE_METRICS_EXECUTION_INVALID", "rate execution schema is invalid")
     if not isinstance(rate_execution.rate_selection, RateSelectionVNext):
         _fail("RATE_METRICS_EXECUTION_INVALID", "rate selection is invalid")
@@ -108,11 +108,15 @@ def _validate_rate_execution_input(
         _fail("RATE_METRICS_EXECUTION_INVALID", "rewrite execution is invalid")
     selected_mapping = rate_execution.rewrite_execution.mapping_vnext
     selection_mapping = rate_execution.rate_selection.mapping_vnext
+    selected_index = selected_mapping.rename_index
     if (
-        selected_mapping.rewrite_policy.symbol_graph
-        is not selection_mapping.rewrite_policy.symbol_graph
+        selected_index.source_catalog is not selection_mapping.rename_index.source_catalog
+        or selected_index.symbols is not selection_mapping.rename_index.symbols
     ):
-        _fail("RATE_METRICS_EXECUTION_INVALID", "T050 selection and selected mapping graph identity differs")
+        _fail(
+            "RATE_METRICS_EXECUTION_INVALID",
+            "rate selection and selected mapping do not share RenameIndex semantic evidence",
+        )
     try:
         rate_execution.to_report()
     except rate_execution_vnext.RateExecutionVNextError as error:
@@ -121,7 +125,7 @@ def _validate_rate_execution_input(
 
 
 def _validate_rate_metrics(rate_metrics: object) -> RateRewriteExecutionVNext:
-    if not isinstance(rate_metrics, RateMetricsVNext) or type(rate_metrics.schema_version) is not int or rate_metrics.schema_version != 1:
+    if not isinstance(rate_metrics, RateMetricsVNext) or type(rate_metrics.schema_version) is not int or rate_metrics.schema_version != 2:
         _fail("RATE_METRICS_EXECUTION_INVALID", "rate metrics schema is invalid")
     rate_execution = _validate_rate_execution_input(rate_metrics.rate_execution)
     if not isinstance(rate_metrics.mapping_execution, MappingExecutionVNext):
@@ -195,7 +199,7 @@ def build_rate_metrics_vnext(
     if metrics.mapping_execution is not mapping_execution:
         _fail("RATE_METRICS_INVALID", "T048 metrics identity was not preserved")
     result = RateMetricsVNext(
-        schema_version=1,
+        schema_version=2,
         rate_execution=rate_execution,
         mapping_execution=mapping_execution,
         metrics=metrics,

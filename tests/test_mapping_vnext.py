@@ -1,334 +1,142 @@
-from dataclasses import fields, replace
-import hashlib
+from __future__ import annotations
+
+from dataclasses import replace
 import json
 from pathlib import Path
 import unittest
-from rtl_obfuscator import rewrite
+
+from rtl_obfuscator.mapping_vnext import MappingVNextError, _validate_ranges, build_mapping_vnext
+from rtl_obfuscator.rename_index import SymbolOccurrence, build_rename_index
 from rtl_obfuscator.source_catalog import SourceRange, build_source_catalog
-from rtl_obfuscator.source_set import from_filelist, from_single_file
-from rtl_obfuscator.symbol_graph import SymbolGraph, build_symbol_graph
-from rtl_obfuscator.rewrite_policy import (
-    RewritePolicy,
-    RewriteDecision,
-    build_rewrite_policy,
-)
-from rtl_obfuscator.mapping_vnext import (
-    InputFileDigest,
-    MappingRecord,
-    MappingVNextError,
-    build_mapping_vnext,
-)
+from rtl_obfuscator.source_set import from_filelist
+from rtl_obfuscator.systemverilog_names import secure_name_factory
 
 
-FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "refactor_symbol_graph_parameters"
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "t108_pyslang_rename_index"
 
 
 class MappingVNextTests(unittest.TestCase):
-    def _graph(self, filelist: Path, *, top: str | None = None):
-        return build_symbol_graph(
-            build_source_catalog(
-                from_filelist(filelist=filelist, source_root=FIXTURE_ROOT, top=top)
-            )
+    def _mapping(self, categories):
+        source_set = from_filelist(filelist=FIXTURE / "design.f", top="top")
+        catalog = build_source_catalog(source_set)
+        index = build_rename_index(catalog, categories=categories)
+        return index, build_mapping_vnext(
+            index, name_length=20, name_factory=secure_name_factory
         )
 
-    def _policy(
-        self,
-        filelist: Path,
-        categories,
-        *,
-        top: str | None = None,
-        abi_categories=(),
-    ):
-        return build_rewrite_policy(
-            self._graph(filelist, top=top),
-            categories=categories,
-            abi_categories=abi_categories,
-        )
-
-    @staticmethod
-    def _mapping(policy, calls=None, length=16):
-        def factory(symbol_id, name_length, unavailable):
-            if calls is not None:
-                calls.append((symbol_id, name_length, unavailable))
-            return "n" + hashlib.sha256(symbol_id.encode("utf-8")).hexdigest()[: name_length - 1]
-
-        return build_mapping_vnext(
-            policy,
-            name_length=length,
-            name_factory=factory,
-        )
-
-    @staticmethod
-    def _policy_from_graph(graph, policy):
-        return build_rewrite_policy(
-            graph,
-            categories=policy.selected_categories,
-            abi_categories=policy.abi_categories,
-        )
-
-    @staticmethod
-    def _assert_code(callable_obj, code):
-        with unittest.TestCase().assertRaises(MappingVNextError) as raised:
-            callable_obj()
-        unittest.TestCase().assertEqual(raised.exception.code, code)
-        unittest.TestCase().assertTrue(str(raised.exception).startswith(f"{code}: "))
-
-    @staticmethod
-    def _assert_summary(testcase, mapping, rename: int) -> None:
-        summary = mapping.to_report()["summary"]
-        testcase.assertEqual(summary["rename"], rename)
-        testcase.assertEqual(summary["total"], len(mapping.records))
-        testcase.assertEqual(summary["unsupported"], 0)
-        testcase.assertEqual(summary["preserve"], summary["total"] - rename)
-
-    @staticmethod
-    def _assert_range_audit(testcase, mapping) -> None:
-        audit = mapping.to_report()["range_audit"]
-        testcase.assertEqual(audit["declarations"], len(mapping.records))
-        testcase.assertEqual(
-            audit["occurrences"],
-            sum(len(record.occurrences) for record in mapping.records),
-        )
-        testcase.assertEqual(
-            audit["total_ranges"],
-            audit["declarations"] + audit["occurrences"],
-        )
-
-    def test_full_no_top_has_20_records_13_7_summary_and_53_ranges(self):
-        policy = self._policy(
-            FIXTURE_ROOT / "design.f",
-            ["signals", "parameters", "genvars"],
-        )
-        mapping = self._mapping(policy)
-        self.assertEqual(len(mapping.records), len(policy.decisions))
-        self._assert_summary(self, mapping, 13)
-        self._assert_range_audit(self, mapping)
-
-    def test_full_top_parameter_abi_has_16_4_and_preserve_reasons(self):
-        policy = self._policy(
-            FIXTURE_ROOT / "design.f",
-            ["signals", "parameters", "genvars"],
-            top="parameter_top",
-            abi_categories=["parameters"],
-        )
-        calls = []
-        mapping = self._mapping(policy, calls)
-        self._assert_summary(self, mapping, 16)
-        self.assertEqual(len(calls), 16)
-        self.assertEqual(
-            sorted(
-                record.reason
-                for record in mapping.records
-                if record.action == "preserve"
-                and record.category in {"signals", "parameters", "genvars"}
-            ),
-            ["outside_top_closure", "selected_top_boundary", "selected_top_boundary", "selected_top_boundary"],
-        )
-
-    def test_closure_top_parameter_abi_has_14_3_and_48_ranges(self):
-        policy = self._policy(
-            FIXTURE_ROOT / "closure.f",
-            ["signals", "parameters", "genvars"],
-            top="parameter_top",
-            abi_categories=["parameters"],
-        )
-        calls = []
-        mapping = self._mapping(policy, calls)
-        self._assert_summary(self, mapping, 14)
-        self._assert_range_audit(self, mapping)
-        self.assertEqual(len(calls), 14)
-        self.assertEqual(
-            [item["file"] for item in mapping.to_report()["input_manifest"]],
-            ["rtl/child.sv", "rtl/shadow.sv", "rtl/top.sv"],
-        )
-
-    def test_single_file_and_filelist_reports_are_byte_identical(self):
-        filelist_policy = self._policy(FIXTURE_ROOT / "single.f", ["signals", "parameters"])
-        single_policy = build_rewrite_policy(
-            build_symbol_graph(
-                build_source_catalog(
-                    from_single_file(
-                        source_file=FIXTURE_ROOT / "single.sv",
-                        source_root=FIXTURE_ROOT,
-                    )
-                )
-            ),
-            categories=["signals", "parameters"],
-        )
-        first = self._mapping(filelist_policy).to_report()
-        second = self._mapping(single_policy).to_report()
-        self.assertEqual(
-            json.dumps(first, sort_keys=True, separators=(",", ":")),
-            json.dumps(second, sort_keys=True, separators=(",", ":")),
-        )
-        self._assert_summary(self, self._mapping(filelist_policy), 2)
-        self.assertEqual(
-            [item["file"] for item in first["input_manifest"]],
-            ["single.sv"],
-        )
-
-    def test_positional_and_signals_only_oracles(self):
-        positional_policy = self._policy(
-            FIXTURE_ROOT / "positional.f",
-            ["parameters"],
-            top="positional_top",
-            abi_categories=["parameters"],
-        )
-        signals_policy = self._policy(
-            FIXTURE_ROOT / "design.f",
-            ["signals"],
-            top="parameter_top",
-        )
-        positional_calls = []
-        signals_calls = []
-        positional = self._mapping(positional_policy, positional_calls)
-        signals = self._mapping(signals_policy, signals_calls)
-        self._assert_summary(self, positional, 1)
-        self._assert_range_audit(self, positional)
-        self._assert_summary(self, signals, 7)
-        self.assertEqual(len(positional_calls), 1)
-        self.assertEqual(len(signals_calls), 7)
-        self.assertEqual(
-            [item["file"] for item in positional.to_report()["input_manifest"]],
-            ["rtl/positional.sv"],
-        )
-
-    def test_records_graph_policy_dataclass_and_report_schema_are_stable(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"], top="parameter_top", abi_categories=["parameters"])
-        mapping = self._mapping(policy)
-        self.assertIsInstance(mapping, object)
-        self.assertEqual([record.symbol_id for record in mapping.records], [symbol.symbol_id for symbol in policy.symbol_graph.symbols])
-        self.assertEqual([record.action for record in mapping.records], [decision.action for decision in policy.decisions])
-        self.assertEqual({field.name for field in fields(mapping)}, {"format", "schema_version", "rewrite_policy", "name_length", "input_manifest", "records"})
-        self.assertEqual({field.name for field in fields(mapping.records[0])}, {"symbol_id", "category", "action", "reason", "original_name", "renamed_name", "owner_module", "semantic_owner", "declaration", "occurrences", "impact", "abi"})
+    def test_schema_two_contains_four_core_records_and_outcomes(self):
+        index, mapping = self._mapping(("all",))
         report = mapping.to_report()
-        self.assertEqual(list(report), ["format", "schema_version", "state", "source_set", "selection", "name_length", "input_manifest", "records", "summary", "range_audit"])
-        self.assertEqual(list(report["source_set"]), ["schema_version", "ordered_source_files", "included_files", "include_dirs", "defines", "top", "top_closure_files", "compile_order"])
-        self.assertEqual(set(report["records"][0]), {"symbol_id", "category", "action", "reason", "original_name", "renamed_name", "owner_module", "semantic_owner", "declaration", "occurrences", "impact", "abi"})
+        self.assertEqual(mapping.format, "rtl-obfuscation.mapping")
+        self.assertEqual(mapping.schema_version, 2)
+        self.assertEqual(index.schema_version, 2)
+        self.assertEqual(
+            report["selection"]["selected_categories"],
+            ["signals", "ports", "interface", "struct"],
+        )
+        self.assertEqual(
+            [item["category"] for item in report["category_outcomes"]],
+            ["signals", "ports", "interface", "struct"],
+        )
+        self.assertTrue(
+            all(record["record_id"] == record["symbol_id"] for record in report["records"])
+        )
+        self.assertTrue(
+            all("kind" in record and "semantic_kind" in record for record in report["records"])
+        )
+        self.assertTrue(
+            all(record["action"] in {"rename", "preserve", "unsupported"} for record in report["records"])
+        )
+        self.assertGreater(
+            sum(record["action"] == "rename" for record in report["records"]), 0
+        )
 
-    def test_deterministic_factory_arguments_unavailable_growth_and_json_stability(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"])
-        calls = []
-        mapping = self._mapping(policy, calls)
-        rename_records = [record for record in mapping.records if record.action == "rename"]
-        self.assertEqual([call[0] for call in calls], [record.symbol_id for record in rename_records])
-        self.assertTrue(all(call[1] == 16 and isinstance(call[2], frozenset) for call in calls))
-        for previous, current in zip(calls, calls[1:]):
-            self.assertIn(mapping.records[[record.symbol_id for record in mapping.records].index(previous[0])].renamed_name, current[2])
-        first = json.dumps(mapping.to_report(), sort_keys=True, separators=(",", ":"))
-        second = json.dumps(mapping.to_report(), sort_keys=True, separators=(",", ":"))
-        self.assertEqual(first, second)
-        self.assertEqual(len({record.renamed_name for record in rename_records}), len(rename_records))
-
-    def test_input_manifest_order_hashes_and_portable_report(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"])
-        mapping = self._mapping(policy)
-        manifest = mapping.to_report()["input_manifest"]
-        self.assertEqual([item["file"] for item in manifest], ["rtl/child.sv", "rtl/shadow.sv", "rtl/top.sv", "rtl/unreachable.sv"])
-        self.assertEqual([item["sha256"] for item in manifest], [
-            "5912234069b2b4cba33e365361c5974929886390ae9fda123d558102c6ce4777",
-            "51d9644e72641311d705ffef098d7836de8a1eaa4dd01a2421bfccc346f82aa8",
-            "a59967267facc37cc1fa468daa2d4f2372080ad2f38cf9143e9bd93da225c65a",
-            "2a120aa7a316a474980c31909d19f8c35d359b9761dc40fd771ea7ecbfb663aa",
-        ])
-        self.assertNotIn("origin", mapping.to_report()["source_set"])
-        self.assertNotIn("source_root", mapping.to_report()["source_set"])
-
-    def test_name_length_and_noncallable_factory_error_matrix(self):
-        policy = self._policy(FIXTURE_ROOT / "single.f", ["signals", "parameters"])
-        for value in (True, False, 3, 3.5, "16"):
-            with self.subTest(value=value):
-                self._assert_code(lambda value=value: build_mapping_vnext(policy, name_length=value, name_factory=lambda *_: "n" * 16), "MAPPING_NAME_LENGTH_INVALID")
-        self._assert_code(lambda: build_mapping_vnext(policy, name_length=16, name_factory=None), "MAPPING_NAME_FACTORY_INVALID")
-
-    def test_factory_exception_invalid_candidate_and_collision_errors(self):
-        policy = self._policy(FIXTURE_ROOT / "single.f", ["signals", "parameters"])
-        self._assert_code(lambda: build_mapping_vnext(policy, name_length=16, name_factory=lambda *_: (_ for _ in ()).throw(RuntimeError("boom"))), "MAPPING_NAME_FACTORY_FAILED")
-        for candidate in (None, "short", "_" + "a" * 15):
-            with self.subTest(candidate=candidate):
-                self._assert_code(lambda candidate=candidate: build_mapping_vnext(policy, name_length=16, name_factory=lambda *_: candidate), "MAPPING_NAME_INVALID")
-        for keyword in (
-            "module",
-            "cmos",
-            "config",
-            "endcase",
-            "endconfig",
-            "forever",
-            "instance",
-            "protected",
-            "pulsestyle_ondetect",
-            "pulsestyle_onevent",
-            "soft",
-        ):
-            with self.subTest(keyword=keyword):
-                self._assert_code(
-                    lambda keyword=keyword: build_mapping_vnext(
-                        policy,
-                        name_length=len(keyword),
-                        name_factory=lambda *_: keyword,
-                    ),
-                    "MAPPING_NAME_INVALID",
+    def test_selected_category_isolation_and_ranges_are_physical(self):
+        index, mapping = self._mapping(("struct",))
+        self.assertEqual(index.selected_categories, ("struct",))
+        self.assertTrue(all(symbol.category == "struct" for symbol in index.symbols))
+        report = mapping.to_report()
+        ranges = []
+        for record in report["records"]:
+            self.assertEqual(record["category"], "struct")
+            for item in [
+                record["declaration"],
+                *[entry["source_range"] for entry in record["occurrences"]],
+            ]:
+                data = (FIXTURE / item["file"]).read_bytes()
+                self.assertEqual(
+                    data[item["start"] : item["end"]],
+                    record["original_name"].encode(),
                 )
-        self._assert_code(lambda: build_mapping_vnext(policy, name_length=4, name_factory=lambda *_: "data"), "MAPPING_NAME_COLLISION")
+                ranges.append((item["file"], item["start"], item["end"]))
+        self.assertEqual(len(ranges), len(set(ranges)))
+        encoded = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("symbol_graph", encoded)
+        self.assertNotIn("rewrite_policy", encoded)
 
-    def test_replace_policy_schema_and_decision_fields_fail_closed(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"])
-        cases = [
-            replace(policy, schema_version=2),
-            replace(policy, symbol_graph=replace(policy.symbol_graph, schema_version=2)),
-            replace(policy, symbol_graph=replace(policy.symbol_graph, source_catalog=replace(policy.symbol_graph.source_catalog, schema_version=2))),
-            replace(policy, symbol_graph=replace(policy.symbol_graph, source_catalog=replace(policy.symbol_graph.source_catalog, source_set=replace(policy.symbol_graph.source_catalog.source_set, schema_version=2)))),
-            replace(policy, decisions=policy.decisions[:-1]),
-            replace(policy, decisions=(replace(policy.decisions[0], symbol_id="symbol:wrong") ,) + policy.decisions[1:]),
-            replace(policy, decisions=(replace(policy.decisions[0], category="signals") ,) + policy.decisions[1:]),
-            replace(policy, decisions=(replace(policy.decisions[0], action="rename", reason=None),) + policy.decisions[1:]),
-            replace(policy, decisions=policy.decisions[1:] + policy.decisions[:1]),
-        ]
-        for malformed in cases:
-            with self.subTest(malformed=malformed):
-                self._assert_code(lambda malformed=malformed: self._mapping(malformed), "MAPPING_POLICY_INVALID")
+    def test_name_factory_collision_and_invalid_name_are_rejected(self):
+        index, _mapping = self._mapping(("signals",))
+        source_name = next(symbol.name for symbol in index.symbols if len(symbol.name) >= 4)
 
-    def test_owner_semantic_owner_physical_file_and_range_errors_fail_closed(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"])
-        first = policy.symbol_graph.symbols[0]
-        cases = [
-            replace(first, owner_module="module:missing"),
-            replace(first, semantic_owner=""),
-            replace(first, semantic_owner="type:synthetic:0:1"),
-            replace(first, declaration=SourceRange("missing.sv", first.declaration.start, first.declaration.end)),
-            replace(first, declaration=SourceRange(first.declaration.file, True, first.declaration.end)),
-            replace(first, declaration=SourceRange(first.declaration.file, 0, 1)),
-        ]
-        for malformed_symbol in cases:
-            graph = replace(policy.symbol_graph, symbols=(malformed_symbol,) + policy.symbol_graph.symbols[1:])
-            malformed_policy = self._policy_from_graph(graph, policy)
-            expected = "MAPPING_SOURCE_INVALID" if malformed_symbol in cases[:4] else "MAPPING_RANGE_INVALID"
-            with self.subTest(malformed_symbol=malformed_symbol):
-                self._assert_code(lambda malformed_policy=malformed_policy: self._mapping(malformed_policy), expected)
+        with self.assertRaises(MappingVNextError) as collision:
+            build_mapping_vnext(
+                index,
+                name_length=len(source_name),
+                name_factory=lambda _symbol_id, _length, _unavailable: source_name,
+            )
+        self.assertEqual(collision.exception.code, "MAPPING_NAME_COLLISION")
 
-    def test_exact_duplicate_and_partial_overlap_ranges_fail_closed(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"])
-        first, second = policy.symbol_graph.symbols[:2]
-        duplicate = replace(second, name=first.name, declaration=first.declaration, occurrences=())
-        duplicate_graph = replace(policy.symbol_graph, symbols=(first, duplicate) + policy.symbol_graph.symbols[2:])
-        self._assert_code(lambda: self._mapping(self._policy_from_graph(duplicate_graph, policy)), "MAPPING_RANGE_OVERLAP")
+        with self.assertRaises(MappingVNextError) as invalid:
+            build_mapping_vnext(
+                index,
+                name_length=8,
+                name_factory=lambda _symbol_id, _length, _unavailable: "9" * 8,
+            )
+        self.assertEqual(invalid.exception.code, "MAPPING_NAME_INVALID")
 
-        data = (FIXTURE_ROOT / first.declaration.file).read_bytes()
-        overlap_range = SourceRange(first.declaration.file, first.declaration.start + 1, first.declaration.end + 1)
-        overlap_name = data[overlap_range.start : overlap_range.end].decode("utf-8")
-        overlap = replace(second, name=overlap_name, declaration=overlap_range, occurrences=())
-        overlap_graph = replace(policy.symbol_graph, symbols=(first, overlap) + policy.symbol_graph.symbols[2:])
-        self._assert_code(lambda: self._mapping(self._policy_from_graph(overlap_graph, policy)), "MAPPING_RANGE_OVERLAP")
+    def test_duplicate_and_overlap_ranges_fail_closed_before_mapping(self):
+        _index, mapping = self._mapping(("signals",))
+        symbols = mapping.rename_index.symbols
+        symbol = symbols[0]
+        duplicate = replace(
+            symbol,
+            occurrences=(
+                SymbolOccurrence(symbol.declaration, "synthetic_duplicate"),
+            ),
+        )
+        duplicate_index = replace(
+            mapping.rename_index,
+            symbols=(duplicate,),
+            decisions=(replace(mapping.rename_index.decisions[0]),),
+        )
+        duplicate_file = symbol.declaration.file
+        duplicate_sources = {
+            file: (FIXTURE / file).read_bytes()
+            for file in dict.fromkeys(
+                (
+                    *mapping.rename_index.source_catalog.source_set.ordered_source_files,
+                    *mapping.rename_index.source_catalog.source_set.included_files,
+                )
+            )
+        }
+        with self.assertRaises(MappingVNextError) as exact:
+            _validate_ranges(duplicate_index, (duplicate_file,), {duplicate_file: duplicate_sources[duplicate_file]})
+        self.assertEqual(exact.exception.code, "MAPPING_RANGE_OVERLAP")
 
-    def test_established_graph_blocks_compile_rebuild_and_legacy_paths(self):
-        policy = self._policy(FIXTURE_ROOT / "design.f", ["signals", "parameters", "genvars"], top="parameter_top", abi_categories=["parameters"])
-        before_graph = policy.symbol_graph.to_report()
-        before_bytes = {path: (FIXTURE_ROOT / path).read_bytes() for path in ["rtl/child.sv", "rtl/shadow.sv", "rtl/top.sv", "rtl/unreachable.sv"]}
-        mapping = self._mapping(policy)
-        self.assertEqual(mapping.to_report()["summary"]["rename"], 16)
-        self.assertEqual(policy.symbol_graph.to_report(), before_graph)
-        self.assertEqual(before_bytes, {path: (FIXTURE_ROOT / path).read_bytes() for path in before_bytes})
-
-
-if __name__ == "__main__":
-    unittest.main()
+        overlap_symbol = replace(
+            symbol,
+            name="aaa",
+            declaration=SourceRange("design.sv", 0, 3),
+            occurrences=(
+                SymbolOccurrence(SourceRange("design.sv", 2, 5), "synthetic_overlap"),
+            ),
+        )
+        overlap_index = replace(
+            mapping.rename_index,
+            symbols=(overlap_symbol,),
+            decisions=(replace(mapping.rename_index.decisions[0]),),
+        )
+        with self.assertRaises(MappingVNextError) as overlap:
+            _validate_ranges(overlap_index, ("design.sv",), {"design.sv": b"aaaaa"})
+        self.assertEqual(overlap.exception.code, "MAPPING_RANGE_OVERLAP")

@@ -122,7 +122,7 @@ def _portable_file(value: object) -> bool:
 def _metrics_context(mapping_execution: object) -> _MetricsContext:
     if not isinstance(mapping_execution, MappingExecutionVNext):
         _fail("METRICS_EXECUTION_INVALID", "input is not MappingExecutionVNext")
-    if not _is_schema_one(mapping_execution.schema_version):
+    if type(mapping_execution.schema_version) is not int or mapping_execution.schema_version != 2:
         _fail("METRICS_EXECUTION_INVALID", "mapping execution schema is invalid")
     try:
         report = mapping_execution.to_report()
@@ -137,7 +137,7 @@ def _metrics_context(mapping_execution: object) -> _MetricsContext:
     if (
         not isinstance(report, dict)
         or report.get("format") != "rtl-obfuscation.mapping-execution-vnext"
-        or report.get("schema_version") != 1
+        or report.get("schema_version") != 2
         or report.get("state") != "restored"
         or report.get("filelist") != "design.f"
     ):
@@ -182,7 +182,7 @@ def _metrics_context(mapping_execution: object) -> _MetricsContext:
     if not files:
         _fail("METRICS_MANIFEST_INVALID", "T047 manifest is empty")
 
-    source_set = mapping.rewrite_policy.symbol_graph.source_catalog.source_set
+    source_set = mapping.rename_index.source_catalog.source_set
     try:
         source_root = Path(source_set.source_root).expanduser().resolve()
     except (OSError, RuntimeError, TypeError) as error:
@@ -374,7 +374,7 @@ def _validate_metrics_equations(
     effective_total: int,
     affected_total: int,
 ) -> None:
-    if not isinstance(metrics, MetricsVNext) or not _is_schema_one(metrics.schema_version):
+    if not isinstance(metrics, MetricsVNext) or type(metrics.schema_version) is not int or metrics.schema_version != 2:
         _fail("METRICS_EXECUTION_INVALID", "metrics schema is invalid")
     for value, label in (
         (metrics.effective_line_total, "effective_line_total"),
@@ -446,7 +446,7 @@ def build_metrics_vnext(
     )
     _renamed_symbols, eligible_symbols, _renamed_occurrences, eligible_occurrences = _coverage_counts(context)
     metrics = MetricsVNext(
-        schema_version=1,
+        schema_version=2,
         mapping_execution=mapping_execution,
         effective_line_total=effective_total,
         affected_line_count=affected_total,

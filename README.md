@@ -1,18 +1,9 @@
 # RTL Obfuscation
 
-本项目通过一致改写 SystemVerilog RTL 名称来加密源码，并可使用 `mapping.json` 恢复原文件。
-
-输入后缀边界：独立编译单元支持小写 `.sv`、`.v`，被 include 的物理头文件支持小写 `.svh`、`.vh`；
-显式 filelist 还可列出只读的 `.h` 宏上下文文件。前四种后缀沿用当前 PySlang 的 SystemVerilog
-语义模式解析；`.h` 只作为 filelist context provider，不是独立 source unit，也不进入 project-root
-自动扫描。大写 `.V/.VH/.H`、`.txt` 和把 header 当作单文件 source unit 会稳定失败。
+本项目使用 PySlang 的编译与 elaboration 结果识别 RTL 名称，并对有完整物理绑定证据的对象进行改名。
+实际工程请优先使用显式 filelist；工具不修改宏对象，也不会猜测 owner、scope 或源码 token。
 
 ## 3 分钟快速开始
-
-前提：在仓库根目录使用 Python 3.10 或更高版本，并已安装 PySlang 11.x；如未安装，跳到
-[安装](#安装)。
-
-复制下面命令即可完成一次 filelist 加密和恢复：
 
 ```sh
 quick_work="$(mktemp -d /tmp/rtl-obfuscation-quick.XXXXXX)"
@@ -26,188 +17,102 @@ python rtl_decrypt.py \
   --map "$quick_work/gate/mapping.json" \
   --gate-dir "$quick_work/gate" \
   --output-dir "$quick_work/restored"
-for source in fifo_if.sv fifo_storage.sv fifo_ctrl.sv fifo_top.sv; do
-  cmp "rtl_samples/example_fifo/$source" \
-    "$quick_work/restored/$source"
-done
 ```
 
-如何判断成功：
+成功条件：命令退出码为 `0`，`summary.strict_compile_passed` 和
+`summary.restored_byte_identical` 均为 `true`。结果中的 `rename`、`preserve`、`unsupported`
+分别表示实际改名、按边界保留、因证据不足保留。
 
-- 加密命令退出码为 `0`，终端 JSON 中 `action_counts.rename` 大于 `0`；
-- `mapping.json` 和终端 JSON 的 `summary.encryption_result` 为 `PASS_FULL` 或 `PASS_PARTIAL`；
-- `summary.strict_compile_passed` 和 `summary.restored_byte_identical` 均为 `true`；
-- 最后一条 `cmp` 没有输出，表示公开恢复结果与原文件逐字节一致。
-
-输出目录只在全部检查成功后发布。失败时首行是稳定错误码，第二行会给出检查建议，例如：
-
-```text
-error: CLI_VNEXT_INPUT_INVALID
-detail: CLI_VNEXT_INPUT_MODE_CONFLICT
-message: filelist mode does not accept --source-root; use --filelist [--top]
-hint: 请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。
-```
-
-如果 filelist 的宏、include 或路径分析失败，命令会在稳定错误码后直接给出 `detail`、`path`、
-`message` 和可用时的 `details`（例如冲突宏的 provider 列表）。这些路径是工程内部相对路径；失败时
-不会发布输出目录、mapping 或 metrics。
-
-## 用在自己的工程
-
-真实工程优先使用显式 filelist。它能固定编译顺序，并配合 `--include-dir`、`--define` 准确提供
-编译环境。第一次建议只选少量类型，例如：
-
-```sh
-python rtl_encrypt.py \
-  --filelist design.f \
-  --top <顶层模块名> \
-  --category signals \
-  --category instances \
-  --output-dir <尚不存在的输出目录>
-```
-
-确认严格编译、实际改名数和恢复结果后，再用新的输出目录逐类增加 `--category`。不提供
-`--category` 时会使用当前模式的默认范围，但这不表示任意工程的全部默认类型都已稳定支持。
-可选值和保守边界见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)。
-
-PySlang compile/elaborate 成功只证明 filelist、宏、include 和语义输入能够形成完整设计；加密还必须把
-所选对象的声明与每个引用唯一映射到真实源码 identifier token。后一项证据不足时，即使原工程可以正常
-编译，工具也会 `REFUSED_ATOMIC`，而不是猜测名称或发布部分改写的 gate。
-
-## 看懂结果
-
-加密命令的 JSON 和 `encryption_summary.txt` 会直接报告：
-
-- `rename`：实际改名的对象；
-- `preserve`：因边界或策略保持原名的对象；
-- `unsupported`：当前证据不足、为避免错误而不改名的对象；
-- `modified_tokens`：实际改写的源码 token 数。
-
-结果还会明确给出三种状态：
-
-- `PASS_FULL`：至少有一个对象改名，且所选 graph 中没有 `preserve` 或 `unsupported`；
-- `PASS_PARTIAL`：gate 和恢复验证通过，但存在保留/不支持对象，或本次没有实际改名；
-- `REFUSED_ATOMIC`：无法证明安全性或验证失败，命令非零退出并且不会发布输出目录、mapping 或 metrics。
-
-`PASS_PARTIAL` 不是完整加密支持；`rename=0` 也不能当作加密成功。只有 `PASS_FULL` 才表示本次所选
-类别在当前输入闭包内全部完成改名。
-
-`rename=0` 表示本次没有发生有效加密，不能把它理解为所选类型已经完整支持。详细记录位于：
-
-```text
-<output-dir>/mapping.json
-<output-dir>/metrics.json
-<output-dir>/mapping_table.csv
-<output-dir>/encryption_summary.txt
-```
-
-`mapping.json` 同时用于恢复；`mapping_table.csv` 只列出实际替换项。严格编译和逐字节恢复是发布
-gate 的必要条件，但复杂工程仍应运行自身仿真、综合或 [Formal 验证流程](docs/formal_verification.md)。
-
-## 三种加密模式
-
-| 模式 | 必要输入 | 适用方式 |
-| --- | --- | --- |
-| 单文件 | `--input` | 独立 `.sv/.v` 文件的快速试用；输入参数本身就是路径 |
-| filelist | `--filelist`，`--top` 可选 | 真实工程首选；按 filelist 编译顺序处理全部文件，自动推导内部路径边界 |
-| project-root | `--source-root`、`--top` | 从 top 自动发现源码；适合目录和依赖都完整的工程 |
-
-单文件：
-
-```sh
-python rtl_encrypt.py \
-  --input <input_file.sv_or_v> \
-  --output-dir <加密输出目录>
-```
-
-仓库中的独立单文件示例为 `rtl_samples/11_supported_obfuscation.sv`；输入文件路径按当前工作目录解析。
-
-Filelist：
+## Filelist 模式（真实工程首选）
 
 ```sh
 python rtl_encrypt.py \
   --filelist design.f \
   --top <可选的顶层模块名> \
-  --output-dir <加密输出目录>
+  --category signals \
+  --output-dir <尚不存在的输出目录>
 ```
 
-仓库示例使用 `rtl_samples/example_fifo/design.f` 和 top `fifo_top`。不提供 `--top` 时只处理 module 内部名称；
-提供后会一致处理该 top 使用的跨 module 名称，同时保留 top module 名称和对外端口。
-filelist 中的 `.sv/.v` 是 source unit；显式列出的 `.svh/.vh/.h` 按首次出现顺序组成 header/context
-前导，进入 gate、canonical `design.f`、mapping 和恢复清单，但不产生 rename edit；由源码 `` `include``
-发现的未列出 header 只进入物理清单，不进入 canonical `design.f`。顶层和嵌套 filelist
-中的相对路径分别以所在 filelist 目录为基准，`$NAME`/`${NAME}` 会按当前环境展开；`-f`、
-`+incdir+` 和显式物理 entry 共同推导内部路径边界，但不会把边界目录下未列出的源码自动加入候选集合。
-filelist 还可使用 `+incdir+DIR1+DIR2` 和 `+define+NAME[=VALUE]` 提供编译上下文；其中的环境变量和嵌套
-`-f` 会按出现顺序展开，命令行 `--include-dir`、`--define` 对同名项具有最终优先级。
+`--category` 必须显式提供，可重复使用，允许值只有：
+`signals`、`ports`、`interface`、`struct`、`all`。`all` 按固定顺序展开为四个核心组。
 
-Project-root：
+filelist 中的 `.sv/.v` 是 source unit；被 include 的 `.svh/.vh` 和显式列出的 `.h` 是只读上下文，
+不会成为宏 rename target。`-f` 嵌套 filelist、`+incdir+`、`+define+`、`$NAME` 和 `${NAME}`
+按出现顺序处理。filelist 模式禁止同时提供 `--source-root`；源码根目录由 filelist 和 include
+路径自动推导。
 
-```sh
-python rtl_encrypt.py \
-  --source-root <项目源码根目录> \
-  --top <顶层模块名> \
-  --output-dir <加密输出目录>
-```
+宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
+直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
+保留对应对象，不发布不确定的 gate。
 
-三种公共模式严格互斥：单文件只提供 `--input`，filelist 只提供 `--filelist`（可选 `--top`），
-project-root 只提供 `--source-root` 和 `--top`。单文件不能附带 `--source-root` 或 `--top`；
-filelist 不能附带 `--source-root`；project-root 不能附带 `--input` 或 `--filelist`。
-输入模式冲突会在输出目录、mapping 和 metrics 创建前报告具体的 `detail`、`message` 和 `hint`。
-真实工程建议始终使用显式 filelist；project-root 只是目录和依赖完整时的辅助入口。当前版本还会保留 top module 内部直接声明的 interface 实例名。
+## 四个核心加密组
 
-## 解密
+| 类别 | 内容 |
+| --- | --- |
+| `signals` | module 内部的 Variable/Net，不包含端口、parameter、interface 成员和 struct 字段 |
+| `ports` | module 的 source-backed 端口；selected top 的对外 ABI 保留 |
+| `interface` | interface 类型、source-backed 标量/数组实例、成员和 modport；数组 element 只是语义 alias |
+| `struct` | 物理 `typedef struct/union` 类型及其字段；隐式 conversion 不伪造 occurrence |
 
-使用加密时生成的 `mapping.json` 和对应 gate，无需提供原始源码：
+无法从 PySlang semantic target 证明唯一物理 declaration/occurrence 时安全保留对应对象或核心组。
+合法的 PySlang 编译不等于每个 semantic node 都有可改写的物理 token。
+
+## 三种输入模式
+
+| 模式 | 参数 |
+| --- | --- |
+| 单文件 | 仅 `--input FILE` |
+| filelist | `--filelist FILE`，`--top` 可选 |
+| project-root | `--source-root DIR --top TOP` |
+
+三种模式严格互斥：单文件不能附带 `--source-root` 或 `--top`；filelist 不能附带
+`--source-root`；project-root 不能附带 `--input` 或 `--filelist`。输入模式错误会在输出创建前报告
+稳定错误码和具体 detail/message。
+
+project-root 是辅助入口，会从源码根目录发现依赖；单文件用于快速试用。两者不改变四组识别规则。
+
+## 输出、恢复和 schema
+
+输出目录包含加密 RTL、canonical `design.f`、`mapping.json`、`metrics.json`、
+`mapping_table.csv` 和 `encryption_summary.txt`。mapping 使用
+`format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
+semantic kind、物理 declaration/occurrences、action 和 reason。
 
 ```sh
 python rtl_decrypt.py \
-  --map <加密输出目录>/mapping.json \
-  --gate-dir <加密输出目录> \
-  --output-dir <恢复输出目录>
+  --map <gate>/mapping.json \
+  --gate-dir <gate> \
+  --output-dir <尚不存在的恢复目录>
 ```
 
-恢复目录运行前必须不存在。需要额外保存恢复报告时增加 `--report <恢复报告.json>`。
+恢复只依赖本次 gate 的 mapping 和物理文件。schema 1 不兼容读取，错误码为
+`RESTORE_MAPPING_VERSION_UNSUPPORTED`。
+
+`PASS_FULL` 表示本次选中对象全部改名；存在明确边界或安全保留时为 `PASS_PARTIAL`；验证或绑定失败为
+`REFUSED_ATOMIC`，不会发布半成品。
 
 ## 常用参数
 
-| 选项 | 用法 |
+| 选项 | 说明 |
 | --- | --- |
-| `--include-dir PATH` | 添加 include 目录，可重复使用；filelist 模式的相对路径以顶层 filelist 目录为基准，单文件以输入文件父目录为基准，project-root 以源码根目录为基准 |
-| `--define NAME[=VALUE]` | 添加预处理宏，可重复使用，例如 `--define SYNTHESIS` |
-| `--category NAME` | 只处理指定类型，可重复使用 |
-| `--encryption-rate RATE` | 目标加密率，范围为 `0 < RATE <= 1`；不是标识符数量的精确比例 |
-| `--name-length N` | 新名称长度，最小为 `4`，默认值为 `20` |
-| `--map PATH` | 自定义映射报告路径；默认是 `<output-dir>/mapping.json` |
-| `--metrics PATH` | 自定义覆盖率报告路径；默认是 `<output-dir>/metrics.json` |
-| `--report PATH` | 解密时额外保存恢复报告 |
-
-查看全部参数和三种输入模式提示：
-
-```sh
-python rtl_encrypt.py --help
-python rtl_decrypt.py --help
-```
+| `--include-dir PATH` | include 目录，可重复 |
+| `--define NAME[=VALUE]` | 预处理宏，可重复 |
+| `--category NAME` | 四组之一或 `all`，可重复且必填 |
+| `--name-length N` | 新名称长度，最小 4，默认 20 |
+| `--encryption-rate RATE` | 目标行加密率，`0 < RATE <= 1` |
+| `--map PATH` | 自定义 mapping 路径 |
+| `--metrics PATH` | 自定义 metrics 路径 |
 
 ## 安装
 
-仓库提供 CPython 3.11、Linux x86_64、glibc 2.17 或更高版本使用的 PySlang 11.0.0 wheel。
-推荐在虚拟环境中安装：
+准备 Python 3.10+ 和 PySlang 11.x 后，在仓库根目录运行：
 
 ```sh
-python --version
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --no-index --no-deps \
   wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-python -c "import pyslang; print(pyslang.__version__)"
 ```
 
-其他环境请准备匹配的 PySlang 11.x，详见
-[PySlang 源码编译与离线部署指南](docs/pyslang源码编译与离线部署指南.md)。
-
-## 更多文档
-
-- [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)：类型选择和保守边界；
-- [Formal 验证流程](docs/formal_verification.md)：独立检查功能等价性；
-- [开发文档索引](docs/development/README.md)：只面向维护者，不是首次使用必读内容。
+更多开发者说明见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)、
+[Formal 流程](docs/formal_verification.md) 和 [开发文档索引](docs/development/README.md)。

@@ -1,93 +1,54 @@
 # 项目结构
 
-本文面向开发者。普通用户只需要阅读根目录
-[`README.md`](../../README.md) 和
-[`SystemVerilog 可加密类型表`](../systemverilog_renaming_table.md)。
+普通用户从仓库根目录运行 `python rtl_encrypt.py`，真实工程优先使用显式 filelist；
+`python rtl_decrypt.py` 使用 gate 中的 schema 2 mapping 恢复源码。
 
-## 产品入口
+## 产品流水线
 
-普通用户从仓库根目录运行 `python rtl_encrypt.py` 加密，运行 `python rtl_decrypt.py`
-恢复；无需安装本项目。filelist 模式以显式 filelist 为唯一输入并自动推导内部路径边界，
-是实际工程的首选公共入口；单文件只接受 `--input` 路径，project-root 才接受
-`--source-root` 与 `--top`。三个公共模式均在入口处严格互斥校验，两个根目录脚本只负责调用共享 Python 函数。
+```text
+SourceSet -> SourceCatalog / PySlang compile+elaboration
+          -> RenameIndex -> Mapping schema 2
+          -> Rewrite -> strict compile -> restore / Formal
+```
 
-`rtl_obfuscator/rewrite.py` 负责共享参数注册、公共入口和执行调度。公共入口直接复用同一文件
-中的 `_encrypt_vnext` / `_decrypt_vnext`；内部 `encrypt-vnext` / `decrypt-vnext`
-operation 暂时只为历史测试和兼容保留，不是当前用户接口。加密输入模式在入口处互斥校验；filelist
-和单文件发现失败会保留 SourceSet 的错误 code、相对 path、message 及 provider details，直接输出给用户。
+PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePolicy collector、文本正则语义解析或
+名称查找 fallback。所有改写范围必须能回到 PySlang semantic target 和唯一物理 identifier token。
 
-## 核心模块
+## 模块职责
 
 | 路径 | 职责 |
 | --- | --- |
-| `rtl_obfuscator/source_set.py` | 将单文件、显式 filelist（自动推导边界）和 project-root 输入归一化为同一种 SourceSet。 |
-| `rtl_obfuscator/rtl_files.py` | 集中定义 `.sv/.v` source、`.svh/.vh` header 与显式 filelist-only `.h` context 的后缀分类。 |
-| `rtl_obfuscator/project_discovery.py` | project-root 保留自动发现；显式 filelist 使用共享 PySlang 编译 helper，不再运行 provider discovery。 |
-| `rtl_obfuscator/source_catalog.py` | 复用同一 PySlang source/context 编译 helper，建立源文件、编译上下文和模块 owner catalog。 |
-| `rtl_obfuscator/symbol_graph.py` | 按规范化 selected categories 收集可处理的 SystemVerilog 符号、声明、引用及归属关系；设计目标是未选择类别不进入 graph。当前已知的 aggregate type-parameter 声明种类边界见 future work。 |
-| `rtl_obfuscator/category_registry_vnext.py` | 定义 19 个 canonical category、默认集合、alias 和 ABI 可选集合。 |
-| `rtl_obfuscator/rewrite_policy.py` | 根据 category、top boundary 和 ABI 授权决定改名或保留。 |
-| `rtl_obfuscator/mapping_vnext.py` | 建立并校验统一的 MappingVNext 记录。 |
-| `rtl_obfuscator/systemverilog_names.py` | 生成合法且不冲突的 SystemVerilog 新名称。 |
-| `rtl_obfuscator/rewrite_vnext.py` | 应用 source-range edits，生成 gate，并执行严格编译和恢复检查。 |
-| `rtl_obfuscator/rate_vnext.py` | 按目标加密比例选择 mapping entries。 |
-| `rtl_obfuscator/rate_execution_vnext.py` | 执行 rate-selected mapping，并复用统一 gate/restore 引擎。 |
-| `rtl_obfuscator/metrics_vnext.py` | 计算符号、引用、有效行覆盖率和明文泄漏指标。 |
-| `rtl_obfuscator/rate_metrics_vnext.py` | 组合 rate execution、mapping envelope 和 metrics 报告。 |
-| `rtl_obfuscator/orchestration_vnext.py` | 编排 SourceSet、mapping、可选 rate、gate、restore 和 metrics。 |
-| `rtl_obfuscator/restore_vnext.py` | 从持久化报告校验 gate 并恢复原始文件。 |
-| `rtl_obfuscator/formal_vnext.py` | 提供 Formal 使用的通用 view、alignment 和审计 API。 |
+| `rtl_obfuscator/source_set.py` | 归一化单文件、显式 filelist 和 project-root 输入；保留编译顺序与物理清单 |
+| `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译、elaboration 和 project-root 的输入发现 |
+| `rtl_obfuscator/source_catalog.py` | 保存 PySlang compilation、top overlay、模块物理 declaration 和 SourceSet |
+| `rtl_obfuscator/rename_index.py` | 从 PySlang semantic nodes 建立四核心组 source-backed declaration/occurrence 索引 |
+| `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
+| `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
+| `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate |
+| `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；拒绝 schema 1 |
+| `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
+| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查和公共错误输出 |
 
-当前数据流：
+## 四核心组边界
 
-```text
-python rtl_encrypt.py -> SourceSet -> SourceCatalog -> SymbolGraph -> RewritePolicy
-    -> MappingVNext -> optional rate -> gate/restore -> metrics/report
+- `signals` 只收集 module-owned `VariableSymbol/NetSymbol`，排除端口和 aggregate/interface 成员；
+- `ports` 只收集 source-backed module `PortSymbol`，selected top 对外 ABI 保留；
+- `interface` 收集 interface 类型、实例 root、成员和 modport；数组 element 只作为 semantic alias；
+- `struct` 只收集物理 `typedef struct/union` 及其字段；parameter type 和隐式 conversion 不建伪记录。
 
-python rtl_decrypt.py -> persisted report + actual gate
-    -> gate/range/manifest audit -> direct restore -> hydration validation
-    -> byte-identical source files
-```
+`ModportPortSymbol` 通过其 PySlang `internalSymbol` 作为 interface member occurrence；struct member 通过
+直接 `FieldSymbol` target 的 source location 绑定。source-less node 或无法唯一绑定的对象保留并报告原因。
 
-编排结果使用 `PASS_FULL`、`PASS_PARTIAL` 和 `REFUSED_ATOMIC` 三种明确状态。前两者只在 strict gate
-和逐字节恢复通过后产生；拒绝路径原子清理 gate、mapping 和 metrics，不发布半成品。
+## 报告与输入
 
-SourceCatalog 的 PySlang compile/elaborate 与 SymbolGraph 的 rename proof 是两个独立阶段。前者证明
-filelist 能形成合法设计；后者还必须证明 selected semantic symbol 的物理 declaration 和 occurrences。
-例如 `parameter type` 可以解析为 canonical struct shape，但它的 `TypeAssignment` 声明不是物理
-`typedef struct` rename owner。当前这类引用可能在 mapping 前安全拒绝；不能把 compile 成功写成加密成功。
+公共 CLI 的 `--category` 必须显式提供，只允许四组或 `all`。filelist 模式只接受 `--filelist`（top 可选），
+禁止 `--source-root`；project-root 才接受 `--source-root --top`；单文件只接受 `--input`。
 
-宏对象本身是 SymbolGraph 的只读边界：宏定义名、形式参数名、调用名和预处理控制结构不是
-rename target，不进入 mapping 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理
-identifier token，如果被 PySlang 唯一绑定为 selected RTL symbol 的 declaration/occurrence，
-可以作为该 RTL symbol 的 edit source，并保留 `semantic_macro_argument` 或
-`semantic_macro_body` 的精确来源。物理来源冲突只对相关 symbol 标记 `macro_origin_conflict`，
-非 exact 来源只对相关 symbol 标记 `macro_origin_not_exact`；所选 declaration 无法映射时原子
-拒绝，不发布半成品。
+mapping、orchestration、mapping-execution、rate 和 restore 持久化报告使用 schema 2；嵌套 SourceSet
+仍使用 schema 1。`.sv/.v` 是 source unit，`.svh/.vh/.h` 只作为上下文物理文件，不产生宏改名。
 
-物理 module inventory 与 semantic owner registry 不是双向相等关系：当前 compilation 未 elaboration
-的普通物理 module 没有 owner、graph record、mapping 或 edit，但仍作为只读物理输入进入 manifest、
-gate 和 restore；每个 semantic owner 仍必须唯一映射到物理 module span。该边界只复用现有
-`catalog_compilation.getSyntaxTrees()` 与 owner identity，不新增 collector、generate 求值或名称特判。
+## 验证边界
 
-`.sv/.v/.svh/.vh` 共用当前 PySlang SystemVerilog 语义模式；显式 filelist 的 `.h/.svh/.vh` 按首次出现
-顺序组成 header/context 前导，和 `.sv/.v` source 顺序共同形成唯一 `compile_order`，并进入 canonical
-`design.f`，但不产生 rename edit。由源码 `` `include`` 发现的未列出 header 只进入物理清单，不进入
-`compile_order`。后缀不触发第二套 parser 或 rewrite 分支；filelist 的 source 顺序和 listed closed
-world 由 PySlang 直接验证，`--top` 只从同一完整语义树选择 closure；project-root 不自动扫描 `.h`。
-
-## 测试、脚本和样例
-
-- `tests/`：使用 Python `unittest` 的产品与边界测试，以及测试专用 SystemVerilog fixtures。
-- `scripts/formal_equivalence.py`：运行 Yosys 等价验证。
-- `scripts/risc_v_vector_acceptance.py`：RISC-V-Vector 专项发布验收工具，不是用户入口，也不属于
-  常规测试。
-- `rtl_samples/`：可供试用的 SystemVerilog 语法样例、FIFO 项目和 RISC-V-Vector 发布样例。
-- `docs/tasks/`：逐任务保存合同、状态和验收证据；历史任务中的命令不代表当前产品接口。
-
-## 开发规范
-
-- [Formal 验证流程](../formal_verification.md)
-- [未来扩展与已知边界](future_work.md)
-- [任务状态和验收流程](../tasks/README.md)
-- [R0–R5 历史重构计划](architecture/three_mode_refactor_plan.md)
+gate 发布前必须通过物理 range/manifest 审计、PySlang 严格编译和逐字节 restore。实际 gate Formal 需比较
+公开生成的改名 gate 与 gold；固定功能负例必须以非零退出和 `unproven`/`equiv_status -assert` 证明流程能
+拒绝错误 gate。RISC-V-Vector 不属于常规验收。

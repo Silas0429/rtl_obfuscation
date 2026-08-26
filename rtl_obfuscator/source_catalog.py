@@ -246,7 +246,7 @@ def _semantic_owner_ids(
     view: _CompiledView,
     modules: tuple[ModuleOwner, ...],
 ) -> tuple[str, ...]:
-    """Return the registry of semantic owners consumed by SymbolGraph.
+    """Return the registry of semantic owners consumed by RenameIndex.
 
     The registry is derived from the already compiled PySlang tree.  It is
     intentionally not part of the portable catalog report; it is an internal

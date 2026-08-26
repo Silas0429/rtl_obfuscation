@@ -1,171 +1,20 @@
-# 未来扩展与已知边界
+# 后续工作
 
-当前产品以 vNext 为唯一工作流：single-file、显式 filelist 和 `project-root + top` 共享
-SourceSet、SourceCatalog、SymbolGraph、RewritePolicy、MappingVNext、actual gate、metrics 和
-restore pipeline。19 个 canonical category 由一个 semantic owner registry 管理；默认选择为
-前 13 类，module/type/interface ABI 必须显式 opt-in。
+本文只记录当前 T108 之后尚未承诺的方向，不授权在现有任务中实现。
 
-category 选择在 SymbolGraph 入口生效。未选择类别不会因其自身 collector 的不支持语法阻断本次运行，
-报告会区分 `PASS_FULL`、`PASS_PARTIAL` 和 `REFUSED_ATOMIC`；这不等于承诺所有能被 PySlang compile/elaborate
-的 SV/V 都能完整改名。宏、外部消费者、黑盒和无法唯一映射到物理源码范围的对象仍按 preserve/unsupported
-或原子拒绝处理。
+## 当前不属于四核心组的对象
 
-本文件只记录当前交付范围之外的事项。使用方法和当前入口见根目录
-[`README.md`](../README.md)。
+module 名称、parameter、enum、function/task、argument、genvar、class、package 和其他旧细分类不属于当前
+公共 `--category` 接口。需要重新立项并定义 PySlang semantic target、物理 range、strict compile、restore
+和 Formal 边界；不保留旧分类兼容层。
 
-## 语言语义边界
+## 可能的后续扩展
 
-- `.sv/.v` source unit 与 `.svh/.vh` included header 已共用当前 PySlang SystemVerilog 语义模式；显式
-  filelist 还支持只读 `.h` 宏 context header。`.h` 进入物理 manifest、gate 和 restore，但不进入
-  compile order、不产生宏 rename，也不被 project-root 自动扫描；这不承诺 strict legacy-Verilog
-  方言、关键字模式或大写 `.V/.VH/.H`。
+- 更完整的 interface instance array member/connection 语义覆盖；
+- 外部 IP、blackbox 和顶层 ABI 的显式 preserve contract；
+- 与仿真、综合和约束文件消费者配套的 gate 检查；
+- 更大工程的性能测量，但不得重新引入第二套 owner/scope 推断；
+- 对 Yosys 不支持的 interface/aggregate 语法补充 PySlang strict、range、restore 和其他等价性证据。
 
-- T071 已将物理可定位的 module type parameter 与语义绑定的 `defparam` 转为 module-owner
-  safe-preserve：type parameter 本身和其 owner 全部保持，`defparam` 引用/目标 owner 全部保持；
-  无法证明物理 declaration、typed binding token 或 owner 时仍保持 fail-closed。package/class
-  scope、其他 type parameter、DPI、bind、checker、primitive、clocking block 和 virtual interface
-  仍需要额外的 PySlang owner 证据。
-- T069 已补齐真实工程 CDC FIFO 和 riscv-dbg JTAG wrapper 中复现的 value parameter
-  sized-cast occurrence 边界：`WIDTH'(0)`、`POINTER_WIDTH'(~0)`、`IrLength'(4'b0101)`
-  等 cast type token 现在通过精确 parameter declaration identity 绑定，并进入同一
-  mapping/edit。T069 compact actual gate 已验证 strict compile、逐字节恢复及 Formal
-  正负例；后续真实工程复测仍应保留这些闭包作为独立边界证据。
-- T070 已按 PySlang typed syntax kind 忽略 `SignedCastExpressionSyntax` 内建 keyword cast
-  及其 `TypeAliasType` 隐式 wrapper；typedef identifier cast 仍精确绑定，无法证明 direct
-  type token 的普通 `TypeAliasType` conversion 继续 fail-closed。
-- T072 已将能够由 semantic declaring definition 唯一证明 physical module owner 与
-  source-backed module syntax span 的 nested generate 转为 module-span safe-preserve；该 span
-  内全部 source symbols（包括 generate block scope）保持不改名，无法证明 owner/span 的形状
-  仍保持 fail-closed。nested generate 内部 genvar/层次对象改名、instance array、conditional
-  generate、复杂层次路径和完整 import/export member 语义仍需要专项 semantic coverage。
-- T104 已明确宏对象本身不是 rename target：宏定义名、形式参数名、调用名和预处理控制结构不进入
-  graph、mapping 或 edit，也不执行宏加密。但宏调用实参或宏正文中的某个物理 identifier token，
-  如果被 PySlang 唯一绑定为 selected RTL symbol 的 declaration/occurrence，可以作为该 RTL symbol
-  的 edit source，并记录 `semantic_macro_argument` 或 `semantic_macro_body` 的 exact physical
-  provenance；这不是宏加密。物理来源冲突只产生局部 `macro_origin_conflict`，非 exact 来源只产生
-  局部 `macro_origin_not_exact`；所选 declaration 无法映射时使用
-  `SYMBOL_GRAPH_MACRO_DECLARATION_UNMAPPABLE` 原子拒绝。宏文本展开/改写、macro argument rename、
-  package/class 等非本任务类别，以及 inactive conditional/include 语义扩展仍不支持；本任务覆盖的
-  interface/core group 按上述 selected-symbol 规则处理。
-- T101 已将物理 module inventory 与 semantic owner registry 收敛为单向边界：filelist 中存在但当前
-  PySlang compilation 未 elaboration 的普通 module 不建立 owner、graph record、mapping 或 edit，
-  但继续进入 gate、manifest 和 restore 并按原字节透传；每个已有 semantic owner 仍必须精确且唯一
-  对齐物理 module span，真实 owner/range 冲突继续 fail-closed。该边界不执行 generate 求值、不按
-  module 名特判，也不承诺未 elaboration module 的加密。
-- 顶层 interface/modport ABI 必须保持 top boundary；只有 closure 内且完整绑定的内部 ABI 才能
-  显式改写。
-- 2026-08-24 StCache 外部重跑确认：`signals` 为 `PASS_FULL`；`ports` 为带既有 top/closure preserve
-  和 18 个 `macro_origin_conflict` 的 `PASS_PARTIAL`；完整 `interface` 与 `struct` 在 mapping 前
-  `REFUSED_ATOMIC`。完整证据和不使用名称特判的稳定化方案见
-  [`architecture/stcache_core_category_stability.md`](architecture/stcache_core_category_stability.md)。
-- 2026-08-26 在产品提交 `950be8e` 上重跑 StCache `struct`：147 个 source、154 项 compile order 和
-  329758 个 semantic node 均已建立，失败发生在 compile/elaborate 之后。`StChReqTagRw.sv` 中的
-  `req_icmd_if_t` 引用绑定到 `SyntaxKind.TypeAssignment` 类型参数，而不是 `StChReqPath.sv` 的同名物理
-  `typedef struct`；当前 aggregate resolver 把 canonical struct shape 误当成 physical alias owner，因而
-  `REFUSED_ATOMIC`。这不是 filelist、宏或 PySlang 编译失败。
-- PySlang interface instance array 由一个有名 `InstanceArraySymbol` 和多个无名 element
-  `InstanceSymbol` 表达。当前 `interface_instances` collector 仍把 element 当作物理声明，合法数组会因
-  `semantic symbol has no source identifier` 原子拒绝；只选择 `interface_ports` 且 module header 使用
-  modport qualifier 时，当前 second pass 还会错误要求未选择的 `modports` record。
-
-## T073 后真实工程复测边界
-
-本轮真实工程复测没有错误 gate 被发布：不完整或无法证明安全的改写均在 mapping、strict
-compile 或 owner/build-input 检查阶段原子停止。但是，“安全拒绝或少加密”不等于“支持成功”；
-strict compile 只能排除语法和绑定错误，不得代替可运行时的 actual-gate Formal。
-
-- T075 已增加 **owner occurrence firewall**：受保护 owner 内不得产生跨 owner rename edit；
-  `register_interface` 暴露的半改名风险现在会将整条跨 owner symbol 标为 unsupported，并禁止其
-  产生任何 rewrite edit。
-- T076 已支持普通物理 module 的直接 closing label `endmodule : name`，使子 module declaration、
-  实例化引用和 closing label 使用同一个 rename record；selected top 的名称与 label 保留。
-  direct identifier sized-cast 已支持；T080 进一步只支持 exact typed path
-  `$clog2(<direct IdentifierName>)'(...)`，通过 lexical scope 绑定已有 module value/local parameter
-  record，并记录 `expression_sized_cast_type`。其他 expression-sized cast 以及 enum/base dimension
-  仍可能漏收集，保持 fail-closed。
-- T079 已支持被 instance override 替换 semantic value 的 module value/local parameter 默认
-  initializer direct identifier：只遍历精确 `DeclaratorSyntax.initializer` typed subtree，并用
-  declaration `parentScope.lookupName()` 绑定到已有 parameter record。v1.1 仅凭 direct parent、
-  `parent.key` 及 token buffer/offset/rawText identity 排除 structured assignment-pattern member key；
-  value-side identifier 仍走精确 parameter binding，这不代表支持 `struct_fields` 改名。type/package/class
-  parameter、macro default、hierarchical/scoped name 和普通 syntax text recovery 仍不支持；同一物理
-  range 若绑定到不同 parameter target 则继续原子失败。
-- **package-qualified enum/member** 的右侧物理范围仍可能无法和 semantic target 对齐，无法证明
-  精确绑定时继续原子失败。
-- T081 已为 `enum_values` 增加 record 级词法覆盖完整性防火墙：只有 declaration 与已有 semantic
-  occurrences 的 ranges 和全部物理输入中的同名 plain identifier ranges 精确相等时才允许改名；
-  覆盖不完整的单条 record 使用 `enum_lexical_coverage_incomplete` 原子禁用全部 edit。raw inventory
-  故意包含 comments、strings、宏与 disabled text，可能保守减少加密，但不会据此猜测语义 target 或
-  补 lexical occurrence；generic enum reference recovery 仍不支持。
-- T082 已支持普通物理 function 的直接 closing label `endfunction : name`：只从同一 semantic
-  `SubroutineSymbol` 的 exact `FunctionDeclarationSyntax.endBlockName.name` 取得非 missing 物理 token，
-  并以 `semantic_function_end_label` 加入既有 `functions` record；没有 label 不新增 occurrence，名称、
-  range 或 record ownership 证据不完整时继续 fail-closed。task、method、class/interface/package/program/
-  checker/generate closing label、宏生成 label、extern/DPI/prototype 和 source-text recovery 仍不支持；
-  Yosys 当前无法读取合法的 function closing-label 语法，因此该 label 的字节正确性由 PySlang strict、
-  同 symbol edit 与 source-free restore 证明，Formal 只覆盖不启用 label 宏的 actual renamed gate。
-- T083 已支持普通物理 function call 的 direct named-argument label：只从 exact semantic
-  `CallExpression.subroutine`、该 function 的唯一同名 `FormalArgumentSymbol` declaration identity 和
-  direct `InvocationExpressionSyntax.arguments`/`NamedArgumentSyntax.name` 共同绑定既有 `arguments`
-  record，并记录 `semantic_named_argument`；不会把 actual expressions、syntax position 或全局同名对象
-  当作 formal。task/method/class/DPI/system/randomize、宏生成或 mixed/unknown named-call 形状仍不支持，
-  无 exact callee/formal/owner/range 时继续 fail-closed。Yosys 当前不能解析 named function calls，因此
-  named label 由 actual-gate PySlang strict、同 symbol edit 和 source-free restore 验证；Formal 只覆盖
-  不启用 named-call 宏的 actual renamed ordered-call branch。
-- T084 已支持普通物理 struct alias 的 direct named assignment-pattern field key：只从 exact semantic
-  `StructuredAssignmentPatternExpression`、`AssignmentPatternExpressionSyntax`/
-  `StructuredAssignmentPatternSyntax`、`TypeAliasType` canonical struct identity，以及同一 alias owner 下
-  唯一同名既有 `struct_fields` record 绑定 direct `IdentifierNameSyntax` 物理 token，并记录
-  `semantic_struct_pattern_key`。union、array/queue、scalar、positional/default/type/literal key、宏 key、
-  anonymous pattern、class property 与 tagged union 仍不支持；无 exact alias/field/owner/range 时继续
-  fail-closed。Yosys 当前不能解析 named assignment pattern，因此 key 的字节正确性由 actual-gate
-  PySlang strict、同 symbol edit 与 source-free restore 证明；Formal 只覆盖不启用 named-pattern 宏的
-  actual renamed concatenation branch。
-- T085 已为仍 eligible 的 `typedefs` 增加 record 级词法覆盖完整性防火墙：在 owner quarantine 后复用
-  T081 的同一份 raw physical identifier inventory，只有 declaration 加已有 semantic occurrences ranges
-  与全部原始输入中的同名 plain identifier ranges 集合精确相等时才允许改名；覆盖不完整的单条 record
-  使用 `typedef_lexical_coverage_incomplete` 禁用全部 edit。raw inventory 故意包含 comments、strings、宏、
-  disabled branch 与未 elaborated syntax，false positive 只会减少加密，不会被用来猜 target、scope、package
-  或 owner。当前未实现 `$bits(type)`、package-qualified、cast、未实例化 module 等缺口的 generic
-  type-reference recovery；未知缺口语境继续 fail-closed，既有 owner quarantine 与 T081 enum reason 优先级
-  保持不变。
-- T077 已将原 **conflicting quarantine reasons** 边界收敛；T077 已对同一 ordinary owner
-  的多个现有 quarantine reason 使用 `owner_contains_multiple_unsupported_constructs` 原子保护；
-  owner/span 证据不一致和未知 reason 仍 fail-closed。
-- **syntax-less implicit typedef conversion** 是 PySlang 插入且没有源码 type token 的语义节点。T105
-  已在本地 compact 流程中收敛为语义绑定事实：只有 `CastExpressionSyntax` 的 direct type identifier
-  建立 source occurrence，隐式 conversion 不产生 edit；不得使用文本恢复或类型名特判。该边界已经通过
-  compact 验收，但不覆盖解析成 aggregate shape 的 `parameter type`。
-- T106 本地已验收，并将 aggregate type reference 收敛为单一 semantic-target 路径：`TypeAliasType`
-  的 semantic declaration range 必须命中当前 alias registry，再校验 source token 字节；同名 alias 不按名称或
-  scope 猜 owner。compact 已覆盖 cast、aggregate member type、function return、port type 和
-  variable/net declared type，并通过 actual renamed-gate Formal 正负例。服务器重跑已暴露未覆盖形状：
-  `TypeAssignment` 类型参数也可表现为 `TypeAliasType.isStruct=True`，但它不是 physical aggregate typedef
-  declaration。未来修复必须先按 source declaration kind 分类：只有物理 `typedef struct/union` 建立
-  `struct_types` record；选择 `parameters` 时 type parameter 继续遵守 T071 的不改名/owner
-  safe-preserve，只选择 `struct` 时不进入 aggregate graph；默认值或 override 中单独绑定物理 typedef 的
-  token 才能成为 typedef occurrence。不得按名称、filelist 顺序或 canonical shape 回退。本文记录该方向，
-  不授权实现。
-- VeeR 的宏 module definition name、SCR1 的 header/package 宏位置、Ibex 缺外部 primitive，
-  分别属于当前 ModuleOwner 表达边界、owner 边界和 build-input 边界。
-
-本小节只记录已观察边界，不授权实现或放宽现有 fail-closed 条件。
-
-## 工程输入与验证
-
-- T078 已将 persisted `compile_order`（独立编译单元）与 `included_files`（参与 manifest、hash
-  和逐字节恢复的 header）分开审计，公开 direct restore 可恢复这两类物理文件；pinned Ibex 的
-  `abi_group` 与 `non_abi_group` 仍是独立 strict-compile 边界，不属于该修复。
-- 更复杂的 include/define 条件、嵌套 filelist、library/blackbox 和外部消费者需要扩展
-  SourceSet/SourceCatalog 合同。
-- 每项扩展都必须保留 semantic owner、physical range、strict compile、restore byte identity、
-  coverage/leakage 和 Yosys 正负例证据。
-- RISC-V-Vector 专项仍属于专门发布边界；普通产品任务不启动该场景驱动，通用 Formal view/alignment
-  只通过 vNext API 复用。
-
-## 后续方向
-
-- 为复杂 SystemVerilog scope 建立更多 semantic object 到 source range 的精确映射；
-- 为顶层 interface ABI 增加非 vacuous 的 formal 证明边界；
-- 为外部 IP/blackbox 提供显式、可审计的 owner 和 preserve contract；
-- 在不改变当前 report/schema/rate/metrics 方程的前提下，扩展 testbench、约束和软件模型消费者。
+任何新语法形状必须先冻结独立任务合同。compile/elaborate 通过本身不能替代物理绑定证明，也不能授权
+通过名称搜索、正则解析或 canonical type shape 猜测 owner。

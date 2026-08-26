@@ -18,10 +18,9 @@ from .mapping_vnext import (
     MappingRecord,
     MappingVNext,
 )
-from .rewrite_policy import RewritePolicy, build_rewrite_policy
+from .rename_index import RenameIndex, SourceSymbol, SymbolOccurrence
 from .source_catalog import SourceCatalog, SourceRange, build_source_catalog
 from .source_set import SourceSet, is_canonical_compile_order
-from .symbol_graph import SourceSymbol, SymbolGraph, SymbolOccurrence
 from .systemverilog_names import is_plain_identifier
 
 
@@ -153,11 +152,12 @@ class RewriteVNextError(ValueError):
         super().__init__(f"{code}: {message}")
 
 
-_LEXICAL_IDENTIFIER = re.compile(rb"[A-Za-z][A-Za-z0-9_]*")
-
-
 def _fail(code: str, message: str) -> None:
     raise RewriteVNextError(code, message)
+
+
+def _is_schema_two(value: object) -> bool:
+    return type(value) is int and value == 2
 
 
 def _is_schema_one(value: object) -> bool:
@@ -202,15 +202,12 @@ def _mapping_execution_context(
 ) -> tuple[MappingVNext, SourceSet, tuple[str, ...]]:
     if not isinstance(mapping, MappingVNext):
         _fail("MAPPING_EXECUTION_INVALID", "execution mapping is not MappingVNext")
-    if mapping.format != "rtl-obfuscation.mapping-vnext" or not _is_schema_one(mapping.schema_version):
+    if mapping.format != "rtl-obfuscation.mapping" or not _is_schema_two(mapping.schema_version):
         _fail("MAPPING_EXECUTION_INVALID", "execution mapping format or schema is invalid")
-    policy = mapping.rewrite_policy
-    if not isinstance(policy, RewritePolicy):
-        _fail("MAPPING_EXECUTION_INVALID", "execution mapping policy is invalid")
-    graph = policy.symbol_graph
-    if not isinstance(graph, SymbolGraph) or not _is_schema_one(graph.schema_version):
-        _fail("MAPPING_EXECUTION_INVALID", "execution mapping graph is invalid")
-    catalog = graph.source_catalog
+    rename_index = mapping.rename_index
+    if not isinstance(rename_index, RenameIndex) or not _is_schema_two(rename_index.schema_version):
+        _fail("MAPPING_EXECUTION_INVALID", "execution mapping rename index is invalid")
+    catalog = rename_index.source_catalog
     if not isinstance(catalog, SourceCatalog) or not _is_schema_one(catalog.schema_version):
         _fail("MAPPING_EXECUTION_INVALID", "execution mapping catalog is invalid")
     source_set = catalog.source_set
@@ -260,20 +257,21 @@ def _validate_mapping_records(
     mapping: MappingVNext,
     files: tuple[str, ...],
 ) -> tuple[dict[tuple[str, str, SourceRange], SourceRange], ...]:
-    policy = mapping.rewrite_policy
-    graph = policy.symbol_graph
-    if not isinstance(mapping.records, tuple) or not isinstance(graph.symbols, tuple) or not isinstance(policy.decisions, tuple):
-        _fail("MAPPING_PER_FILE_INVALID", "mapping record, graph, or policy sequence is invalid")
-    if len(mapping.records) != len(graph.symbols) or len(mapping.records) != len(policy.decisions):
+    rename_index = mapping.rename_index
+    if not isinstance(mapping.records, tuple) or not isinstance(rename_index.symbols, tuple) or not isinstance(rename_index.decisions, tuple):
+        _fail("MAPPING_PER_FILE_INVALID", "mapping record or rename index sequence is invalid")
+    if len(mapping.records) != len(rename_index.symbols) or len(mapping.records) != len(rename_index.decisions):
         _fail("MAPPING_PER_FILE_INVALID", "mapping record projection is not one-to-one")
 
     range_keys: list[dict[tuple[str, str, SourceRange], SourceRange]] = []
-    for record, symbol, decision in zip(mapping.records, graph.symbols, policy.decisions):
+    for record, symbol, decision in zip(mapping.records, rename_index.symbols, rename_index.decisions):
         if not isinstance(record, MappingRecord) or not isinstance(symbol, SourceSymbol):
-            _fail("MAPPING_PER_FILE_INVALID", "mapping record or graph symbol is invalid")
+            _fail("MAPPING_PER_FILE_INVALID", "mapping record or rename index symbol is invalid")
         expected_fields = (
             (record.symbol_id, symbol.symbol_id),
             (record.category, getattr(decision, "category", None)),
+            (record.kind, symbol.kind),
+            (record.semantic_kind, symbol.semantic_kind),
             (record.action, getattr(decision, "action", None)),
             (record.reason, getattr(decision, "reason", None)),
             (record.original_name, symbol.name),
@@ -317,13 +315,13 @@ def _validate_mapping_records(
 def _validate_mapping_execution(
     mapping_execution: MappingExecutionVNext,
 ) -> tuple[MappingVNext, tuple[str, ...], list[dict[str, object]]]:
-    if not isinstance(mapping_execution, MappingExecutionVNext) or not _is_schema_one(mapping_execution.schema_version):
+    if not isinstance(mapping_execution, MappingExecutionVNext) or not _is_schema_two(mapping_execution.schema_version):
         _fail("MAPPING_EXECUTION_INVALID", "mapping execution schema is invalid")
     execution = mapping_execution.rewrite_execution
     restore = mapping_execution.restore_result
-    if not isinstance(execution, RewriteExecution) or not _is_schema_one(execution.schema_version):
+    if not isinstance(execution, RewriteExecution) or not _is_schema_two(execution.schema_version):
         _fail("MAPPING_EXECUTION_INVALID", "rewrite execution schema is invalid")
-    if not isinstance(restore, RestoreResult) or not _is_schema_one(restore.schema_version):
+    if not isinstance(restore, RestoreResult) or not _is_schema_two(restore.schema_version):
         _fail("MAPPING_EXECUTION_INVALID", "restore result schema is invalid")
     if restore.rewrite_execution is not execution:
         _fail("MAPPING_EXECUTION_INVALID", "restore result does not reference the execution")
@@ -480,7 +478,7 @@ def build_mapping_execution_vnext(
     if not isinstance(rewrite_execution, RewriteExecution) or not isinstance(restore_result, RestoreResult):
         _fail("MAPPING_EXECUTION_INVALID", "inputs are not RewriteExecution and RestoreResult")
     envelope = MappingExecutionVNext(
-        schema_version=1,
+        schema_version=2,
         rewrite_execution=rewrite_execution,
         restore_result=restore_result,
     )
@@ -497,7 +495,7 @@ def write_mapping_execution_vnext(
 
     destination = _validate_mapping_output_path(output_file)
     mapping, _files, _per_file_mapping = _validate_mapping_execution(mapping_execution)
-    source_set = mapping.rewrite_policy.symbol_graph.source_catalog.source_set
+    source_set = mapping.rename_index.source_catalog.source_set
     _validate_mapping_output_protection(destination, source_set)
     try:
         report = mapping_execution.to_report()
@@ -600,50 +598,38 @@ def _source_set_from_mapping(
     *,
     check_source_files: bool = True,
     validate_canonical_policy: bool = True,
-) -> tuple[SourceSet, SourceCatalog, SymbolGraph]:
+) -> tuple[SourceSet, SourceCatalog, RenameIndex]:
     if not isinstance(mapping, MappingVNext):
         _fail("REWRITE_MAPPING_INVALID", "input is not MappingVNext")
-    if mapping.format != "rtl-obfuscation.mapping-vnext" or not _is_schema_one(mapping.schema_version):
+    if mapping.format != "rtl-obfuscation.mapping" or not _is_schema_two(mapping.schema_version):
         _fail("REWRITE_MAPPING_INVALID", "mapping format or schema_version is invalid")
     if type(mapping.name_length) is not int or mapping.name_length < 4:
         _fail("REWRITE_MAPPING_INVALID", "mapping name_length is invalid")
-    policy = mapping.rewrite_policy
-    if not hasattr(policy, "symbol_graph"):
-        _fail("REWRITE_MAPPING_INVALID", "mapping policy is invalid")
-    graph = policy.symbol_graph
-    if not isinstance(graph, SymbolGraph) or not _is_schema_one(graph.schema_version):
-        _fail("REWRITE_MAPPING_INVALID", "mapping graph is invalid")
-    catalog = graph.source_catalog
+    rename_index = mapping.rename_index
+    if not isinstance(rename_index, RenameIndex) or not _is_schema_two(rename_index.schema_version):
+        _fail("REWRITE_MAPPING_INVALID", "mapping rename index is invalid")
+    catalog = rename_index.source_catalog
     if not isinstance(catalog, SourceCatalog) or not _is_schema_one(catalog.schema_version):
         _fail("REWRITE_MAPPING_INVALID", "mapping catalog is invalid")
     source_set = catalog.source_set
     if not isinstance(source_set, SourceSet) or not _is_schema_one(source_set.schema_version):
         _fail("REWRITE_MAPPING_INVALID", "mapping SourceSet is invalid")
-    if not isinstance(policy.selected_categories, tuple) or not isinstance(policy.abi_categories, tuple):
-        _fail("REWRITE_MAPPING_INVALID", "mapping policy selections are invalid")
-    if not isinstance(policy.decisions, tuple) or not isinstance(graph.symbols, tuple):
-        _fail("REWRITE_MAPPING_INVALID", "mapping policy or graph sequence is invalid")
-    if validate_canonical_policy:
-        try:
-            expected_policy = build_rewrite_policy(
-                graph,
-                categories=policy.selected_categories,
-                abi_categories=policy.abi_categories,
-            )
-        except Exception as error:
-            _fail("REWRITE_MAPPING_INVALID", f"mapping policy cannot be revalidated: {error}")
-        if policy.decisions != expected_policy.decisions:
-            _fail("REWRITE_MAPPING_INVALID", "mapping policy decisions are not canonical")
+    if not isinstance(rename_index.selected_categories, tuple) or not isinstance(rename_index.decisions, tuple):
+        _fail("REWRITE_MAPPING_INVALID", "mapping rename index selections are invalid")
+    if not isinstance(rename_index.symbols, tuple):
+        _fail("REWRITE_MAPPING_INVALID", "mapping rename index sequence is invalid")
     if not isinstance(mapping.records, tuple):
         _fail("REWRITE_MAPPING_INVALID", "mapping records are not canonical")
-    if len(mapping.records) != len(policy.decisions) or len(mapping.records) != len(graph.symbols):
+    if len(mapping.records) != len(rename_index.decisions) or len(mapping.records) != len(rename_index.symbols):
         _fail("REWRITE_MAPPING_INVALID", "mapping record count is not one-to-one")
-    for record, symbol, decision in zip(mapping.records, graph.symbols, policy.decisions):
+    for record, symbol, decision in zip(mapping.records, rename_index.symbols, rename_index.decisions):
         if not isinstance(record, MappingRecord) or not isinstance(symbol, SourceSymbol):
-            _fail("REWRITE_MAPPING_INVALID", "mapping record or graph symbol is invalid")
+            _fail("REWRITE_MAPPING_INVALID", "mapping record or rename index symbol is invalid")
         expected = MappingRecord(
             symbol_id=symbol.symbol_id,
             category=decision.category,
+            kind=symbol.kind,
+            semantic_kind=symbol.semantic_kind,
             action=decision.action,
             reason=decision.reason,
             original_name=symbol.name,
@@ -656,7 +642,7 @@ def _source_set_from_mapping(
             abi=symbol.abi,
         )
         if replace(record, renamed_name=None) != expected:
-            _fail("REWRITE_MAPPING_INVALID", "mapping record does not match graph or policy")
+            _fail("REWRITE_MAPPING_INVALID", "mapping record does not match rename index")
         if record.action == "rename":
             if (
                 not isinstance(record.renamed_name, str)
@@ -679,18 +665,18 @@ def _source_set_from_mapping(
             _fail("REWRITE_MAPPING_INVALID", "input manifest does not match physical files")
     if not isinstance(source_set.compile_order, tuple) or not is_canonical_compile_order(source_set):
         _fail("REWRITE_MAPPING_INVALID", "compile_order is not canonical")
-    return source_set, catalog, graph
+    return source_set, catalog, rename_index
 
 
 def _validate_ranges(
     mapping: MappingVNext,
     source_set: SourceSet,
-    graph: SymbolGraph,
+    rename_index: RenameIndex,
     data: dict[str, bytes] | None,
 ) -> None:
     physical = set(_physical_files(source_set))
     ranges: list[tuple[str, int, int]] = []
-    for record, symbol in zip(mapping.records, graph.symbols):
+    for record, symbol in zip(mapping.records, rename_index.symbols):
         for source_range in (
             record.declaration,
             *(occurrence.source_range for occurrence in record.occurrences),
@@ -729,11 +715,9 @@ def _validate_input_manifest(
         _fail("REWRITE_SOURCE_CHANGED", "input source bytes or manifest changed")
 
 
-def _validate_renamed_names(mapping: MappingVNext, data: dict[str, bytes], graph: SymbolGraph) -> None:
+def _validate_renamed_names(mapping: MappingVNext, data: dict[str, bytes], rename_index: RenameIndex) -> None:
     unavailable: set[str] = set()
-    for content in data.values():
-        unavailable.update(item.decode("ascii") for item in _LEXICAL_IDENTIFIER.findall(content))
-    unavailable.update(symbol.name for symbol in graph.symbols)
+    unavailable.update(symbol.name for symbol in rename_index.symbols)
     renamed: set[str] = set()
     for record in mapping.records:
         if record.action != "rename":
@@ -748,17 +732,17 @@ def _validate_mapping_for_write(
     mapping: MappingVNext,
     *,
     validate_canonical_policy: bool = True,
-) -> tuple[SourceSet, SymbolGraph, dict[str, bytes]]:
-    source_set, _catalog, graph = _source_set_from_mapping(
+) -> tuple[SourceSet, RenameIndex, dict[str, bytes]]:
+    source_set, _catalog, rename_index = _source_set_from_mapping(
         mapping,
         validate_canonical_policy=validate_canonical_policy,
     )
     physical = _physical_files(source_set)
     data = _check_regular_source_files(source_set, physical, read=True)
     _validate_input_manifest(mapping, source_set, data)
-    _validate_ranges(mapping, source_set, graph, data)
-    _validate_renamed_names(mapping, data, graph)
-    return source_set, graph, data
+    _validate_ranges(mapping, source_set, rename_index, data)
+    _validate_renamed_names(mapping, data, rename_index)
+    return source_set, rename_index, data
 
 
 def _expected_edits(
@@ -766,14 +750,14 @@ def _expected_edits(
     *,
     validate_canonical_policy: bool = True,
 ) -> tuple[AppliedEdit, ...]:
-    _source_set, _catalog, graph = _source_set_from_mapping(
+    _source_set, _catalog, rename_index = _source_set_from_mapping(
         mapping,
         check_source_files=False,
         validate_canonical_policy=validate_canonical_policy,
     )
     deltas: dict[str, list[tuple[int, int, int]]] = {}
     specifications: list[tuple[str, str, str, str, SourceRange]] = []
-    for record, symbol in zip(mapping.records, graph.symbols):
+    for record, symbol in zip(mapping.records, rename_index.symbols):
         if record.action != "rename":
             continue
         assert record.renamed_name is not None
@@ -850,7 +834,7 @@ def write_gate_vnext(
 ) -> RewriteExecution:
     """Apply all mapping edits once, compile the gate, and publish atomically."""
 
-    source_set, graph, data = _validate_mapping_for_write(
+    source_set, rename_index, data = _validate_mapping_for_write(
         mapping_vnext,
         validate_canonical_policy=_validate_canonical_policy,
     )
@@ -910,7 +894,7 @@ def write_gate_vnext(
         ):
             _fail("REWRITE_GATE_COMPILE_FAILED", "strict gate compilation has diagnostics")
         execution = RewriteExecution(
-            schema_version=1,
+            schema_version=2,
             mapping_vnext=mapping_vnext,
             filelist="design.f",
             gate_manifest=gate_manifest,
@@ -935,12 +919,12 @@ def _validate_execution(
     execution: RewriteExecution,
     *,
     validate_canonical_policy: bool = True,
-) -> tuple[SourceSet, SymbolGraph, tuple[AppliedEdit, ...]]:
-    if not isinstance(execution, RewriteExecution) or not _is_schema_one(execution.schema_version):
+) -> tuple[SourceSet, RenameIndex, tuple[AppliedEdit, ...]]:
+    if not isinstance(execution, RewriteExecution) or not _is_schema_two(execution.schema_version):
         _fail("RESTORE_EXECUTION_INVALID", "rewrite execution schema is invalid")
     if execution.filelist != "design.f" or not isinstance(execution.gate_manifest, tuple):
         _fail("RESTORE_EXECUTION_INVALID", "rewrite execution filelist or manifest is invalid")
-    source_set, _catalog, graph = _source_set_from_mapping(
+    source_set, _catalog, rename_index = _source_set_from_mapping(
         execution.mapping_vnext,
         check_source_files=False,
         validate_canonical_policy=validate_canonical_policy,
@@ -962,7 +946,7 @@ def _validate_execution(
     evidence = execution.compile_evidence
     if not isinstance(evidence, CompileEvidence):
         _fail("RESTORE_EXECUTION_INVALID", "compile evidence is invalid")
-    return source_set, graph, edits
+    return source_set, rename_index, edits
 
 
 def restore_gate_vnext(
@@ -981,7 +965,7 @@ def restore_gate_vnext(
     destination = _validate_output_path(output_dir, gate_dir=gate_path, code="RESTORE_OUTPUT_INVALID")
     if not gate_path.is_dir():
         _fail("RESTORE_GATE_INVALID", "gate directory does not exist")
-    source_set, _graph, edits = _validate_execution(
+    source_set, _rename_index, edits = _validate_execution(
         rewrite_execution,
         validate_canonical_policy=_validate_canonical_policy,
     )
@@ -1036,4 +1020,4 @@ def restore_gate_vnext(
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
-    return RestoreResult(schema_version=1, rewrite_execution=rewrite_execution, restored_manifest=restored_manifest)
+    return RestoreResult(schema_version=2, rewrite_execution=rewrite_execution, restored_manifest=restored_manifest)
