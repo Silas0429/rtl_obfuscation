@@ -1,6 +1,6 @@
 # T111：把绑定失败的爆炸半径从核心组降为单条记录
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`992980c`（T110 已 `ACCEPTED`，T109 已 `ACCEPTED`，T108 保持 `BLOCKED`）
 - 任务类型：`rename_index.py` 的保留策略事务边界收缩 + 宏位置还原后锚定
@@ -185,7 +185,7 @@ StCache 规模的 Formal 不属于本任务；第 8 节的 strict compile 与 by
 ## 10. 执行记录
 
 ```text
-status: READY_FOR_REVIEW
+status: ACCEPTED
 starting_head: 5652236
 ```
 
@@ -262,3 +262,67 @@ main_code_review:
 main_local_result: PASS
 server_gate: PENDING —— §8 的 StCache 验收是本任务第二半，未通过前不得设 ACCEPTED
 delivery_note: 为使服务器能 pull，主 Agent 在 server_gate 之前提交推送；这是交付而非验收。
+
+## 12. 服务器验收通过与 ACCEPTED（主 Agent，2026-08-27）
+
+服务器在 `ebefc94` 上运行第 8 节命令，输出目录 `stcache_all_t111_001`：
+
+```text
+rename=5931  preserve=1153  unsupported=18  modified_tokens=21922
+加密率 0.38336（13152 / 34307 行）
+加密类型 4：signals, ports, interface, struct        ← 用户最低要求达成
+strict_compile_passed=true  restored_byte_identical=true
+occurrence_coverage=1.0  symbol_coverage=1.0  plaintext_leakage_rate=0.0
+mapping schema 2；无 REFUSED_ATOMIC
+
+category_outcomes 与 preserve 原因直方图：
+  signals    cand=3184 rename=2775 preserve=409 unsup=0   409 outside_top_closure
+  ports      cand=3241 rename=2636 preserve=587 unsup=18  422 outside_top_closure
+                                                          165 selected_top_boundary
+                                                           20 macro_origin_conflict
+  interface  cand=136  rename=113  preserve=23  unsup=0    23 hierarchical_prefix_unsupported
+  struct     cand=541  rename=407  preserve=134 unsup=0   134 outside_top_closure
+```
+
+### 12.1 逐条核对第 8 节通过条件
+
+| 条件 | 结果 |
+| --- | --- |
+| 无 `REFUSED_ATOMIC` | 通过（`PASS_PARTIAL`） |
+| `strict_compile_passed` 与 `restored_byte_identical` 均 true | 通过 |
+| **四组均 `rename > 0`，struct 由 0 变为大于 0** | 通过（struct 407） |
+| preserve 原因只允许 5 种，无未解释新原因 | 通过，且**只出现 4 种** |
+| mapping schema 2、range audit 无重复/重叠/越界 | 通过 |
+
+**`source_binding_incomplete` 计数为 0** —— §2.2 的宏位置还原完全解决了 T110 遗留的 3 个根因，
+全设计已无绑定失败。
+
+### 12.2 两处与预期不同、结果更好的地方
+
+1. struct 的 134 条保留**不是** `source_binding_incomplete`，而是 `outside_top_closure`。
+   主 Agent 在服务器数据前的推测（"爆炸半径掩盖了逐记录失败数"）**被推翻**：
+   这些 typedef 只是不在 StChCore 的活跃类型闭包内，属既有策略边界，本应保留。
+2. `ports rename=2636 / preserve=587 / unsupported=18` 与 T108 重构**之前**的历史基线
+   （见 `stcache_core_category_stability.md`）**完全相同**。T108 造成的 ports 能力回退已彻底修复，
+   且新架构复现了旧架构的逐项计数。
+
+### 12.3 验收结论
+
+`main_result: ACCEPTED`
+
+本地五条门禁与服务器门禁全部通过；主 Agent 独立复跑，未采信子 Agent 自报。
+T111 的单一目标（爆炸半径 category → record）在本地与真实工程上均得到验证。
+
+### 12.4 上线前仍未闭合的一项风险（不属于 T111 范围）
+
+主 Agent 审查 `metrics_vnext.py:_validate_gate_edits` 后确认：
+`plaintext_leakage_rate` 只遍历 `execution.edits`，逐个验证 gate 字节等于新名而非旧名。
+它证明"计划的编辑都执行了"，**不证明 gate 中没有残留旧名**。
+`occurrence_coverage` 同理，是已识别 occurrence 的覆盖率，不是全部文本出现的覆盖率。
+
+因此以下失败模式在当前证据下**未被排除**：某个引用从未被识别 → 声明改名而该引用保留旧名 →
+在 SystemVerilog 缺省 `default_nettype` 下，端口连接实参位置的未声明标识符会变成隐式 wire →
+**strict compile 干净通过但功能错误**。
+
+StCache 未跑 Formal（其 interface/aggregate 语法 Yosys 难以完整解析，见 `future_work.md`）。
+建议在上线前用一次只读的"gate 残留旧名扫描"闭合该风险，归 T112。
