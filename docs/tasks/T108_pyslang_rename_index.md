@@ -1,6 +1,6 @@
 # T108：以 PySlang 为唯一语义权威的四核心组 RenameIndex
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`BLOCKED`
 - 主 Agent：Codex
 - 子 Agent：仅允许 GPT-5.6 Luna Extra High（`gpt-5.6-luna`，`reasoning=xhigh`）
 - 起始 HEAD：`9a6ab0d183757345b8b1e1012bebabf59f998d5f`
@@ -254,7 +254,7 @@ signals/interface/struct 及除既有 boundary 外的 ports 有真实 rename；�
 执行记录：
 
 ```text
-status: READY_FOR_REVIEW
+status: BLOCKED
 starting_head: 9a6ab0d183757345b8b1e1012bebabf59f998d5f
 started_at: 2026-08-26T17:10:00+08:00
 rework_start: 2026-08-26T18:23:41+08:00; returned by Main Agent under §10 review; four frozen corrections: direct FieldSymbol binding, complete semantic/range/transaction coverage, T073/T075 cleanup migration, and schema-2 consumer invariants
@@ -276,7 +276,7 @@ server_rework_13_review_request: READY_FOR_REVIEW after the unchanged §7 gates 
 rework_scope: only §12 server-gate correction within the existing T108 product, fixture, test, and contract allowlist; no public interface, schema, category, validator, compatibility layer, parser, or gate expansion
 first_command: conda run -n rtl_obfuscation python -m unittest tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v
 allowed_files_checked: section 5 allowlist; no overlap with pre-existing user changes
-current_stage: §13 local implementation complete; gates 1-4 and actual Formal pass; READY_FOR_REVIEW requested, external StCache rerun remains pending
+current_stage: §15 主 Agent 实测更正 §14 两处机制描述并置 BLOCKED；三个根因属绑定方向问题，需先由 T109 完成只读覆盖率测量才能确定正确的修复集合；已交付代码保留在 main 不回退
 first_risk: interface array elements and macro-expanded occurrences may be source-less or non-unique; handled as semantic aliases or preserve issues, never fabricated ranges
 changed_files: README.md; docs/development/architecture/stcache_core_category_stability.md; docs/development/future_work.md; docs/development/project_structure.md; docs/systemverilog_renaming_table.md; docs/tasks/T108_pyslang_rename_index.md; rtl_obfuscator/category_registry_vnext.py; rtl_obfuscator/mapping_vnext.py; rtl_obfuscator/metrics_vnext.py; rtl_obfuscator/orchestration_vnext.py; rtl_obfuscator/rate_execution_vnext.py; rtl_obfuscator/rate_metrics_vnext.py; rtl_obfuscator/rate_vnext.py; rtl_obfuscator/rename_index.py; rtl_obfuscator/restore_vnext.py; rtl_obfuscator/rewrite.py; rtl_obfuscator/rewrite_vnext.py; rtl_obfuscator/source_catalog.py; deleted rtl_obfuscator/symbol_graph.py and rtl_obfuscator/rewrite_policy.py; tests/test_t108_pyslang_rename_index.py; tests/test_t108_public_core_flow.py; tests/fixtures/t108_pyslang_rename_index/**; direct-consumer tests/test_public_cli.py, tests/test_mapping_vnext.py, tests/test_rewrite_vnext.py, tests/test_orchestration_vnext.py, tests/test_restore_vnext.py, tests/test_metrics_vnext.py, tests/test_rate_vnext.py, tests/test_rate_execution_vnext.py, tests/test_rate_metrics_vnext.py, tests/test_mapping_execution_vnext.py, tests/test_cli_vnext_encryption.py, tests/test_project_root_vnext.py; deleted section-4 legacy tests
 commands: baseline `conda run -n rtl_obfuscation python -m unittest tests.test_public_cli tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext tests.test_source_set -v`
@@ -562,3 +562,139 @@ main_local_result: PASS
 server_gate: PENDING_RETRY; server must pull the §13 fix and rerun the unchanged §8 StCache command plus category/reason audit
 delivery_override: reuse the explicit user authorization recorded in §11.1 to commit/push this server-sync fix before final ACCEPTED; delivery is not acceptance
 ```
+
+## 14. 服务器 StCache typed occurrence 诊断与 Claude 交接（仅记录，未修改产品）
+
+服务器确认运行提交 `c3cf87a`，新输出为
+`/home/lufengchi/workspace/test/stcache_all_t108_003`，`mapping.json` 修改时间为
+2026-08-27 10:42:24 +0800；因此本节证据不是旧 checkout 或旧输出。
+
+完整流程仍安全完成：mapping schema 2，strict compile 和 byte-identical restore 均为 true；range audit 为
+declarations 7102、occurrences 15219、total ranges 22321。但第 8 节四组门禁仍失败：
+
+```text
+signals:   rename=2775 preserve=409  unsupported=0
+ports:     rename=0    preserve=3239 unsupported=2
+interface: rename=0    preserve=136  unsupported=0
+struct:    rename=0    preserve=541  unsupported=0
+```
+
+与 `f952763` 相比，occurrences 从 14316 增至 15219（+903），struct 的
+`cross_record_range_conflict` 从 182 个 record / 182 个 issue 降为 0。这证明 `c3cf87a` 保留 PySlang wrapper
+identity 的修复有效；但三个核心组仍分别被一种 typed occurrence 提取错误触发组级 preserve。record 上的
+2652/117/407 个 `source_binding_incomplete` 是组事务传播后的结果，不是同等数量的独立根故障。
+
+### 14.1 三个已确认根因
+
+1. **Ports：源码 connection 与 semantic port 被按索引错误配对。**
+
+   根诊断共 2850 条，唯一 signature 为
+   `PortSymbol / semantic target has no unique physical typed token`。直接证据：semantic record 名为 `clk`，
+   但失败位置是 `StChLpCtrlWrapper.sv:84:5` 的 `.gt_clk(gt_clk)`。当前 `_collect_occurrences` 将过滤后的
+   `syntax.connections` 与 `node.portConnections` 直接 `zip`；前者按源码连接顺序，后者不保证相同顺序，
+   因而把 `.gt_clk` 错配给 formal `clk`。这不是 port declaration 识别失败。
+
+2. **Interface：modport-qualified 类型选择了错误侧 identifier。**
+
+   根诊断共 90 条，唯一 signature 为
+   `DefinitionSymbol / semantic target has no unique physical typed token`。直接证据：语义目标为
+   `StChReqIf`，源码是 `StChReqIf.Master axi2arb_ar_if`。当前通用 `ScopedName` 路径取右侧 `Master`，但本次
+   DefinitionSymbol occurrence 应取左侧物理 interface 类型 token `StChReqIf`。PySlang target 已正确绑定，
+   错误发生在 occurrence token 选择。
+
+3. **Struct：member 后接 bit/part select 时没有定位中间字段 token。**
+
+   根诊断共 346 条，唯一 signature 为
+   `FieldSymbol / semantic target has no unique physical typed token`。直接证据：语义目标为 `user`，源码是
+   `ar_fifo_rdat.user[WAY_PART_H:0]`。外层 typed syntax 是选择表达式；当前 resolver 只检查直接
+   identifier/简单 member shape，未沿 PySlang typed expression 结构定位 `.user`，所以误报未绑定。
+
+三个问题的共同边界是：PySlang semantic target 已正确，失败仅在将该 target 映射到唯一物理 occurrence
+identifier token。不得把它们改写为名称搜索、源码文本扫描、正则解析或新的 scope/owner 推断。
+
+### 14.2 Claude 接手约束与完成条件
+
+- 继续同一 T108，不创建 T109；当前状态保持 `IN_PROGRESS`。
+- 先完整阅读 AGENTS.md、本合同和 refactor sub-agent protocol；本节记录完成时没有产品代码或测试修改。
+- 仅在 §5 allowlist 内修复 `rename_index.py` 的 typed occurrence 绑定，并增加最小 replacement coverage：
+  1. named connections 的源码顺序与 formal port 顺序不同，必须通过 PySlang 每个 semantic connection 的
+     直接 syntax/target 关系绑定，禁止按两个独立列表的索引或名称查找配对；
+  2. `InterfaceName.ModportName` 必须依据直接 DefinitionSymbol target 选择 interface 类型 token，modport
+     自身仍依据自己的 semantic target 选择右侧 token；
+  3. `struct_field[select]`、`struct_field[part-select]` 等必须沿 typed syntax 取得直接 FieldSymbol 对应的
+     member token，不得扫描 token 文本。
+- 保持 group transaction、mapping/rewrite 严格 range validator、schema 2、四个公开 category、SourceSet、
+  PySlang compile 配置、Formal 和服务器命令不变。
+- 本地 fixture 必须复现上述三种真实形状，并证明 ports/interface/struct 均有真实 rename、strict compile、
+  byte-identical restore、range 无重复；原未知绑定 fixture 继续证明不能唯一绑定时整组 preserve。
+- 完成原第 7 节门禁和 actual renamed-gate Formal 后只设 `READY_FOR_REVIEW`。主 Agent复核并重新运行同一
+  StCache 门禁；只有四组 rename 均大于 0、且无新增未解释 reason 时才可 `ACCEPTED`。
+
+本节是只读问题审计与交接记录，没有实施修复、放宽策略或声明服务器门禁通过。
+
+## 15. §14 诊断的实测更正与任务 `BLOCKED`（主 Agent，2026-08-27）
+
+§14 的三条根因**定位**（ports / interface / struct 各有一种 typed occurrence 提取失败）成立，
+但其中两条的**机制描述经 PySlang 11 实测推翻**。§14.2 的修复指令按原文无法实现，因此在此更正。
+§14 原文保留不删，仅标注为已被实测取代。
+
+### 15.1 Ports —— §14 描述正确
+
+`_collect_occurrences` 把 `syntax.connections` 与 `node.portConnections` 直接 `zip`。实测：
+
+```text
+端口声明顺序 a_first, b_second, c_third，实例化写成 .c_third / .b_second / .a_first
+  SOURCE order   : ['c_third', 'b_second', 'a_first']
+  SEMANTIC order : ['a_first', 'b_second', 'c_third']
+  PortConnection 属性 = ['expression', 'ifaceConn', 'port']   ← 无 syntax，无 sourceRange
+```
+
+两个列表顺序不一致且 `PortConnection` 不暴露自己的源码位置，故按下标配对必然错位。
+
+### 15.2 Interface —— §14 机制描述错误
+
+§14.1 第 2 条称"当前通用 `ScopedName` 路径取右侧 `Master`"。实测代码从未走到 ScopedName：
+
+```text
+StChReqIf.Master mp_port → header = InterfacePortHeaderSyntax
+                           header.nameOrKeyword = Token(StChReqIf)   ← 正确目标 token
+                           header.modport       = DotMemberClause(.Master)
+StChReqIf bare_port      → header = VariablePortHeaderSyntax
+                           header.dataType      = NamedType(StChReqIf)
+```
+
+带 modport 限定时 header 是 `InterfacePortHeaderSyntax`，**没有 `dataType` 属性**。
+`rename_index.py` 只试 `header.dataType` 与 `port_parent.type`，两者皆 `None`，
+于是 `_syntax_identifier_range(None, ...)` 直接返回 `None`。
+正确做法是读 typed token `header.nameOrKeyword`，不需要在 ScopedName 里挑边。
+ScopedName 取左侧的问题真实存在，但只出现在非 ANSI 的 `if.modport x;` 体内声明形式，是次要分支。
+
+### 15.3 Struct —— §14 机制描述错误
+
+§14.1 第 3 条称"外层 typed syntax 是选择表达式，需沿 typed 结构定位"。实测没有 typed 结构可走：
+
+```text
+ar_fifo_rdat.ok        → MemberAccessExpression.syntax = ScopedNameSyntax
+ar_fifo_rdat.user[3:0] → MemberAccessExpression.syntax = None
+                         sourceRange = [448:465]，正好是 "ar_fifo_rdat.user" 17 字节
+```
+
+`syntax` 是 `None` 而非选择表达式。可用证据是 `sourceRange`：成员名是该区间末尾的
+`len(name)` 个字节，配合既有字节校验即可证明，不需要扫描 token 文本。
+
+### 15.4 为何置 `BLOCKED` 而非继续修
+
+三条根因都属于"语义符号 → 物理 token"这个方向的提取失败，而该方向无法证明 occurrence 完整性；
+`_apply_group_binding_issues` 的全设计爆炸半径正是用来代替这个缺失的证明。
+在没有覆盖率测量之前，无法确定"还差哪些形状"，因此每修一个形状仍会被下一个未知形状打回 `rename=0`
+（本任务已 12 次退回即为此）。
+
+任务边界内无法继续，故置 `BLOCKED`。已交付代码保留在 `main` 不回退。
+方向论证见 [`token_first_binding.md`](../development/architecture/token_first_binding.md)，
+先由 [`T109`](T109_binding_coverage_probe.md) 完成只读覆盖率测量，再据实测结果决定产品改造顺序，
+届时新建任务，不在本合同内恢复。
+
+### 15.5 流程偏差说明
+
+按 `docs/tasks/README.md` 状态表，`BLOCKED` 通常由子 Agent 设置。本次由主 Agent 设置，
+理由是阻塞判断来自主 Agent 的独立实测而非子 Agent 执行过程。此处显式记录该偏差，不隐藏。

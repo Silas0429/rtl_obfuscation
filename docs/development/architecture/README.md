@@ -8,3 +8,4 @@
 - [`project_root_parameter_plan_draft.md`](project_root_parameter_plan_draft.md)：参数支持历史方案。
 - [`category_profile_normalization_plan.md`](category_profile_normalization_plan.md)：类别策略统一方案。
 - [`stcache_core_category_stability.md`](stcache_core_category_stability.md)：StCache 四组核心类别的真实能力边界，以及 interface array、aggregate type-parameter 声明种类的稳定化设计。
+- [`token_first_binding.md`](token_first_binding.md)：绑定方向倒置的论证与只读覆盖率测量方法，解释为何逐形状兼容不收敛，以及逐符号完整性判据如何替代组级爆炸半径。
