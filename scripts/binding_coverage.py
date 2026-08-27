@@ -422,6 +422,180 @@ def _aggregate_fields(node: Any) -> tuple[Any, ...]:
     )
 
 
+def _unit_spans(
+    tree: Any, resolver: _FileResolver
+) -> list[tuple[str, int, int, tuple[str, int] | None]]:
+    """Return every module/interface/package declaration span in the CST.
+
+    Each entry is (file, start, end, name_key) where name_key identifies the
+    declaration's own name token.  The spans are used to decide which physical
+    design unit a token lexically belongs to.
+    """
+
+    wanted = {
+        "ModuleDeclaration",
+        "InterfaceDeclaration",
+        "PackageDeclaration",
+        "ProgramDeclaration",
+    }
+    spans: list[tuple[str, int, int, tuple[str, int] | None]] = []
+    nodes: list[Any] = []
+    tree.root.visit(nodes.append)
+    manager = resolver._manager
+    for node in nodes:
+        if type(node).__name__ == "Token":
+            continue
+        if _kind_name(_safe_attr(node, "kind")) not in wanted:
+            continue
+        try:
+            source_range = _safe_attr(node, "sourceRange")
+            start_loc, _ = _physical_location(manager, source_range.start)
+            end_loc, _ = _physical_location(manager, source_range.end)
+        except Exception:
+            continue
+        file = resolver.resolve(_safe_attr(start_loc, "buffer"))
+        if file is None or file != resolver.resolve(_safe_attr(end_loc, "buffer")):
+            continue
+        try:
+            start, end = int(start_loc.offset), int(end_loc.offset)
+        except Exception:
+            continue
+        if end <= start:
+            continue
+        name_key: tuple[str, int] | None = None
+        token = _safe_attr(_safe_attr(node, "header"), "name")
+        try:
+            if token is not None:
+                token_loc, _ = _physical_location(manager, token.location)
+                token_file = resolver.resolve(_safe_attr(token_loc, "buffer"))
+                if token_file is not None:
+                    name_key = (token_file, int(token_loc.offset))
+        except Exception:
+            name_key = None
+        spans.append((file, start, end, name_key))
+    return spans
+
+
+def _elaborated_unit_keys(ast_root: Any, resolver: _FileResolver) -> set[tuple[str, int]]:
+    """Return the name-token keys of design units PySlang actually elaborated.
+
+    A module instantiated only inside a generate branch that was not taken has
+    no ``InstanceBodySymbol`` at all, so none of its identifiers can carry a
+    semantic reference.  Those tokens are a known preserve boundary rather than
+    a missing binding rule, so they must not be counted against coverage.
+    """
+
+    keys: set[tuple[str, int]] = set()
+    nodes: list[Any] = []
+    ast_root.visit(nodes.append)
+    manager = resolver._manager
+    for node in nodes:
+        if type(node).__name__ not in {"InstanceBodySymbol", "PackageSymbol"}:
+            continue
+        target = _safe_attr(node, "definition") or node
+        try:
+            physical, _ = _physical_location(manager, _safe_attr(target, "location"))
+            file = resolver.resolve(_safe_attr(physical, "buffer"))
+            if file is not None:
+                keys.add((file, int(physical.offset)))
+        except Exception:
+            continue
+    return keys
+
+
+def _dead_regions(
+    tree: Any,
+    ast_root: Any,
+    resolver: _FileResolver,
+) -> tuple[list[tuple[str, int, int]], dict[str, int]]:
+    """Return source regions PySlang never elaborated.
+
+    Two shapes produce identifiers that no semantic reference can ever reach:
+
+    * a design unit that is instantiated only from a generate branch that was
+      not taken, so it has no ``InstanceBodySymbol`` at all;
+    * an uninstantiated generate branch inside a unit that *was* elaborated.
+
+    Both are existing preserve boundaries rather than missing binding rules, so
+    their tokens must be reported separately instead of counted against
+    coverage.
+    """
+
+    stats = {"design_units": 0, "elaborated_design_units": 0, "dead_generate_blocks": 0}
+    elaborated = _elaborated_unit_keys(ast_root, resolver)
+    stats["elaborated_design_units"] = len(elaborated)
+
+    regions: list[tuple[str, int, int]] = []
+    for file, start, end, name_key in _unit_spans(tree, resolver):
+        stats["design_units"] += 1
+        if name_key is not None and name_key not in elaborated:
+            regions.append((file, start, end))
+
+    nodes: list[Any] = []
+    ast_root.visit(nodes.append)
+    manager = resolver._manager
+    seen: set[tuple[str, int, int]] = set()
+    for node in nodes:
+        if type(node).__name__ != "GenerateBlockSymbol":
+            continue
+        if not _safe_attr(node, "isUninstantiated", False):
+            continue
+        try:
+            source_range = _safe_attr(_safe_attr(node, "syntax"), "sourceRange")
+            start_loc, _ = _physical_location(manager, source_range.start)
+            end_loc, _ = _physical_location(manager, source_range.end)
+        except Exception:
+            continue
+        file = resolver.resolve(_safe_attr(start_loc, "buffer"))
+        if file is None or file != resolver.resolve(_safe_attr(end_loc, "buffer")):
+            continue
+        try:
+            start, end = int(start_loc.offset), int(end_loc.offset)
+        except Exception:
+            continue
+        if end <= start:
+            continue
+        key = (file, start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        stats["dead_generate_blocks"] += 1
+        regions.append(key)
+    return regions, stats
+
+
+def _tokens_in_regions(
+    tokens: dict[tuple[str, int, int], PhysicalToken],
+    regions: list[tuple[str, int, int]],
+) -> set[tuple[str, int, int]]:
+    """Return the tokens that fall inside any of the supplied source regions."""
+
+    by_file: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for file, start, end in regions:
+        by_file[file].append((start, end))
+    starts: dict[str, list[int]] = {}
+    for file, items in by_file.items():
+        items.sort()
+        starts[file] = [item[0] for item in items]
+
+    result: set[tuple[str, int, int]] = set()
+    for key, token in tokens.items():
+        items = by_file.get(token.file)
+        if not items:
+            continue
+        index = bisect.bisect_right(starts[token.file], token.start)
+        for position in range(index - 1, -1, -1):
+            start, end = items[position]
+            if token.end <= end:
+                result.add(key)
+                break
+            # Regions of one file may nest; keep scanning outward until the
+            # earliest region can no longer contain this token.
+            if position == 0:
+                break
+    return result
+
+
 def _collect_declarations(
     ast_root: Any,
     resolver: _FileResolver,
@@ -724,6 +898,9 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
     )
 
     accounted = set(assigned) | set(declared)
+    dead_regions, unit_stats = _dead_regions(view.syntax_tree, view.root, resolver)
+    dead = _tokens_in_regions(tokens, dead_regions)
+
     residual = [token for key, token in tokens.items() if key not in accounted]
     in_scope = set(in_scope_names)
     in_scope_tokens = {
@@ -736,12 +913,27 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
         for key, token in in_scope_tokens.items()
         if key not in accounted
     ]
+    # The decision denominator: in-scope tokens inside design units PySlang
+    # actually elaborated.  Tokens in a never-elaborated unit cannot carry a
+    # semantic reference at all, so counting them would understate what a
+    # binding rule could ever reach.
+    live_tokens = {
+        key: token
+        for key, token in in_scope_tokens.items()
+        if key not in dead
+    }
+    live_residual = [
+        token for key, token in live_tokens.items() if key not in accounted
+    ]
 
     histogram = _residual_histogram(
         view.syntax_tree, resolver, residual, args.examples
     )
     in_scope_histogram = _residual_histogram(
         view.syntax_tree, resolver, in_scope_residual, args.examples
+    )
+    live_histogram = _residual_histogram(
+        view.syntax_tree, resolver, live_residual, args.examples
     )
 
     by_node_kind: dict[str, int] = defaultdict(int)
@@ -759,11 +951,17 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
 
     total = token_stats["physical_identifier_tokens"]
     in_scope_accounted = sum(1 for key in in_scope_tokens if key in accounted)
+    live_accounted = sum(1 for key in live_tokens if key in accounted)
     in_scope_ambiguous = sum(
         1
         for item in ambiguous
         if _semantic_name(str(item["text"])) in in_scope
     )
+    token_stats = {
+        **token_stats,
+        **unit_stats,
+        "tokens_in_unelaborated_source": len(dead),
+    }
     return {
         "format": FORMAT,
         "schema_version": SCHEMA_VERSION,
@@ -816,6 +1014,13 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
                 "ambiguous": in_scope_ambiguous,
                 "coverage_ratio": _ratio(in_scope_accounted, len(in_scope_tokens)),
             },
+            "in_scope_elaborated": {
+                "identifier_tokens": len(live_tokens),
+                "accounted": live_accounted,
+                "unaccounted": len(live_residual),
+                "coverage_ratio": _ratio(live_accounted, len(live_tokens)),
+                "excluded_unelaborated_tokens": len(in_scope_tokens) - len(live_tokens),
+            },
             "reference_coverage_ratio": _ratio(len(assigned), len(references)),
             "attributed_by_ast_node_kind": dict(
                 sorted(by_node_kind.items(), key=lambda item: (-item[1], item[0]))
@@ -827,10 +1032,14 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
         },
         "residual_by_syntax_kind": histogram,
         "residual_in_scope_by_syntax_kind": in_scope_histogram,
+        "residual_in_scope_elaborated_by_syntax_kind": live_histogram,
         "completeness": {
             "overall": _completeness(tokens, accounted, args.worst_names),
             "in_scope": _completeness(
                 tokens, accounted, args.worst_names, only_names=in_scope
+            ),
+            "in_scope_elaborated": _completeness(
+                live_tokens, accounted, args.worst_names, only_names=in_scope
             ),
         },
     }
@@ -841,6 +1050,7 @@ def _print_summary(report: dict[str, object]) -> None:
     join = report["join"]
     overall = join["overall"]
     scoped = join["in_scope"]
+    live = join["in_scope_elaborated"]
     completeness = report["completeness"]
     inputs = report["input"]
     lines = [
@@ -862,25 +1072,35 @@ def _print_summary(report: dict[str, object]) -> None:
         f"{completeness['overall']['names_fully_accounted']}"
         f" / {completeness['overall']['distinct_names']}",
         "",
-        "  IN SCOPE (four core groups -- this is the decision number)",
+        "  IN SCOPE (four core groups)",
         f"    accounted   : {scoped['accounted']} / {scoped['identifier_tokens']}"
         f"  ({scoped['coverage_ratio']:.2%})",
         f"    residual    : {scoped['unaccounted']}"
         f"   ambiguous: {scoped['ambiguous']}",
-        f"    renameable name ratio: "
-        f"{completeness['in_scope']['names_fully_accounted']}"
-        f" / {completeness['in_scope']['distinct_names']}"
-        f"  ({completeness['in_scope']['renameable_name_ratio']:.2%})",
         "",
-        "  in-scope residual by syntax kind (the grammar rules still missing):",
+        "  IN SCOPE + ELABORATED (the decision number)",
+        f"    accounted   : {live['accounted']} / {live['identifier_tokens']}"
+        f"  ({live['coverage_ratio']:.2%})",
+        f"    residual    : {live['unaccounted']}",
+        f"    excluded because their source was never elaborated: "
+        f"{live['excluded_unelaborated_tokens']}"
+        f"  (units {tokens['elaborated_design_units']}/{tokens['design_units']},"
+        f" dead generate blocks {tokens['dead_generate_blocks']})",
+        f"    renameable name ratio: "
+        f"{completeness['in_scope_elaborated']['names_fully_accounted']}"
+        f" / {completeness['in_scope_elaborated']['distinct_names']}"
+        f"  ({completeness['in_scope_elaborated']['renameable_name_ratio']:.2%})",
+        "",
+        "  residual by syntax kind, in scope + elaborated"
+        " (the grammar rules still missing):",
     ]
-    for entry in report["residual_in_scope_by_syntax_kind"][:15]:
+    for entry in report["residual_in_scope_elaborated_by_syntax_kind"][:15]:
         lines.append(
             f"    {entry['tokens']:>8}  {entry['syntax_kind']}"
             f" < {entry['parent_syntax_kind']}"
             f"  (names={entry['distinct_names']})"
         )
-    if not report["residual_in_scope_by_syntax_kind"]:
+    if not report["residual_in_scope_elaborated_by_syntax_kind"]:
         lines.append("    (none)")
     print("\n".join(lines), file=sys.stderr)
 

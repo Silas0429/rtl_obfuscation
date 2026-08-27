@@ -118,43 +118,85 @@ AST 全部引用节点的 `sourceRange` + 目标）+ 类一通用规则 + 一趟
 
 这条经验对产品同样成立：**任何按 token 归属的实现都必须用物理声明范围而不是对象身份做目标标识。**
 
-### 5.2 真实工程上的残差分布
+### 5.2 未 elaboration 的源码必须单列，否则数字无法解读
 
-`rtl_samples/RISC-V-Vector`（project-root，top `vector_top`，19 个 source unit，
-7462 个物理 identifier token，`byte_mismatch=0`）的 in-scope 残差 447 个，全部落在四条规则族内：
+StCache 首次实测（154 source units，61659 个物理 identifier token）暴露了一个比语法规则更大的
+干扰项：`data_o accounted=11 / unaccounted=3000`、`data_i 15/2873`、`syndrome_o 6/2860`，
+三个名字就占 in-scope 残差的 43%。全部位于 `src/common/ecc/ecc_list/prim_secded_*`。
 
-| 残差 | token 数 | 占残差 | 性质 |
-| --- | --- | --- | --- |
-| `NamedPortConnection < HierarchicalInstance` | 388 | 87% | 端口连接标签 —— **服务器 ports 根因** |
-| `NamedType < IdentifierName` / `< IdentifierSelectName` | 25 | 6% | 声明里的 typedef 类型引用 |
-| `SimplePropertyExpr < SimpleSequenceExpr` | 16 | 4% | SVA 断言里的引用 |
-| `IdentifierName < 各算术/比较表达式` | 18 | 4% | for 循环局部变量 `k`/`i` |
+本地实测确认了机制：
 
-**单独实现 `NamedPortConnection` 一条规则，in-scope 覆盖即从 92.47% 升到约 99%。**
+```text
+module leaf_dead (...); ... endmodule          // 只被未选中的 generate 分支实例化
+被 elaborate 的 InstanceBodySymbol: ['wrapper', 'leaf_used']
+dead_i / dead_o 是否有任何引用节点: False False
+```
+
+未走到的 generate 分支里的模块，其 body **完全不进 AST**，所以它的每个 identifier 都不可能
+带有语义引用。ECC 库是一整套位宽变体，generate 只选中一个；其余变体与被选中者**共用
+`data_i/data_o/syndrome_o` 等端口名**，于是被选中变体把这些名字带进 in-scope 集合后，
+未选中变体的数千个同名 token 全被计成"缺规则"。
+
+这是项目在 [`T101`](../../tasks/T101_unelaborated_physical_module_boundary.md) 已经认识的
+preserve 边界，**不是绑定规则缺失**。同一现象有两种形态，探测器都需排除：
+
+| 形态 | 检测方式 |
+| --- | --- |
+| 设计单元从未 elaborate | CST 的 module/interface/package 声明跨度中，名字 token 不在任何 `InstanceBodySymbol`/`PackageSymbol` 的声明位置集合里 |
+| elaborate 过的单元内部有未选中 generate 分支 | `GenerateBlockSymbol.isUninstantiated == True`，取其 `syntax.sourceRange` |
+
+因此报告输出三层分母，决策只看第三层：
+
+| 分母 | 用途 |
+| --- | --- |
+| `join.overall` | 参照；含 parameter/genvar/module 名等范畴外拼写 |
+| `join.in_scope` | 四核心组名字，但仍含未 elaboration 源码 |
+| **`join.in_scope_elaborated`** | **决策数字**；扣掉不可能有引用的死源码 |
+
+本地验证该分离的效果（ECC 名字碰撞 fixture）：`in_scope 39.13% → in_scope_elaborated 90.00%`，
+排除 26 个 token（2 个死单元 + 1 个死 generate 分支），残差只剩 `NamedPortConnection`。
+
+### 5.3 真实工程上的残差分布
+
+`rtl_samples/RISC-V-Vector`（project-root，top `vector_top`，19 source units，
+7462 个物理 identifier token，`byte_mismatch=0`，歧义 0）：
+
+```text
+in_scope_elaborated  5116 / 5528 = 92.55%
+排除死源码 410 个 token（17/17 单元均 elaborate，但有 39 个死 generate 分支）
+残差 412，其中：
+   372  NamedPortConnection < HierarchicalInstance   90% ← 服务器 ports 根因
+    21  NamedType < IdentifierName                        声明里的 typedef 类型引用
+    19  IdentifierName < 各算术/比较表达式                 for 循环局部变量
+```
+
+**单独实现 `NamedPortConnection` 一条规则，in-scope+elaborated 覆盖即从 92.55% 升到约 99%。**
 这是"封闭短尾"假设在真实工程上的直接证据。
 
 小 fixture 上另外观察到的类二产生式（`InterfacePortHeader`、`DotMemberClause`、
 `VariablePortHeader`、`HierarchyInstantiation`、`ImplicitNonAnsiPort`、
 `IdentifierName < ScopedName` 层次前缀、`IdentifierName < CastExpression`、
-`$no_enclosing_syntax`）合并后，本地已知产生式总数为个位数量级的十余条。
+`IdentifierName < InvocationExpression`）合并后，本地已知产生式总数为十余条。
 
-### 5.3 已知的口径不精确
+### 5.4 已知的口径不精确
 
 - for 循环局部变量是 `VariableSymbol`，被本探测器计入 in-scope，而产品的 `signals` 只收
   `declaringDefinition` 为 module 的 Variable/Net。因此 in-scope 分母略偏大，
   覆盖率略偏悲观 —— 方向是安全的。
 - `$no_enclosing_syntax` 表示语法节点的 range 跨了两个 buffer（宏体），
   探测器无法为其归类。这是**分类**能力的边界，不影响归属结果。
+- StCache 报告中 `UninstantiatedDefSymbol: 357`：实例化了未定义模块（黑盒）。
+  其端口无声明可改名，但探测器目前不单列该类，仍计入 in-scope 残差。
 
-### 5.4 判读服务器数据的顺序
+### 5.5 判读服务器数据的顺序
 
 1. `tokens.byte_mismatch` 必须为 0。非 0 说明宏位置还原本身有问题，必须先修这一项，其余数字无意义。
 2. `join.in_scope.ambiguous` 应接近 0。若很大，说明目标身份口径又退化成了对象身份（见 §5.1）。
-3. `completeness.in_scope.renameable_name_ratio` —— 预测四个核心组能安全改名的比例，
-   同时说明逐符号完整性判据能否替代组级爆炸半径。
-4. `residual_in_scope_by_syntax_kind` 的产生式条数与头部集中度 —— 若头部一两条占绝大多数
-   且与 §5.2 重合，"封闭尾巴"假设成立，可按频次排序进入产品改造。
-5. `join.overall.coverage_ratio` 仅作参照，不用于决策。
+3. `tokens.tokens_in_unelaborated_source` 与 `dead_generate_blocks` —— 先确认死源码规模，
+   再看覆盖率，否则会把 preserve 边界误读成缺规则。
+4. `completeness.in_scope_elaborated.renameable_name_ratio` —— 预测四个核心组能安全改名的比例。
+5. `residual_in_scope_elaborated_by_syntax_kind` 的头部集中度 —— 若头部一两条占绝大多数
+   且与 §5.3 重合，可按频次排序进入产品改造。
 
 ## 6. 本文不主张的内容
 

@@ -121,7 +121,7 @@ class BindingCoverageProbeTest(unittest.TestCase):
     def test_residual_locates_the_three_server_root_causes(self) -> None:
         kinds = {
             entry["syntax_kind"]
-            for entry in self.report["residual_in_scope_by_syntax_kind"]
+            for entry in self.report["residual_in_scope_elaborated_by_syntax_kind"]
         }
         # Root cause 1: the named port connection label.  design.sv writes the
         # labels in an order that differs from the port declaration order.
@@ -130,10 +130,12 @@ class BindingCoverageProbeTest(unittest.TestCase):
         # PySlang exposes without a dataType attribute.
         self.assertIn("InterfacePortHeader", kinds)
         # The residual is a short grammar list, not an open tail.
-        self.assertLessEqual(len(self.report["residual_in_scope_by_syntax_kind"]), 12)
+        self.assertLessEqual(
+            len(self.report["residual_in_scope_elaborated_by_syntax_kind"]), 12
+        )
 
     def test_residual_entries_carry_locatable_evidence(self) -> None:
-        for entry in self.report["residual_in_scope_by_syntax_kind"]:
+        for entry in self.report["residual_in_scope_elaborated_by_syntax_kind"]:
             self.assertGreater(entry["tokens"], 0)
             self.assertTrue(entry["examples"])
             for example in entry["examples"]:
@@ -141,10 +143,21 @@ class BindingCoverageProbeTest(unittest.TestCase):
                 self.assertIsInstance(example["start"], int)
                 self.assertTrue(example["text"])
 
-    def test_completeness_reports_both_denominators(self) -> None:
+    def test_fixture_has_no_dead_source(self) -> None:
+        # design.sv is fully elaborated, so the elaboration split must be a
+        # no-op here and the two in-scope numbers must agree.
+        tokens = self.report["tokens"]
+        self.assertEqual(tokens["tokens_in_unelaborated_source"], 0)
+        self.assertEqual(tokens["dead_generate_blocks"], 0)
+        self.assertEqual(
+            tokens["design_units"], tokens["elaborated_design_units"]
+        )
+
+    def test_completeness_reports_all_three_denominators(self) -> None:
         completeness = self.report["completeness"]
         self.assertIn("overall", completeness)
         self.assertIn("in_scope", completeness)
+        self.assertIn("in_scope_elaborated", completeness)
         scoped = completeness["in_scope"]
         self.assertEqual(
             scoped["distinct_names"],
@@ -194,6 +207,46 @@ class BindingCoverageProbeTest(unittest.TestCase):
         self.assertEqual(
             json.loads(completed.stdout)["error"], "PROBE_INPUT_MODE_INVALID"
         )
+
+
+class UnelaboratedSourceTest(unittest.TestCase):
+    """The StCache ECC pattern: dead source must not be charged against coverage."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.report = _report(
+            filelist=str(FIXTURE / "dead_code.f"), top="t109_ecc_top"
+        )
+
+    def test_dead_design_unit_and_generate_branch_are_detected(self) -> None:
+        tokens = self.report["tokens"]
+        # Three modules are declared; only the top and the selected variant are
+        # elaborated.  The untaken branch is a separate dead region.
+        self.assertEqual(tokens["design_units"], 3)
+        self.assertEqual(tokens["elaborated_design_units"], 2)
+        self.assertEqual(tokens["dead_generate_blocks"], 1)
+        self.assertGreater(tokens["tokens_in_unelaborated_source"], 0)
+
+    def test_dead_source_is_excluded_from_the_decision_number(self) -> None:
+        scoped = self.report["join"]["in_scope"]
+        live = self.report["join"]["in_scope_elaborated"]
+        self.assertGreater(live["excluded_unelaborated_tokens"], 0)
+        self.assertEqual(
+            live["identifier_tokens"],
+            scoped["identifier_tokens"] - live["excluded_unelaborated_tokens"],
+        )
+        # The unselected variant shares data_i and syndrome_o with the selected
+        # one, so without the elaboration split its tokens would sink the ratio.
+        self.assertGreater(live["coverage_ratio"], scoped["coverage_ratio"])
+
+    def test_dead_source_residual_only_leaves_real_grammar_gaps(self) -> None:
+        kinds = {
+            entry["syntax_kind"]
+            for entry in self.report["residual_in_scope_elaborated_by_syntax_kind"]
+        }
+        # Once dead source is excluded, the only thing left in this fixture is
+        # the named port connection label rule.
+        self.assertEqual(kinds, {"NamedPortConnection"})
 
 
 if __name__ == "__main__":

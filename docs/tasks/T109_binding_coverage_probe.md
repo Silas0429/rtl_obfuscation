@@ -49,15 +49,22 @@
 `format=rtl-obfuscation.binding-coverage`、`schema_version=1`，至少包含：
 
 - `tokens`：物理 identifier token 总数、宏展开视图数、`byte_mismatch`、`outside_source_set`、
-  转义标识符数、同一物理 token 的最大展开次数；
+  转义标识符数、同一物理 token 的最大展开次数、`design_units`、`elaborated_design_units`、
+  `dead_generate_blocks`、`tokens_in_unelaborated_source`；
 - `semantic_references`：引用节点数、可用引用数、不同目标符号数；
 - `declarations`：命名符号数、已归属声明数、聚合字段数、in-scope 名字数及其按组分布；
-- `join.overall` 与 `join.in_scope`：各自的 `identifier_tokens / accounted / unaccounted /
-  ambiguous / coverage_ratio`；
-- `residual_by_syntax_kind` 与 `residual_in_scope_by_syntax_kind`：每项含
-  `syntax_kind`、`parent_syntax_kind`、`tokens`、`distinct_names`、带 file/start/text 的 examples；
-- `completeness.overall` 与 `completeness.in_scope`：`distinct_names`、`names_fully_accounted`、
-  `names_with_unaccounted_tokens`、`renameable_name_ratio`、`worst_names`。
+- `join` 的三层分母：`overall`、`in_scope`、`in_scope_elaborated`。前两层各含
+  `identifier_tokens / accounted / unaccounted / ambiguous / coverage_ratio`；
+  `in_scope_elaborated` 另含 `excluded_unelaborated_tokens`，是**决策数字**；
+- `residual_by_syntax_kind`、`residual_in_scope_by_syntax_kind`、
+  `residual_in_scope_elaborated_by_syntax_kind`：每项含 `syntax_kind`、`parent_syntax_kind`、
+  `tokens`、`distinct_names`、带 file/start/text 的 examples；
+- `completeness` 的三层：`overall`、`in_scope`、`in_scope_elaborated`，各含 `distinct_names`、
+  `names_fully_accounted`、`names_with_unaccounted_tokens`、`renameable_name_ratio`、`worst_names`。
+
+死源码判定：设计单元的名字 token 不在任何 `InstanceBodySymbol`/`PackageSymbol` 的声明位置集合里，
+或位于 `GenerateBlockSymbol.isUninstantiated` 为真的 generate 分支内。此类 token 不可能带语义引用，
+是既有 preserve 边界（见 T101），必须从决策分母中扣除并单独计数。
 
 不变量：`tokens.byte_mismatch` 必须为 0；未提供 `--json` 时不得写任何文件；
 输入模式冲突时以退出码 2 和 `PROBE_INPUT_MODE_INVALID` 失败。
@@ -66,7 +73,7 @@
 
 - 新增 `scripts/binding_coverage.py`
 - 新增 `tests/test_binding_coverage.py`
-- 新增 `tests/fixtures/t109_binding_coverage/design.f`、`design.sv`
+- 新增 `tests/fixtures/t109_binding_coverage/design.f`、`design.sv`、`dead_code.f`、`dead_code.sv`
 - 新增 `docs/development/architecture/token_first_binding.md`
 - 新增本任务单
 - 修改 `docs/tasks/T108_pyslang_rename_index.md`（仅更正 §14 误诊并置 `BLOCKED`）
@@ -131,11 +138,12 @@ status: ACCEPTED（实现完成时为 READY_FOR_REVIEW，主 Agent 独立复跑�
 starting_head: c3cf87ade670e3234b2787bc1176e959122f2545
 changed_files: scripts/binding_coverage.py; tests/test_binding_coverage.py;
   tests/fixtures/t109_binding_coverage/design.f; tests/fixtures/t109_binding_coverage/design.sv;
+  tests/fixtures/t109_binding_coverage/dead_code.f; tests/fixtures/t109_binding_coverage/dead_code.sv;
   docs/development/architecture/token_first_binding.md; docs/development/architecture/README.md;
   docs/tasks/T109_binding_coverage_probe.md;
   docs/tasks/T108_pyslang_rename_index.md (§14 更正 + 置 BLOCKED)
 commands: 第 6 节 5 条门禁
-results: unittest 11 tests exit 0; 两次探测退出码 0，byte_mismatch=0；py_compile exit 0；
+results: unittest 15 tests exit 0; 两次探测退出码 0，byte_mismatch=0；py_compile exit 0；
   git diff --check HEAD exit 0
 findings: 1. 实测推翻 T108 §14 的两处机制描述（见 T108 §15）；
   2. 实测确认声明维度不产生 AST 表达式节点，故计划中的"维度表达式遍历"无从实现，已改为如实记录该边界；
@@ -159,7 +167,7 @@ review_request: 本地门禁已通过；服务器测量待用户执行后决定�
 
 ```text
 local_gate_1: conda run -n rtl_obfuscation python -m unittest tests.test_binding_coverage -v
-  → exit 0, 11 tests passed
+  → exit 0, 15 tests passed
 local_gate_2: t109 fixture 探测 → exit 0；in-scope 覆盖 53/65；残差 6 条产生式；byte_mismatch=0
 local_gate_3: example_fifo 探测 → exit 0；in-scope 覆盖 174/199；残差 7 条产生式；byte_mismatch=0
 local_gate_4: py_compile → exit 0
@@ -170,20 +178,64 @@ allowlist_review: pass；工作区仅含第 5 节 allowlist 的路径，无产�
 local_result: PASS
 accepted_at: 2026-08-27；依据第 7 节冻结条件，服务器数据用于决定下一张任务，不是本任务的通过条件
 reopen_clause: 若服务器运行异常退出或 byte_mismatch != 0，本任务回到 IN_PROGRESS 修正探测器本身
-server_measurement: PENDING（用户执行第 7 节命令）
+server_measurement: 首次已完成（见第 11 节）；探测器口径已修正，需复测一次
 ```
 
-## 11. 下一步的判定规则（不属于本任务的验收条件）
+## 11. 服务器首次测量与探测器修正（2026-08-27）
 
-服务器数据回传后，按 `token_first_binding.md` §5.4 判读，并据此选择下一张任务：
+服务器在提交 `cf5c96e` 上运行第 7 节命令，`byte_mismatch=0`、`ambiguous=2`、
+`parse_errors=0`，探测器本身未异常退出。规模：154 source units，61659 个物理 identifier token，
+112926 个引用节点，6403 个不同目标符号。
 
-- 若 in-scope 残差的头部一两条产生式占绝大多数且与本地清单重合 → 新建任务，
+首版报告的 `in_scope` 覆盖仅 55.31%，但审查发现该数字被**未 elaboration 源码**污染：
+
+```text
+data_o     accounted=11  unaccounted=3000
+data_i     accounted=15  unaccounted=2873
+syndrome_o accounted=6   unaccounted=2860
+```
+
+三个名字占 in-scope 残差 20406 的 43%，全部位于 `src/common/ecc/ecc_list/prim_secded_*`。
+本地实测确认：只被未选中 generate 分支实例化的模块，其 body 完全不进 AST，
+所有 identifier 都不可能带语义引用；ECC 库多个位宽变体共用端口名，被选中变体把
+`data_i/data_o/syndrome_o` 带进 in-scope 名字集合后，未选中变体的同名 token 全被计成"缺规则"。
+
+这是 T101 已认识的 preserve 边界，不是绑定规则缺失。因此在同一任务内修正探测器口径：
+
+- 新增死源码检测的两种形态：未 elaborate 的设计单元；`GenerateBlockSymbol.isUninstantiated`
+  为真的 generate 分支；
+- 报告改为三层分母，新增 `join.in_scope_elaborated`、
+  `residual_in_scope_elaborated_by_syntax_kind`、`completeness.in_scope_elaborated`，
+  并新增 `tokens.design_units / elaborated_design_units / dead_generate_blocks /
+  tokens_in_unelaborated_source`；
+- 新增 fixture `tests/fixtures/t109_binding_coverage/dead_code.{f,sv}` 复现 ECC 名字碰撞与
+  死 generate 分支，并新增 3 条断言。
+
+修正后的本地效果：
+
+| 输入 | `in_scope` | `in_scope_elaborated` | 排除死源码 |
+| --- | --- | --- | --- |
+| `dead_code.f` | 39.13% | **90.00%** | 26 token（2 死单元 + 1 死分支） |
+| RISC-V-Vector | 92.47% | **92.55%** | 410 token（39 个死 generate 分支） |
+| example_fifo | 87.44% | 87.44% | 0 |
+| `design.f` | 81.54% | 81.54% | 0 |
+
+RISC-V-Vector 修正后残差 412，其中 `NamedPortConnection` 占 372（90%）；
+`SimplePropertyExpr` 那 16 个也随死分支排除而消失，证明它们本来就是死源码而非 SVA 绑定问题。
+
+服务器需在本次修正后**重跑一次**第 7 节命令，用 `join.in_scope_elaborated` 判读。
+
+## 12. 下一步的判定规则（不属于本任务的验收条件）
+
+服务器数据回传后，按 `token_first_binding.md` §5.5 判读，并据此选择下一张任务：
+
+- 若残差头部一两条产生式占绝大多数且与本地清单重合 → 新建任务，
   按频次实现 `NamedPortConnection` 等类二规则，从覆盖率收益最大的一条开始；
 - 若 `join.in_scope.ambiguous` 很大 → 先核查目标身份口径是否退化为对象身份；
 - 若出现大量本地未见的产生式 → "封闭尾巴"假设需修正，先扩充探测器分类再谈改造；
 - 若 `byte_mismatch != 0` → 本任务回到 `IN_PROGRESS` 修正探测器本身。
 
-产品改造的推荐顺序（待服务器数据确认后另立任务冻结）：
+产品改造的推荐顺序（待服务器复测确认后另立任务冻结）：
 
 1. 用物理声明位置替换 `rename_index.py` 中一切基于对象身份的目标标识；
 2. 实现 `NamedPortConnection` 标签绑定（服务器 ports 根因，覆盖率收益最大）；
