@@ -53,6 +53,37 @@ ar_fifo_rdat.user[3:0] MemberAccessExpression.syntax = None
 `_register_structs` 里按单个 aggregate 做的组保留是正确且必要的；共享物理 range 走
 `_resolve_range_claims` 也正确。要收缩的只有"全设计同类别"这一层。
 
+### 2.1 T111 已交付：收缩到单条记录（尚未实现按名字的完整性判据）
+
+T111 已把 `_apply_group_binding_issues` 中"全设计同类别"这一层收缩为**单条记录**：
+`source_binding_incomplete` 只保留产生该 issue 的那条记录。`_resolve_range_claims` 的
+未知跨记录冲突仍按组回滚，`_register_structs` 的 per-aggregate 事务不变，两者都未削弱。
+
+必须明确：T111 **没有**实现本节 §2 的按名字完整性判据。因此当前状态是
+"爆炸半径已收缩，但完整性仍不可证"。这两件事的组合暴露了一个此前被组级回滚掩盖的洞：
+
+> 一个 typedef 若**同时**被用作变量/端口类型（因而进入 top closure 且可改名）
+> 与另一个 struct 的**成员类型**，则成员类型处的 `NamedType` 引用不被绑定、
+> 不产生任何 issue，声明却照改 —— 改后 gate 严格编译失败。
+
+最小复现（无宏、无任何 binding issue，因此与 T111 两项修改无关，HEAD 上即存在）：
+
+```systemverilog
+typedef struct packed { logic [3:0] cmd; } probe_inner_t;
+typedef struct packed { probe_inner_t inner; logic [3:0] wide; } probe_word_t;
+module probe_top (input logic [3:0] cmd_i, output logic [3:0] out_o);
+    probe_word_t  word;
+    probe_inner_t plain;          // 使 probe_inner_t 进入 closure 并可改名
+    always_comb begin word.inner.cmd = cmd_i; word.wide = cmd_i; plain.cmd = cmd_i; end
+    assign out_o = word.inner.cmd ^ word.wide ^ plain.cmd;
+endmodule
+```
+
+`probe_inner_t` 物理出现在 3 处，产品只绑定 2 处（声明与变量类型），遗漏成员类型那 1 处，
+`struct` 组 issues 为空，`write_gate_vnext` 报 `CATALOG_SEMANTIC_FAILED`。
+这正是本节 §2 判据要买的那份安全：未归属 token 存在时不得改名。
+在实现该判据之前，`NamedType` 成员类型引用是一个 fail-open 面，需单独立项。
+
 ## 3. 两类 occurrence，只有一类曾是无穷的
 
 | 类别 | 定义 | 数量级 | 处理方式 |

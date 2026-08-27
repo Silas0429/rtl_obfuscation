@@ -1279,6 +1279,16 @@ def _member_access_range(
     candidate is byte-verified against the original source and rejected when it
     would consume the whole range, because a member reference always has a
     prefix.
+
+    A macro expansion range still cannot be used for offset arithmetic, but the
+    member token of a macro argument does physically exist at the call site, so
+    each end is first restored to its physical location by ``SourceManager`` and
+    the arithmetic then runs on the restored locations instead of giving up.
+    Restoring is not a relaxation of the proof: a restored candidate must pass
+    the same buffer, prefix and source-byte checks as a directly physical one,
+    and a restored range claimed by two records -- one macro body token expanded
+    N times has one physical range and N semantic meanings -- stays subject to
+    ``_resolve_range_claims``.
     """
 
     syntax = _safe_attr(node, "syntax")
@@ -1290,12 +1300,8 @@ def _member_access_range(
         return None
     expected_bytes = expected.encode("utf-8")
     try:
-        start = source_range.start
-        end = source_range.end
-        manager = catalog.catalog_source_manager
-        if manager.isMacroLoc(start) or manager.isMacroLoc(end):
-            # A macro expansion range cannot be used for offset arithmetic.
-            return None
+        start = _physical_location(catalog, source_range.start)
+        end = _physical_location(catalog, source_range.end)
         if start.buffer != end.buffer:
             return None
         file = _file_for_buffer(catalog, end.buffer)
@@ -1313,6 +1319,34 @@ def _member_access_range(
     if data[begin:stop] != expected_bytes:
         return None
     return SourceRange(file, begin, stop)
+
+
+def _member_access_provenance(catalog: SourceCatalog, node: object) -> str:
+    """Report whether one member occurrence came out of a macro expansion.
+
+    ``_resolve_range_claims`` tells an explained macro-origin collision apart
+    from an unknown cross-record collision by provenance alone, so a member
+    token whose expression lives in a macro expansion must declare that origin
+    exactly as ``_semantic_expression_range`` already does for a value
+    reference.  Without it a macro body member expanded with two different
+    aggregate types would be reported as an unknown conflict and would roll back
+    its whole core group.
+    """
+
+    start = _safe_attr(_safe_attr(node, "sourceRange"), "start")
+    if start is None:
+        return "semantic_member"
+    try:
+        manager = catalog.catalog_source_manager
+        if not manager.isMacroLoc(start):
+            return "semantic_member"
+        return (
+            "semantic_macro_argument"
+            if manager.isMacroArgLoc(start)
+            else "semantic_macro_body"
+        )
+    except Exception:
+        return "semantic_member"
 
 
 def _claim_occurrence(
@@ -1408,7 +1442,29 @@ def _apply_group_binding_issues(
     records: dict[str, _WorkingSymbol],
     binding_issues: dict[str, list[dict[str, object]]],
 ) -> dict[str, tuple[dict[str, object], ...]]:
-    """Make every unknown binding issue transactional at core-group scope."""
+    """Make every unknown binding issue transactional at single-record scope.
+
+    Renaming is safe when a declaration and every reference of *one* record
+    change together, and that constraint lives entirely inside that record.  So
+    a record without complete binding evidence preserves itself and leaves the
+    already-proven records of its core group renameable.  Escalating to the core
+    group was a real hazard rather than extra caution: on one production design
+    three unbound member tokens preserved 541 struct records, 538 of which were
+    bound correctly, and no amount of shape coverage removes the next unknown
+    shape.
+
+    The two couplings that do cross record boundaries are handled elsewhere and
+    are deliberately untouched here: a physical range claimed by two records is
+    resolved by ``_resolve_range_claims`` (which keeps its own group-scope
+    rollback for an unknown cross-record conflict), and the field completeness
+    of one aggregate is resolved by ``_register_structs``.  Shrinking this
+    propagation therefore adds no new unsafe surface.
+
+    ``binding_issues`` stays an input because it is this function's diagnostic
+    context, but it must never again turn one category's issue into a
+    category-wide rollback; ``build_rename_index`` already merges it into the
+    reported issues, so no locating information is lost.
+    """
 
     known_per_record_reasons = {
         "selected_top_boundary",
@@ -1423,13 +1479,12 @@ def _apply_group_binding_issues(
     unknown_by_category: dict[str, list[_WorkingSymbol]] = {}
     for record in records.values():
         if record.reason is not None and record.reason not in known_per_record_reasons:
+            # Record scope: the record that lacks evidence preserves itself.
+            # Every caller that raises an unknown reason already does this; the
+            # assignment keeps the invariant true from this function alone.
+            if record.support == "eligible":
+                record.support = "preserved"
             unknown_by_category.setdefault(record.category, []).append(record)
-    for category, category_issues in binding_issues.items():
-        if any(
-            issue.get("message") == "source_binding_incomplete"
-            for issue in category_issues
-        ):
-            unknown_by_category.setdefault(category, [])
 
     issues: dict[str, tuple[dict[str, object], ...]] = {}
     for category, unknown in unknown_by_category.items():
@@ -1442,11 +1497,6 @@ def _apply_group_binding_issues(
                 item.reason or "",
             ),
         )
-        primary_reason = ordered[0].reason if ordered else "source_binding_incomplete"
-        for record in records.values():
-            if record.category == category and record.support == "eligible":
-                record.support = "preserved"
-                record.reason = primary_reason
         issues[category] = tuple(
             {
                 "file": record.declaration.file,
@@ -1564,7 +1614,9 @@ def _collect_occurrences(
             )
             if source_range is None:
                 continue
-            occurrence = SymbolOccurrence(source_range, "semantic_member")
+            occurrence = SymbolOccurrence(
+                source_range, _member_access_provenance(catalog, node)
+            )
             _claim_occurrence(record, occurrence, range_claims)
         declared = getattr(node, "declaredType", None)
         target = getattr(declared, "type", None)

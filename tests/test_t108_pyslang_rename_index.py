@@ -164,7 +164,7 @@ class T108RenameIndexTests(unittest.TestCase):
             )
         )
 
-    def test_unknown_struct_shape_is_a_boundary_and_preserves_the_struct_group(self):
+    def test_unknown_struct_shape_is_a_boundary_and_preserves_only_its_own_record(self):
         index = build_rename_index(self.boundary_catalog, categories=("all",))
         structs = [symbol for symbol in index.symbols if symbol.category == "struct"]
         self.assertGreaterEqual(len(structs), 3)
@@ -200,19 +200,31 @@ class T108RenameIndexTests(unittest.TestCase):
                 for symbol in ordinary
             )
         )
-        self.assertTrue(
-            all(
-                symbol.support == "preserved"
-                and symbol.reason == "source_binding_incomplete"
-                for symbol in structs
-            )
+        # T111 2.1 policy change, not a relaxation: the macro-generated field
+        # shape is still an unknown binding boundary and its own record is still
+        # fail-closed, but the blast radius is now one record instead of the
+        # whole struct group.  Only `boundary_macro_struct_t` produced the issue,
+        # so only it may be preserved; `ordinary_struct_t` and `ordinary_field`
+        # are fully proven and must still rename.
+        self.assertEqual(macro_struct.support, "preserved")
+        self.assertEqual(macro_struct.reason, "source_binding_incomplete")
+        self.assertEqual(
+            {symbol.name for symbol in structs if symbol.support == "preserved"},
+            {"boundary_macro_struct_t"},
         )
+        for symbol in ordinary:
+            self.assertEqual(symbol.support, "eligible", symbol.name)
+            self.assertIsNone(symbol.reason, symbol.name)
         outcome = next(
             item for item in index.category_outcomes if item["category"] == "struct"
         )
         self.assertEqual(outcome["status"], "preserved")
-        self.assertEqual(outcome["rename"], 0)
-        self.assertEqual(outcome["preserve"], len(structs))
+        self.assertEqual(outcome["rename"], len(structs) - 1)
+        self.assertEqual(outcome["preserve"], 1)
+        self.assertEqual(outcome["unsupported"], 0)
+        # Locating information for the unbound shape must survive the narrower
+        # scope: both the detailed FieldSymbol diagnostic and the preserved
+        # record's own file/start remain reported.
         self.assertTrue(
             any(
                 issue["file"] == macro_struct.declaration.file
@@ -220,6 +232,27 @@ class T108RenameIndexTests(unittest.TestCase):
                 and issue["message"] == "source_binding_incomplete"
                 for issue in outcome["issues"]
             )
+        )
+        self.assertTrue(
+            any(
+                issue["message"] == "source_binding_incomplete"
+                and issue.get("semantic_kind") == "FieldSymbol"
+                and issue.get("name") == "boundary_field"
+                and issue["file"] == "boundary.sv"
+                and isinstance(issue.get("detail"), str)
+                for issue in outcome["issues"]
+            )
+        )
+        # No issue may point at a record that was never the cause.
+        self.assertEqual(
+            [
+                issue
+                for issue in outcome["issues"]
+                if issue.get("name") is None
+                and issue["start"]
+                in {symbol.declaration.start for symbol in ordinary}
+            ],
+            [],
         )
 
     def test_unknown_cross_record_claim_preserves_the_entire_core_group(self):
@@ -398,13 +431,13 @@ class T108RenameIndexTests(unittest.TestCase):
         )
         records = {record.symbol_id: record, other.symbol_id: other}
         _apply_group_binding_issues(records, binding_issues)
-        self.assertTrue(
-            all(
-                item.support == "preserved"
-                and item.reason == "source_binding_incomplete"
-                for item in records.values()
-            )
-        )
+        # T111 2.1 policy change, not a relaxation: the record whose typed token
+        # could not be bound is still fail-closed, but a sibling record of the
+        # same core group that was never implicated keeps its own proven state.
+        self.assertEqual(record.support, "preserved")
+        self.assertEqual(record.reason, "source_binding_incomplete")
+        self.assertEqual(other.support, "eligible")
+        self.assertIsNone(other.reason)
 
     def test_all_four_groups_have_real_candidates_and_compile_safe_mapping(self):
         index = build_rename_index(self.catalog, categories=("all",))

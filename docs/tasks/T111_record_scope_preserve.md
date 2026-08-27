@@ -1,6 +1,6 @@
 # T111：把绑定失败的爆炸半径从核心组降为单条记录
 
-- 状态：`READY`
+- 状态：`READY_FOR_REVIEW`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`992980c`（T110 已 `ACCEPTED`，T109 已 `ACCEPTED`，T108 保持 `BLOCKED`）
 - 任务类型：`rename_index.py` 的保留策略事务边界收缩 + 宏位置还原后锚定
@@ -185,6 +185,80 @@ StCache 规模的 Formal 不属于本任务；第 8 节的 strict compile 与 by
 ## 10. 执行记录
 
 ```text
-status: READY
-starting_head: 992980c
+status: READY_FOR_REVIEW
+starting_head: 5652236
 ```
+
+- 开始时间：2026-08-27
+- 合同 `起始 HEAD` 写作 `992980c`（T110 交付时的 HEAD）；本任务实际开始于 `5652236`
+  （即冻结 T111 的那次提交），`git status` 为干净工作区，与允许文件无用户改动重叠。
+- 工具环境：本沙箱 `conda run -n rtl_obfuscation` 报 `__conda_exe: permission denied`，
+  改用同一环境的解释器绝对路径 `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python`。
+- 允许文件：`rtl_obfuscator/rename_index.py`、`tests/test_t111_record_scope_preserve.py`（新增）、
+  `tests/fixtures/t111_record_scope_preserve/**`（新增）、
+  `tests/test_t108_pyslang_rename_index.py`、`tests/test_t110_binding_fixes.py`（仅必需同步）、
+  本任务单、`docs/development/architecture/token_first_binding.md`。
+- 首条命令（baseline，改代码前）：
+  `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python -m unittest tests.test_t110_binding_fixes tests.test_t108_pyslang_rename_index -v`
+
+### 10.1 交付记录补全说明
+
+实现子 Agent 在写完产品代码、fixture 与测试后被外部中断（本会话中子 Agent 已多次因
+API 鉴权 403 终止），未能自行跑完门禁并置 `READY_FOR_REVIEW`。
+主 Agent 检查磁盘产物确认实现完整，随后**独立执行全部门禁**并据实测证据补全本记录。
+补全的内容全部来自主 Agent 亲自运行的命令输出，非采信子 Agent 自报。
+
+changed_files: rtl_obfuscator/rename_index.py；tests/test_t111_record_scope_preserve.py（新增）；
+  tests/fixtures/t111_record_scope_preserve/{design.f,design.sv,formal.f,formal_cone.sv,t111_macros.svh}（新增）；
+  tests/test_t108_pyslang_rename_index.py（§5 要求的断言改写）；
+  docs/tasks/T111_record_scope_preserve.md；docs/development/architecture/token_first_binding.md
+formal_verification: PASS（见 §11）
+
+## 11. 主 Agent 独立本地验收记录
+
+```text
+reviewed_at: 2026-08-27
+main_gate_1: exit 0；Ran 55 tests；OK（直接读 OK/FAILED 判决行，未经管道掩盖）
+main_gate_2: exit 0；tests.test_binding_coverage Ran 15 tests；OK
+main_gate_3: exit 0；py_compile
+main_gate_4: 首跑 exit 2（任务单文件末尾多一空行，子 Agent 中断所致）；主 Agent 去除后 exit 0
+main_gate_5: exit 0；t111_ready_for_review=pass
+
+main_formal_positive: 真实 actual gate；exit 0；formal_equivalence=pass
+main_formal_negative: exit 1；evidence "unproven; equiv_status -assert"
+formal_freshness: 临时目录 t111-formal-8t67h7dc，与 T110 各轮均不同，确认真实重跑
+skip_check: tests/test_t111_record_scope_preserve.py 内 skipTest/@unittest.skip 计数为 0
+
+main_cli_verification（主 Agent 独立跑 --category all）:
+  PASS_PARTIAL；strict_compile_passed=true；restored_byte_identical=true
+  rename=59 preserve=14 unsupported=2
+  signals    cand=19 rename=17 preserve=0  unsup=2   macro_origin_conflict
+  ports      cand=40 rename=29 preserve=11 unsup=0   selected_top_boundary
+  interface  cand=8  rename=6  preserve=2  unsup=0   hierarchical_prefix_unsupported
+  struct     cand=8  rename=7  preserve=1  unsup=0   source_binding_incomplete
+  程序化断言"四组均 rename>0" = True
+
+main_核心行为验证（本任务的单一目标）:
+  source_binding_incomplete 记录数 = 1，同时仍有 rename 记录 59 条
+  → 一条记录的绑定不足只保留该条记录，同组其余 7 条 struct 记录照常改名。
+    T111 之前该 issue 会让全部 8 条一起阵亡。爆炸半径已由 category 收缩为 record。
+  macro_origin_conflict 记录数 = 2 → 共享物理 range 检测未被绕过。
+
+main_code_review:
+  - `_apply_group_binding_issues` 的类别级升级循环已删除，改为逐记录赋值；
+    docstring 记录了安全性论证与 541/538 的实证依据。
+  - `_resolve_range_claims` 与 `_register_structs` 的定义未出现在 diff 中，§3 边界守住；
+    `test_unknown_cross_record_claim_preserves_the_entire_core_group` 仍在且通过，
+    证明未知跨记录冲突仍保留组级回滚。
+  - 未引入 re./regex/readlines 等禁止模式。
+  - T108 断言改写经逐条复核为**加强**而非放宽：
+      旧：all(preserved and reason==source_binding_incomplete for symbol in structs)
+      新：致因记录仍 fail-closed；preserved 名字集合精确等于 {"boundary_macro_struct_t"}；
+          兄弟记录 support=="eligible" 且 reason is None；rename/preserve/unsupported 精确计数；
+          新增断言"详细 FieldSymbol 诊断（semantic_kind/name/file/detail）必须存活"；
+          新增断言"任何 issue 都不得指向从未致因的记录"。
+    每处均带注释标明是 T111 §2.1 策略变更。
+
+main_local_result: PASS
+server_gate: PENDING —— §8 的 StCache 验收是本任务第二半，未通过前不得设 ACCEPTED
+delivery_note: 为使服务器能 pull，主 Agent 在 server_gate 之前提交推送；这是交付而非验收。
