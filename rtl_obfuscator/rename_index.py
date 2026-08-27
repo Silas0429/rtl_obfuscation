@@ -108,7 +108,7 @@ class _WorkingSymbol:
     abi: str
     support: str = "eligible"
     reason: str | None = None
-    targets: set[int] = field(default_factory=set)
+    targets: set[object] = field(default_factory=set)
     occurrences: dict[tuple[str, int, int], SymbolOccurrence] = field(default_factory=dict)
 
 
@@ -217,11 +217,13 @@ def _range_for_token(catalog: SourceCatalog, token: object, expected: str) -> So
     return _range_for_location(catalog, location, expected)
 
 
-def _declaration_token(node_type: str, syntax: object) -> object:
-    """Return the syntax-owned typed declaration token for one semantic kind."""
+def _typed_declaration_token(node_type: str, syntax: object) -> object:
+    """Return the one typed syntax token for a semantic declaration shape."""
 
     if syntax is None:
         return None
+    if type(syntax).__name__ == "Token":
+        return syntax
     if node_type == "ModportSymbol":
         return _safe_attr(syntax, "name")
     if node_type in {"InstanceSymbol", "InstanceArraySymbol"}:
@@ -229,6 +231,30 @@ def _declaration_token(node_type: str, syntax: object) -> object:
     if node_type in {"InstanceBodySymbol", "DefinitionSymbol"}:
         return _safe_attr(_safe_attr(syntax, "header"), "name")
     return _safe_attr(syntax, "name")
+
+
+def _declaration_tokens(node_type: str, semantic: object, syntax: object) -> tuple[object, ...]:
+    """Collect only direct typed declaration tokens exposed by PySlang.
+
+    ANSI ports can expose the same declarator through both PortSymbol.syntax
+    and PortSymbol.internalSymbol.syntax.  These are equivalent semantic
+    evidence, not two textual candidates.  No token walk or name lookup is
+    performed here.
+    """
+
+    candidates: list[object] = []
+    semantic_syntax = _safe_attr(semantic, "syntax")
+    internal_syntax = _safe_attr(_safe_attr(semantic, "internalSymbol"), "syntax")
+    syntax_candidates = (
+        (internal_syntax, syntax, semantic_syntax)
+        if node_type == "PortSymbol"
+        else (syntax, semantic_syntax, internal_syntax)
+    )
+    for candidate_syntax in syntax_candidates:
+        token = _typed_declaration_token(node_type, candidate_syntax)
+        if token is not None and all(token is not previous for previous in candidates):
+            candidates.append(token)
+    return tuple(candidates)
 
 
 def _declaration_range(
@@ -246,21 +272,25 @@ def _declaration_range(
     second piece of direct evidence, never a name lookup fallback.
     """
 
-    typed_error: RenameIndexError | None = None
-    token = _declaration_token(type(semantic).__name__, syntax)
-    if token is not None:
+    typed_errors: list[RenameIndexError] = []
+    for token in _declaration_tokens(type(semantic).__name__, semantic, syntax):
         try:
             result = _range_for_token(catalog, token, expected)
         except RenameIndexError as error:
-            typed_error = error
-        else:
-            if result is not None:
-                return result
+            typed_errors.append(error)
+            continue
+        if result is not None:
+            # The token order is the semantic shape's declared priority:
+            # PortSymbol.internalSymbol for non-ANSI declarations, then the
+            # port syntax; all other records use their owning syntax first.
+            # A second typed view is an elaboration alias, not a second
+            # declaration candidate.
+            return result
     try:
         return _range_for_location(catalog, _safe_attr(semantic, "location"), expected)
     except RenameIndexError as semantic_error:
-        if typed_error is not None:
-            raise typed_error
+        if typed_errors:
+            raise typed_errors[0]
         raise semantic_error
 
 
@@ -493,6 +523,7 @@ def _definition_range(
         return None
     name = str(_safe_attr(definition, "name", ""))
     try:
+        syntax = syntax or _safe_attr(definition, "syntax")
         if syntax is not None:
             return _declaration_range(catalog, definition, syntax, name)
         return _range_for_location(catalog, _safe_attr(definition, "location"), name)
@@ -505,12 +536,12 @@ def _definition_key(catalog: SourceCatalog, definition: object) -> tuple[str, in
     return None if value is None else (value.file, value.start, value.end)
 
 
-def _module_maps(catalog: SourceCatalog) -> tuple[dict[tuple[str, int, int], ModuleOwner], dict[int, ModuleOwner]]:
+def _module_maps(catalog: SourceCatalog) -> tuple[dict[tuple[str, int, int], ModuleOwner], dict[object, ModuleOwner]]:
     by_range = {
         (item.declaration.file, item.declaration.start, item.declaration.end): item
         for item in catalog.modules
     }
-    by_definition: dict[int, ModuleOwner] = {}
+    by_definition: dict[object, ModuleOwner] = {}
     nodes: list[Any] = []
     catalog.catalog_root.visit(nodes.append)
     for node in nodes:
@@ -520,12 +551,12 @@ def _module_maps(catalog: SourceCatalog) -> tuple[dict[tuple[str, int, int], Mod
         key = _definition_key(catalog, definition)
         owner = by_range.get(key) if key is not None else None
         if owner is not None:
-            by_definition[id(definition)] = owner
+            by_definition[definition] = owner
     return by_range, by_definition
 
 
-def _interface_ids(catalog: SourceCatalog, nodes: Iterable[Any]) -> dict[int, str]:
-    result: dict[int, str] = {}
+def _interface_ids(catalog: SourceCatalog, nodes: Iterable[Any]) -> dict[object, str]:
+    result: dict[object, str] = {}
     for node in nodes:
         if type(node).__name__ != "InstanceBodySymbol":
             continue
@@ -535,7 +566,7 @@ def _interface_ids(catalog: SourceCatalog, nodes: Iterable[Any]) -> dict[int, st
         definition = getattr(node, "definition", None)
         value = _definition_range(catalog, definition)
         if value is not None:
-            result[id(definition)] = f"interface:{value.file}:{value.start}:{value.end}"
+            result[definition] = f"interface:{value.file}:{value.start}:{value.end}"
     return result
 
 
@@ -582,13 +613,13 @@ def _top_active_types(catalog: SourceCatalog) -> set[tuple[str, int, int]]:
 def _owner_info(
     catalog: SourceCatalog,
     definition: object,
-    modules_by_definition: dict[int, ModuleOwner],
-    interfaces_by_definition: dict[int, str],
+    modules_by_definition: dict[object, ModuleOwner],
+    interfaces_by_definition: dict[object, str],
 ) -> tuple[str, str, ModuleOwner | None, str | None]:
-    module = modules_by_definition.get(id(definition))
+    module = modules_by_definition.get(definition)
     if module is not None:
         return module.name, module.owner_id, module, "module"
-    interface = interfaces_by_definition.get(id(definition))
+    interface = interfaces_by_definition.get(definition)
     if interface is not None:
         return interface, interface, None, "interface"
     # PySlang may expose distinct DefinitionSymbol wrappers for the same
@@ -607,7 +638,7 @@ def _owner_info(
 
 def _add_working(
     records: dict[str, _WorkingSymbol],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     *,
     catalog: SourceCatalog,
     category: str,
@@ -643,15 +674,15 @@ def _add_working(
         records[symbol_id] = current
     for target in targets:
         if target is not None:
-            target_map[id(target)] = symbol_id
-            current.targets.add(id(target))
+            target_map[target] = symbol_id
+            current.targets.add(target)
     return current
 
 
 def _record_for_semantic_target(
     catalog: SourceCatalog,
     records: dict[str, _WorkingSymbol],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     target: object,
 ) -> str | None:
     """Resolve a PySlang target, including equivalent wrapper objects.
@@ -663,26 +694,52 @@ def _record_for_semantic_target(
 
     if target is None:
         return None
-    symbol_id = target_map.get(id(target))
+    symbol_id = target_map.get(target)
     if symbol_id is not None:
         return symbol_id
-    name = str(getattr(target, "name", ""))
-    location = _safe_attr(target, "location")
-    if not name or location is None:
+    name = str(_safe_attr(target, "name", ""))
+    if not name:
         return None
     try:
-        target_range = _range_for_location(catalog, location, name)
+        target_range = _declaration_range(
+            catalog,
+            target,
+            _safe_attr(target, "syntax"),
+            name,
+        )
     except RenameIndexError:
         return None
     for candidate in records.values():
         if candidate.declaration == target_range:
-            target_map[id(target)] = candidate.symbol_id
+            target_map[target] = candidate.symbol_id
             return candidate.symbol_id
     return None
 
 
-def _is_module_definition(definition: object, modules_by_definition: dict[int, ModuleOwner]) -> bool:
-    return id(definition) in modules_by_definition
+def _interface_record_for_definition(
+    catalog: SourceCatalog,
+    records: dict[str, _WorkingSymbol],
+    target_map: dict[object, str],
+    definition: object,
+) -> str | None:
+    """Alias a direct interface DefinitionSymbol to its physical type record."""
+
+    symbol_id = _record_for_semantic_target(catalog, records, target_map, definition)
+    if symbol_id is not None and records[symbol_id].kind == "interface_type":
+        return symbol_id
+    key = _definition_key(catalog, definition)
+    if key is None:
+        return None
+    physical = SourceRange(*key)
+    for candidate in records.values():
+        if candidate.category == "interface" and candidate.kind == "interface_type" and candidate.declaration == physical:
+            target_map[definition] = candidate.symbol_id
+            return candidate.symbol_id
+    return None
+
+
+def _is_module_definition(definition: object, modules_by_definition: dict[object, ModuleOwner]) -> bool:
+    return definition in modules_by_definition
 
 
 def _category_support(
@@ -726,11 +783,11 @@ def _register_structs(
     catalog: SourceCatalog,
     selected: set[str],
     records: dict[str, _WorkingSymbol],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     alias_map: dict[tuple[str, int, int], str],
     nodes: list[Any],
-    modules_by_definition: dict[int, ModuleOwner],
-    interfaces_by_definition: dict[int, str],
+    modules_by_definition: dict[object, ModuleOwner],
+    interfaces_by_definition: dict[object, str],
     active_types: set[tuple[str, int, int]],
     binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
@@ -880,10 +937,10 @@ def _register_core_declarations(
     catalog: SourceCatalog,
     selected: set[str],
     records: dict[str, _WorkingSymbol],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     nodes: list[Any],
-    modules_by_definition: dict[int, ModuleOwner],
-    interfaces_by_definition: dict[int, str],
+    modules_by_definition: dict[object, ModuleOwner],
+    interfaces_by_definition: dict[object, str],
     active_interfaces: set[tuple[str, int, int]],
     binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
@@ -892,11 +949,16 @@ def _register_core_declarations(
         if type(node).__name__ != "PortSymbol":
             continue
         name = str(getattr(node, "name", ""))
-        try:
-            declaration = _declaration_range(
-                catalog, node, _safe_attr(node, "syntax"), name
-            )
-        except RenameIndexError:
+        declaration = _try_declaration_range(
+            catalog,
+            binding_issues,
+            "ports",
+            node,
+            _safe_attr(node, "syntax"),
+            name,
+            candidates=(node, _safe_attr(node, "syntax"), _safe_attr(node, "internalSymbol")),
+        )
+        if declaration is None:
             continue
         port_ranges.add((declaration.file, declaration.start, declaration.end))
     for node in nodes:
@@ -1211,7 +1273,7 @@ def _apply_group_binding_issues(
 def _collect_occurrences(
     catalog: SourceCatalog,
     nodes: list[Any],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     alias_map: dict[tuple[str, int, int], str],
     records: dict[str, _WorkingSymbol],
     binding_issues: dict[str, list[dict[str, object]]],
@@ -1225,6 +1287,29 @@ def _collect_occurrences(
             # element without its own name must never create a diagnostic or
             # physical edit.
             continue
+        if node_type == "PortSymbol":
+            symbol_id = target_map.get(node)
+            if symbol_id is None:
+                symbol_id = target_map.get(_safe_attr(node, "internalSymbol"))
+            if symbol_id is not None and records[symbol_id].category == "ports":
+                record = records[symbol_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _range_for_token(
+                        catalog,
+                        _safe_attr(_safe_attr(node, "syntax"), "name"),
+                        record.name,
+                    ),
+                )
+                if source_range is not None:
+                    _claim_occurrence(
+                        record,
+                        SymbolOccurrence(source_range, "semantic_port_declaration"),
+                        range_claims,
+                    )
         if node_type == "ModportPortSymbol":
             symbol_id = _record_for_semantic_target(
                 catalog, records, target_map, getattr(node, "internalSymbol", None)
@@ -1335,14 +1420,9 @@ def _collect_occurrences(
                         range_claims,
                     )
         if node_type == "InstanceSymbol" and getattr(node, "isInterface", False):
-            definition = getattr(node, "definition", None)
-            definition_key = _definition_key(catalog, definition)
-            interface_id = None
-            if definition_key is not None:
-                for candidate in records.values():
-                    if candidate.kind == "interface_type" and candidate.declaration == SourceRange(*definition_key):
-                        interface_id = candidate.symbol_id
-                        break
+            interface_id = _interface_record_for_definition(
+                catalog, records, target_map, getattr(node, "definition", None)
+            )
             if interface_id is not None:
                 record = records[interface_id]
                 source_range = _safe_occurrence_range(
@@ -1359,18 +1439,19 @@ def _collect_occurrences(
                         range_claims,
                     )
         if node_type == "InterfacePortSymbol":
-            interface_def = getattr(node, "interfaceDef", None)
-            definition_key = _definition_key(catalog, interface_def)
-            interface_id = None
-            if definition_key is not None:
-                for candidate in records.values():
-                    if candidate.kind == "interface_type" and candidate.declaration == SourceRange(*definition_key):
-                        interface_id = candidate.symbol_id
-                        break
+            interface_id = _interface_record_for_definition(
+                catalog, records, target_map, getattr(node, "interfaceDef", None)
+            )
             if interface_id is not None:
                 syntax = getattr(node, "syntax", None)
-                header = getattr(getattr(syntax, "parent", None), "header", None)
+                port_parent = getattr(syntax, "parent", None)
+                header = getattr(port_parent, "header", None)
                 type_syntax = getattr(header, "dataType", None)
+                if type_syntax is None:
+                    # Non-ANSI interface ports expose the typed interface
+                    # name on DataDeclarationSyntax.type rather than a
+                    # VariablePortHeaderSyntax.
+                    type_syntax = getattr(port_parent, "type", None)
                 record = records[interface_id]
                 source_range = _safe_occurrence_range(
                     catalog,
@@ -1391,13 +1472,12 @@ def _collect_occurrences(
             elements = _interface_leaf_elements(node)
             if not elements:
                 continue
-            definition_key = _definition_key(catalog, getattr(elements[0], "definition", None))
-            interface_id = None
-            if definition_key is not None:
-                for candidate in records.values():
-                    if candidate.kind == "interface_type" and candidate.declaration == SourceRange(*definition_key):
-                        interface_id = candidate.symbol_id
-                        break
+            interface_id = _interface_record_for_definition(
+                catalog,
+                records,
+                target_map,
+                getattr(elements[0], "definition", None),
+            )
             if interface_id is not None:
                 parent = getattr(getattr(node, "syntax", None), "parent", None)
                 record = records[interface_id]
@@ -1424,9 +1504,9 @@ def _collect_occurrences(
             ]
             for connection_syntax, connection in zip(syntax_connections, getattr(node, "portConnections", ())):
                 port = getattr(connection, "port", None)
-                symbol_id = target_map.get(id(port))
+                symbol_id = target_map.get(port)
                 if symbol_id is None:
-                    symbol_id = target_map.get(id(getattr(port, "internalSymbol", None)))
+                    symbol_id = target_map.get(getattr(port, "internalSymbol", None))
                 if symbol_id is None:
                     continue
                 label = getattr(connection_syntax, "name", None)
@@ -1452,9 +1532,9 @@ def _register_interface_types(
     catalog: SourceCatalog,
     selected: set[str],
     records: dict[str, _WorkingSymbol],
-    target_map: dict[int, str],
+    target_map: dict[object, str],
     nodes: list[Any],
-    interfaces_by_definition: dict[int, str],
+    interfaces_by_definition: dict[object, str],
     active_interfaces: set[tuple[str, int, int]],
     binding_issues: dict[str, list[dict[str, object]]],
 ) -> None:
@@ -1483,16 +1563,16 @@ def _register_interface_types(
             records, target_map, catalog=catalog, category="interface", kind="interface_type",
             semantic_kind=type(definition).__name__, name=name, declaration=declaration,
             owner_module=interfaces_by_definition.get(
-                id(definition),
+                definition,
                 f"interface:{declaration.file}:{declaration.start}:{declaration.end}",
             ),
             semantic_owner=interfaces_by_definition.get(
-                id(definition),
+                definition,
                 f"interface:{declaration.file}:{declaration.start}:{declaration.end}",
             ),
             impact="interface_type", abi="internal", targets=(definition,), support=support, reason=reason,
         )
-        target_map[id(definition)] = record.symbol_id
+        target_map[definition] = record.symbol_id
 
 
 def _category_outcomes(
@@ -1565,7 +1645,7 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
     active_interfaces = _top_active_interfaces(source_catalog)
     active_types = _top_active_types(source_catalog)
     records: dict[str, _WorkingSymbol] = {}
-    target_map: dict[int, str] = {}
+    target_map: dict[object, str] = {}
     alias_map: dict[tuple[str, int, int], str] = {}
     binding_issues: dict[str, list[dict[str, object]]] = {}
     _register_interface_types(

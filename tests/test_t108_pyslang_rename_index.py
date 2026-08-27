@@ -40,6 +40,10 @@ class T108RenameIndexTests(unittest.TestCase):
         cls.macro_interface_catalog = build_source_catalog(
             cls.macro_interface_source_set
         )
+        cls.shape_source_set = from_filelist(
+            filelist=FIXTURE / "server_shapes.f", top="t108_shape_top"
+        )
+        cls.shape_catalog = build_source_catalog(cls.shape_source_set)
 
     def test_modport_ports_are_alias_occurrences_of_interface_members(self):
         index = build_rename_index(self.catalog, categories=("interface",))
@@ -414,6 +418,89 @@ class T108RenameIndexTests(unittest.TestCase):
             self.assertTrue(records, category)
             self.assertTrue(any(item.action == "rename" for item in records), category)
         self.assertTrue(any(item.action == "preserve" for item in mapping.records))
+
+    def test_ansi_nonansi_ports_interface_aliases_and_fields_have_real_renames(self):
+        index = build_rename_index(self.shape_catalog, categories=("all",))
+        mapping = build_mapping_vnext(
+            index, name_length=20, name_factory=secure_name_factory
+        )
+        by_category = {category: [] for category in ("ports", "interface", "struct")}
+        for item in mapping.records:
+            if item.category in by_category:
+                by_category[item.category].append(item)
+        for category, records in by_category.items():
+            self.assertTrue(records, category)
+            self.assertTrue(
+                any(item.action == "rename" for item in records), category
+            )
+        self.assertTrue(
+            any(
+                item.kind == "module_port"
+                and item.original_name in {"clk", "data_i", "data_o"}
+                and item.action == "rename"
+                for item in mapping.records
+            )
+        )
+        self.assertTrue(
+            any(
+                item.kind == "interface_type"
+                and item.original_name == "t108_shape_if"
+                and item.action == "rename"
+                for item in mapping.records
+            )
+        )
+        shape_interface = next(
+            item
+            for item in index.symbols
+            if item.kind == "interface_type" and item.name == "t108_shape_if"
+        )
+        self.assertIn(
+            "semantic_interface_port_type",
+            {item.provenance for item in shape_interface.occurrences},
+        )
+        self.assertTrue(
+            any(
+                item.kind == "struct_field"
+                and item.original_name == "first"
+                and item.action == "rename"
+                for item in mapping.records
+            )
+        )
+        self.assertIn(
+            "semantic_member",
+            {
+                occurrence.provenance
+                for item in index.symbols
+                if item.category == "struct" and item.name == "first"
+                for occurrence in item.occurrences
+            },
+        )
+        physical_files = tuple(self.shape_source_set.ordered_source_files)
+        gold = {file: (FIXTURE / file).read_bytes() for file in physical_files}
+        with tempfile.TemporaryDirectory(prefix="t108-shape-gate-") as temporary:
+            root = Path(temporary)
+            execution = write_gate_vnext(mapping, output_dir=root / "gate")
+            evidence = execution.compile_evidence
+            self.assertEqual(
+                (
+                    evidence.catalog_parse_errors,
+                    evidence.catalog_semantic_errors,
+                    evidence.top_overlay_parse_errors,
+                    evidence.top_overlay_semantic_errors,
+                ),
+                (0, 0, 0, 0),
+            )
+            restored = restore_gate_vnext(
+                execution, gate_dir=root / "gate", output_dir=root / "restore"
+            )
+            self.assertTrue(restored.to_report()["summary"]["byte_identical"])
+            self.assertEqual(
+                {
+                    file: (root / "restore" / file).read_bytes()
+                    for file in physical_files
+                },
+                gold,
+            )
 
     def test_actual_compact_gate_strict_compiles_and_restores_direct_bytes(self):
         index = build_rename_index(self.catalog, categories=("all",))
