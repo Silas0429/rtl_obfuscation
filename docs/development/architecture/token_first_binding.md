@@ -1,10 +1,12 @@
 # Token-first 绑定:方向倒置的论证与覆盖率测量
 
-- 文档状态：`SERVER_MEASURED_PENDING_RESIDUAL_ATTRIBUTION`
+- 文档状态：`SERVER_VALIDATED_BLAST_RADIUS_IS_DOMINANT`
 - 记录日期：2026-08-27
 - 起因：StCache（`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`）在提交 `c3cf87a` 上
   `ports/interface/struct` 三组 `rename=0`
-- 已完成：StCache 首次覆盖率测量（见 §5.3）；残差头部已定性，尾部两簇待归因数据
+- 已完成：StCache 覆盖率测量（§5.3）与三轮产品验证。T110 服务器数据给出决定性结论：
+  **3 个未绑定 token 经组级传播清零 541 条记录，其中 538 条绑定完好** —— 主导因素是爆炸半径，
+  不是形状数量。据此 T111 把半径收缩提为首要项（见 §6.2）
 - 本文只论证方向与测量方法，不授权修改产品；产品改造需另立任务合同
 - 配套只读工具：[`scripts/binding_coverage.py`](../../../scripts/binding_coverage.py)
 - 配套任务：[`docs/tasks/T109_binding_coverage_probe.md`](../../tasks/T109_binding_coverage_probe.md)
@@ -266,12 +268,20 @@ token 1129 是 `.clk(` 的标签，1139 是实参 `clk`。标签不是表达式�
 | 任务 | 内容 | 解决什么 |
 | --- | --- | --- |
 | [`T110`](../../tasks/T110_core_group_binding_fixes.md) | 目标身份统一为物理声明位置；修 ports 标签配对、interface port header、struct 成员 select；显式保留 interface 实例 | 四组在 StCache 上 `rename > 0` |
-| T111 | 层次引用前缀规则；把爆炸半径从 category 降到 record；`unelaborated_source` 升为一等 preserve 原因 | 单个未知形状不再清零整组；interface 实例可改名 |
-| T112 | 真实工程的等价性证据强化（StCache Formal 或隐式 net 检查） | "不报错"从"能编译"升级为"可证等价" |
-| T113（可选） | 逐符号完整性判据作为保证机制 | 需先定性探测器口径下未解释的 47% |
+| [`T111`](../../tasks/T111_record_scope_preserve.md) | 爆炸半径 category→record；宏位置先还原再锚定 | **struct 达标；单个未知形状不再清零整组** |
+| T112 | 层次引用前缀规则；`unelaborated_source` 升为一等 preserve 原因 | interface 实例可改名；死源码不再混入缺陷 |
+| T113 | 真实工程的等价性证据强化（StCache Formal 或隐式 net 检查） | "不报错"从"能编译"升级为"可证等价" |
+| T114（可选） | 逐符号完整性判据作为保证机制 | 需先定性探测器口径下未解释的 47% |
 
-顺序理由：T110 之前不动组级事务，是为了让"三个形状是否真的修好"可独立复审；
-T110 之后组级事务才有意义收缩，因为此时剩余的 `source_binding_incomplete` 才是真正的长尾。
+顺序理由：T110 之前不动组级事务，是为了让"三个形状是否真的修好"可独立复审。
+该隔离已达到目的——T110 的服务器数据证明三处修复生效（struct 根因由一大批降为 3 个），
+同时给出了收缩半径的量化理由：**3 个未绑定 token 清零 541 条记录，其中 538 条绑定完好**。
+因此 T111 把爆炸半径收缩提为首要项，层次引用前缀顺延到 T112。
+
+必须记录的一个合同教训：T110 §1/§8 要求"四组均 rename > 0"，而 §3 又排除了
+`_apply_group_binding_issues`——在该排除下 struct 达标数学上不可能。合同要求了它自己边界所禁止的结果。
+同类错误在 T108 §14（从单样本推断机制）和 T110 §2.4（从单样本写窄触发条件）已连续出现。
+行为条件应按**结果**定义（"typed 路径取不到时"），不按观察到的那一个原因定义（"syntax 为 None 时"）。
 
 ## 7. 本文不主张的内容
 

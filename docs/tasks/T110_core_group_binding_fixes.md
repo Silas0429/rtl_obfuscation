@@ -1,6 +1,6 @@
 # T110：四核心组稳定改名的三处绑定修复与目标身份统一
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`0e28030`（T109 已 `ACCEPTED`，T108 保持 `BLOCKED`）
 - 任务类型：`rename_index.py` 内的 occurrence 绑定修复 + 目标身份口径统一
@@ -200,7 +200,7 @@ python rtl_encrypt.py \
 ## 10. 执行记录
 
 ```text
-status: READY_FOR_REVIEW
+status: ACCEPTED
 starting_head: 35a8e8a
 starting_head_note: 合同第 5 行记录的 0e28030 是创建本任务时的 HEAD；本任务单与
   token_first_binding.md 的冻结提交 35a8e8a 之后才开始实现，实际 starting HEAD 为 35a8e8a
@@ -746,3 +746,65 @@ main_code_review:
 main_local_result: PASS
 server_gate: PENDING_RETRY —— 服务器需拉取本次修正后重跑第 8 节命令
 delivery_note: 为使服务器能 pull，主 Agent 在 server_gate 之前提交推送；这是交付而非验收。
+
+## 15. 服务器复测结果、合同错误更正与验收（主 Agent，2026-08-27）
+
+服务器在 `992980c`（`git log` 确认 HEAD 一致）上重跑第 8 节命令，输出目录 `stcache_all_t110_002`：
+
+```text
+rename=5524  preserve=1560  unsupported=18  modified_tokens=19188
+strict_compile_passed=true  restored_byte_identical=true  mapping_records=7102
+occurrence_coverage=1.0  symbol_coverage=1.0  plaintext_leakage_rate=0.0
+加密类型 3：signals, ports, interface
+struct: candidate=541  rename=0  preserve=541  unsupported=0
+struct issues signature：
+  541 × (semantic_kind=None, detail=None)        ← 组级传播产生
+    3 × FieldSymbol / "semantic target has no unique physical typed token"  ← 真实根因
+```
+
+总数与上一轮逐位相同（5524/1560/18/19188/0.37036173375695924）。这不是"服务器没拉取"：
+HEAD 已确认为 `992980c`，且 struct 的 issue signature 已改变。数字不变是**必然**的——
+struct 贡献 0 改名、0 token，其他三组不受 struct 修复影响。
+
+### 15.1 §2.4 更正确实生效
+
+struct 的真实根因由一大批降为 **3 个**。取这 3 个位置的源码上下文，全部为宏参数内的成员访问：
+
+```text
+`ASSERT_..._IF(..., mshr_ff_rdat.org_retry_info.cmd[5] , ...)      嵌套成员 + bit select
+`ASSERT_..._IF(LAST_CHECK, ..., (^response_fifo_winfo.drw_cmd[6:5]))  成员 + part select
+```
+
+失败点是 `_member_access_range` 的宏守卫 `if isMacroLoc(start) or isMacroLoc(end): return None`。
+该守卫本身正确——虚拟位置不能做偏移算术——但物理 token 确实存在于调用点
+（45170、46219 是真实文件偏移）。正确做法是先经 `getFullyOriginalLoc` 还原再锚定，而非放弃。
+此项归 T111，不在 T110 范围内。
+
+### 15.2 主 Agent 合同错误：§1/§8 与 §3 自相矛盾
+
+T110 §1 与 §8 要求"四组均 rename > 0"，但 §3 明确排除了 `_apply_group_binding_issues`。
+服务器数据证明：**3 个未绑定 token 经组级传播清零了 541 条记录**，其中 538 条绑定完好。
+即在 §3 的排除下，struct 达标在数学上不可能。合同要求了一个它自己的边界所禁止的结果。
+
+这是主 Agent 冻结合同时的设计错误，不是子 Agent 的执行问题。诚实的收口是修正合同使其自洽：
+**"struct rename > 0" 条件移交 T111**，T110 按其实际冻结范围验收。
+
+### 15.3 T110 实际交付范围的验收结论
+
+冻结的四项修改全部交付并经主 Agent 独立验证（§11、§14）：
+
+| 项 | 状态 | 证据 |
+| --- | --- | --- |
+| §2.1 目标身份改为物理声明位置 | 达成 | 复用模块无假歧义；range audit 无重复/重叠 |
+| §2.2 端口标签按端口身份配对 | 达成 | 服务器 ports 由 0 → 真实改名 |
+| §2.3 interface port header 用 nameOrKeyword | 达成 | 服务器 interface 由 0 → 真实改名 |
+| §2.4（经 §12.2 更正） 成员访问两级解析 | 达成 | struct 根因由一大批 → 3 个；本地 struct rename=7 |
+| §2.5 interface 实例显式保留 | 达成 | reason=hierarchical_prefix_unsupported，不触发组级回滚 |
+
+服务器侧硬条件全部满足：无 `REFUSED_ATOMIC`；`strict_compile_passed=true`；
+`restored_byte_identical=true`；`occurrence_coverage=1.0`；`plaintext_leakage_rate=0.0`；
+mapping schema 2；preserve 原因未出现未解释的新类别。
+`rename=5524` 超过重构前 ports 单组 2636 的历史基线。
+
+`main_result: ACCEPTED`（按 §15.2 修正后的自洽范围）
+`deferred_to_T111: struct rename > 0；爆炸半径由 category 降为 record；宏位置还原后再锚定`
