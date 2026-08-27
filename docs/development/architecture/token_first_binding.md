@@ -1,9 +1,10 @@
 # Token-first 绑定:方向倒置的论证与覆盖率测量
 
-- 文档状态：`MEASUREMENT_READY_PENDING_SERVER_DATA`
+- 文档状态：`SERVER_MEASURED_PENDING_RESIDUAL_ATTRIBUTION`
 - 记录日期：2026-08-27
 - 起因：StCache（`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`）在提交 `c3cf87a` 上
   `ports/interface/struct` 三组 `rename=0`
+- 已完成：StCache 首次覆盖率测量（见 §5.3）；残差头部已定性，尾部两簇待归因数据
 - 本文只论证方向与测量方法，不授权修改产品；产品改造需另立任务合同
 - 配套只读工具：[`scripts/binding_coverage.py`](../../../scripts/binding_coverage.py)
 - 配套任务：[`docs/tasks/T109_binding_coverage_probe.md`](../../tasks/T109_binding_coverage_probe.md)
@@ -158,27 +159,71 @@ preserve 边界，**不是绑定规则缺失**。同一现象有两种形态，�
 
 ### 5.3 真实工程上的残差分布
 
-`rtl_samples/RISC-V-Vector`（project-root，top `vector_top`，19 source units，
-7462 个物理 identifier token，`byte_mismatch=0`，歧义 0）：
+**StCache**（filelist，top `StChCore`，154 source units，61659 个物理 identifier token，
+`byte_mismatch=0`，`ambiguous=2`）：
+
+```text
+in_scope_elaborated  23079 / 34261 = 67.36%
+排除死源码 11399 个 token（140 个设计单元中 103 个 elaborate，101 个死 generate 分支）
+可安全改名名字比 1035 / 3637 = 28.46%
+残差 11182，头部：
+  4178  NamedPortConnection < HierarchicalInstance     37%  ← 服务器 ports 根因
+  2143  SimplePropertyExpr  < SimpleSequenceExpr       19%  ← SVA 断言，待归因
+  1075  IdentifierName      < ScopedName               10%  ← interface 层次前缀
+   734  IdentifierName      < AssignmentExpression       7%
+   502  IdentifierSelectName< AssignmentExpression       4%
+   360  IdentifierName      < LogicalAndExpression       3%
+   222  NamedType           < IdentifierName             2%  ← typedef 类型引用
+    97  DotMemberClause     < InterfacePortHeader            ← 服务器 interface 根因
+    90  InterfacePortHeader < ImplicitAnsiPort              ← 同上
+```
+
+**RISC-V-Vector**（project-root，top `vector_top`，19 source units，7462 个 token）：
 
 ```text
 in_scope_elaborated  5116 / 5528 = 92.55%
-排除死源码 410 个 token（17/17 单元均 elaborate，但有 39 个死 generate 分支）
-残差 412，其中：
-   372  NamedPortConnection < HierarchicalInstance   90% ← 服务器 ports 根因
-    21  NamedType < IdentifierName                        声明里的 typedef 类型引用
-    19  IdentifierName < 各算术/比较表达式                 for 循环局部变量
+排除死源码 410 个 token（17/17 单元均 elaborate，39 个死 generate 分支）
+残差 412，其中 NamedPortConnection 占 372（90%）
 ```
 
-**单独实现 `NamedPortConnection` 一条规则，in-scope+elaborated 覆盖即从 92.55% 升到约 99%。**
-这是"封闭短尾"假设在真实工程上的直接证据。
+两个工程的头部完全一致：`NamedPortConnection` 都是最大单一残差，且都是服务器 ports 失败的根因。
+差异在于 StCache 的尾巴更长——19% 的 `SimplePropertyExpr`（SVA）和约 19% 的
+`csr_behvr.sv` 生成式 CSR 代码簇（`reg_error 14/199`、`reg_we 14/192`、`wstrb_flattern 7/185`）
+在 RISC-V 上不存在。这两簇尚未定性，§5.4 的归因字段就是为定性它们而加的。
 
-小 fixture 上另外观察到的类二产生式（`InterfacePortHeader`、`DotMemberClause`、
-`VariablePortHeader`、`HierarchyInstantiation`、`ImplicitNonAnsiPort`、
-`IdentifierName < ScopedName` 层次前缀、`IdentifierName < CastExpression`、
-`IdentifierName < InvocationExpression`）合并后，本地已知产生式总数为十余条。
+**必须诚实指出**：StCache 的 67.36% 与 RISC-V 的 92.55% 差距很大，
+所以"封闭短尾"假设在 RISC-V 规模上成立，在 StCache 规模上**只对头部成立**，
+尾部还有两簇需要一轮归因数据才能定性。不能据当前数据宣称假设已全面验证。
 
-### 5.4 已知的口径不精确
+### 5.4 残差归因：区分"缺规则"与"区间锚错"
+
+残差直方图只说明"某处缺规则"，但两种失败性质完全不同，必须分开：
+
+| `reason` | 含义 | 处理方式 |
+| --- | --- | --- |
+| `no_reference_for_this_spelling` | 该文件中该拼写根本没有任何 AST 引用 | 确实需要一条类二语法规则 |
+| `reference_range_excludes_token` | 有同拼写引用，但没有引用的物理区间覆盖该 token | 区间转换或锚定口径问题，或该 token 是标签而非表达式 |
+| `ambiguous_owner` | 多个物理声明竞争同一 token | 宏体共享，沿用 `macro_origin_conflict` |
+
+`residual_in_scope_elaborated_by_syntax_kind` 的每一项都带 `reasons` 计数与一个
+`reason_sample`（含最近引用的区间与节点种类），因此下一轮服务器运行可以直接判定，
+不需要再靠推断。
+
+RISC-V-Vector 上的实测示例：
+
+```text
+NamedPortConnection  no_reference_for_this_spelling=231  reference_range_excludes_token=141
+  sample: eb_buff_generic.sv:1129 'clk'，最近引用 [1139:1142] NamedValueExpression
+```
+
+token 1129 是 `.clk(` 的标签，1139 是实参 `clk`。标签不是表达式所以没有自己的引用，
+`.name(name)` 风格下会被归为 `reference_range_excludes_token`，
+`.port(other_signal)` 风格下则是 `no_reference_for_this_spelling`。两者都指向同一条标签规则。
+
+`NamedType` 的残差 100% 是 `no_reference_for_this_spelling` —— 类型名从不作为表达式出现，
+确认需要独立规则。
+
+### 5.5 已知的口径不精确
 
 - for 循环局部变量是 `VariableSymbol`，被本探测器计入 in-scope，而产品的 `signals` 只收
   `declaringDefinition` 为 module 的 Variable/Net。因此 in-scope 分母略偏大，
@@ -188,7 +233,7 @@ in_scope_elaborated  5116 / 5528 = 92.55%
 - StCache 报告中 `UninstantiatedDefSymbol: 357`：实例化了未定义模块（黑盒）。
   其端口无声明可改名，但探测器目前不单列该类，仍计入 in-scope 残差。
 
-### 5.5 判读服务器数据的顺序
+### 5.6 判读服务器数据的顺序
 
 1. `tokens.byte_mismatch` 必须为 0。非 0 说明宏位置还原本身有问题，必须先修这一项，其余数字无意义。
 2. `join.in_scope.ambiguous` 应接近 0。若很大，说明目标身份口径又退化成了对象身份（见 §5.1）。

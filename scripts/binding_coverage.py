@@ -711,11 +711,61 @@ def _join(
     return assigned, ambiguous
 
 
+def _residual_reasons(
+    residual: list[PhysicalToken],
+    references: list[Reference],
+    ambiguous: list[dict[str, object]],
+) -> dict[tuple[str, int, int], dict[str, object]]:
+    """Explain, per unattributed token, why the join found no owner.
+
+    Without this the residual only says "a rule is missing".  The distinction
+    that matters is whether PySlang produced no reference for that spelling at
+    all, or produced one whose physical range simply does not cover the token:
+    the first needs a grammar rule, the second means a range was converted or
+    anchored wrongly.
+    """
+
+    buckets: dict[tuple[str, str], list[Reference]] = defaultdict(list)
+    for reference in references:
+        buckets[(reference.file, reference.name)].append(reference)
+    ambiguous_keys = {
+        (str(item["file"]), int(item["start"])) for item in ambiguous
+    }
+
+    reasons: dict[tuple[str, int, int], dict[str, object]] = {}
+    for token in residual:
+        key = (token.file, token.start, token.end)
+        name = _semantic_name(token.text)
+        if (token.file, token.start) in ambiguous_keys:
+            reasons[key] = {"reason": "ambiguous_owner"}
+            continue
+        candidates = buckets.get((token.file, name))
+        if not candidates:
+            reasons[key] = {"reason": "no_reference_for_this_spelling"}
+            continue
+        # A reference exists in this file for this spelling but no reference
+        # range contains the token.  Report the nearest one so the offset
+        # relationship can be inspected directly.
+        nearest = min(candidates, key=lambda item: abs(item.start - token.start))
+        reasons[key] = {
+            "reason": "reference_range_excludes_token",
+            "references_with_this_spelling": len(candidates),
+            "nearest_reference": {
+                "start": nearest.start,
+                "end": nearest.end,
+                "node_kind": nearest.node_kind,
+                "target_kind": nearest.target_kind,
+            },
+        }
+    return reasons
+
+
 def _residual_histogram(
     tree: Any,
     resolver: _FileResolver,
     residual: list[PhysicalToken],
     example_limit: int,
+    reasons: dict[tuple[str, int, int], dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     """Group unattributed tokens by their two tightest enclosing syntax nodes.
 
@@ -785,18 +835,37 @@ def _residual_histogram(
     histogram = []
     for (kind, parent), items in grouped.items():
         items.sort(key=lambda item: (item.file, item.start))
-        histogram.append(
-            {
-                "syntax_kind": kind,
-                "parent_syntax_kind": parent,
-                "tokens": len(items),
-                "distinct_names": len({_semantic_name(item.text) for item in items}),
-                "examples": [
-                    {"file": item.file, "start": item.start, "text": item.text}
-                    for item in items[:example_limit]
-                ],
-            }
-        )
+        entry: dict[str, object] = {
+            "syntax_kind": kind,
+            "parent_syntax_kind": parent,
+            "tokens": len(items),
+            "distinct_names": len({_semantic_name(item.text) for item in items}),
+            "examples": [
+                {"file": item.file, "start": item.start, "text": item.text}
+                for item in items[:example_limit]
+            ],
+        }
+        if reasons is not None:
+            counts: dict[str, int] = defaultdict(int)
+            sample: dict[str, object] | None = None
+            for item in items:
+                detail = reasons.get((item.file, item.start, item.end))
+                if detail is None:
+                    continue
+                counts[str(detail["reason"])] += 1
+                if sample is None and "nearest_reference" in detail:
+                    sample = {
+                        "file": item.file,
+                        "start": item.start,
+                        "text": item.text,
+                        **detail,
+                    }
+            entry["reasons"] = dict(
+                sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+            )
+            if sample is not None:
+                entry["reason_sample"] = sample
+        histogram.append(entry)
     histogram.sort(
         key=lambda item: (
             -int(item["tokens"]),
@@ -926,6 +995,7 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
         token for key, token in live_tokens.items() if key not in accounted
     ]
 
+    reasons = _residual_reasons(live_residual, references, ambiguous)
     histogram = _residual_histogram(
         view.syntax_tree, resolver, residual, args.examples
     )
@@ -933,8 +1003,11 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
         view.syntax_tree, resolver, in_scope_residual, args.examples
     )
     live_histogram = _residual_histogram(
-        view.syntax_tree, resolver, live_residual, args.examples
+        view.syntax_tree, resolver, live_residual, args.examples, reasons
     )
+    reason_totals: dict[str, int] = defaultdict(int)
+    for detail in reasons.values():
+        reason_totals[str(detail["reason"])] += 1
 
     by_node_kind: dict[str, int] = defaultdict(int)
     by_target_kind: dict[str, int] = defaultdict(int)
@@ -1020,6 +1093,9 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
                 "unaccounted": len(live_residual),
                 "coverage_ratio": _ratio(live_accounted, len(live_tokens)),
                 "excluded_unelaborated_tokens": len(in_scope_tokens) - len(live_tokens),
+                "residual_reasons": dict(
+                    sorted(reason_totals.items(), key=lambda pair: (-pair[1], pair[0]))
+                ),
             },
             "reference_coverage_ratio": _ratio(len(assigned), len(references)),
             "attributed_by_ast_node_kind": dict(
@@ -1102,6 +1178,10 @@ def _print_summary(report: dict[str, object]) -> None:
         )
     if not report["residual_in_scope_elaborated_by_syntax_kind"]:
         lines.append("    (none)")
+    lines.append("")
+    lines.append("  why the join found no owner:")
+    for reason, count in live.get("residual_reasons", {}).items():
+        lines.append(f"    {count:>8}  {reason}")
     print("\n".join(lines), file=sys.stderr)
 
 

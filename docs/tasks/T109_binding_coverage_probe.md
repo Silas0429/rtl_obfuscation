@@ -59,6 +59,9 @@
 - `residual_by_syntax_kind`、`residual_in_scope_by_syntax_kind`、
   `residual_in_scope_elaborated_by_syntax_kind`：每项含 `syntax_kind`、`parent_syntax_kind`、
   `tokens`、`distinct_names`、带 file/start/text 的 examples；
+  `in_scope_elaborated` 版本另含 `reasons` 计数与 `reason_sample`，用于区分
+  `no_reference_for_this_spelling`（确需类二规则）与 `reference_range_excludes_token`
+  （区间锚定问题或该 token 是标签而非表达式）；
 - `completeness` 的三层：`overall`、`in_scope`、`in_scope_elaborated`，各含 `distinct_names`、
   `names_fully_accounted`、`names_with_unaccounted_tokens`、`renameable_name_ratio`、`worst_names`。
 
@@ -178,7 +181,8 @@ allowlist_review: pass；工作区仅含第 5 节 allowlist 的路径，无产�
 local_result: PASS
 accepted_at: 2026-08-27；依据第 7 节冻结条件，服务器数据用于决定下一张任务，不是本任务的通过条件
 reopen_clause: 若服务器运行异常退出或 byte_mismatch != 0，本任务回到 IN_PROGRESS 修正探测器本身
-server_measurement: 首次已完成（见第 11 节）；探测器口径已修正，需复测一次
+server_measurement: 首次与死源码修正后复测均已完成（见第 11、11.1 节）；
+  残差头部已定性，SVA 与 CSR 生成代码两簇需带归因的第三轮数据
 ```
 
 ## 11. 服务器首次测量与探测器修正（2026-08-27）
@@ -224,6 +228,39 @@ RISC-V-Vector 修正后残差 412，其中 `NamedPortConnection` 占 372（90%�
 `SimplePropertyExpr` 那 16 个也随死分支排除而消失，证明它们本来就是死源码而非 SVA 绑定问题。
 
 服务器需在本次修正后**重跑一次**第 7 节命令，用 `join.in_scope_elaborated` 判读。
+
+## 11.1 修正后的 StCache 复测结果（2026-08-27）
+
+```text
+in_scope_elaborated  23079 / 34261 = 67.36%
+排除死源码 11399 token（140 单元中 103 elaborate，101 个死 generate 分支）
+renameable_name_ratio 1035 / 3637 = 28.46%
+byte_mismatch = 0    ambiguous = 2（均为 StChAssert.sv 宏体共享的 clk/rst_n，各 11 个竞争声明）
+```
+
+残差 11182 的头部与 RISC-V-Vector 完全一致：`NamedPortConnection` 4178（37%）居首，
+`IdentifierName < ScopedName` 1075（interface 前缀）、`NamedType` 222、
+`DotMemberClause` 97 + `InterfacePortHeader` 90（服务器 interface 根因）均在列。
+
+但 StCache 有两簇 RISC-V 上不存在的残差尚未定性：
+
+- `SimplePropertyExpr < SimpleSequenceExpr` 2143（19%），SVA 断言，names=1373；
+- `csr_behvr.sv` 等生成式 CSR 文件簇约 2170（19%），特征是同名少量已归属、大量未归属
+  （`reg_error 14/199`、`reg_we 14/192`、`wstrb_flattern 7/185`）。
+
+本地已排除三种可能原因：function 体与 SVA 断言**都能被 `root.visit()` 遍历到**
+（实测 `reg_error` 源码 4 次 = 1 声明 + 3 引用，AST 引用正好 3 次，含 property 与立即断言）；
+宏展开引用的 `sourceRange` 转换**正常**（`macro_start=True` 时 converted 区间正好覆盖调用点实参）。
+因此这两簇不是遍历缺口，也不是宏位置问题，需要 StCache 实际源码才能定性。
+
+为避免继续推断，本次新增**残差归因**：每个未归属 token 标注失败原因
+（`no_reference_for_this_spelling` / `reference_range_excludes_token` / `ambiguous_owner`），
+直方图每项带 `reasons` 计数与 `reason_sample`（含最近同名引用的区间与节点种类）。
+RISC-V-Vector 实测该归因有效：`NamedPortConnection` 分解为 231 无引用 + 141 区间不覆盖，
+样本显示 token 是 `.clk(` 标签而最近引用是 10 字节后的实参 `clk`；
+`NamedType` 残差 100% 为 `no_reference_for_this_spelling`，确认需要独立规则。
+
+服务器需再跑一次以获得这两簇的归因。
 
 ## 12. 下一步的判定规则（不属于本任务的验收条件）
 
