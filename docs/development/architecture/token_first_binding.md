@@ -300,8 +300,8 @@ token 1129 是 `.clk(` 的标签，1139 是实参 `clk`。标签不是表达式�
 | --- | --- | --- |
 | [`T110`](../../tasks/T110_core_group_binding_fixes.md) | 目标身份统一为物理声明位置；修 ports 标签配对、interface port header、struct 成员 select；显式保留 interface 实例 | 四组在 StCache 上 `rename > 0` |
 | [`T111`](../../tasks/T111_record_scope_preserve.md) | 爆炸半径 category→record；宏位置先还原再锚定 | **struct 达标；单个未知形状不再清零整组** |
-| T112 | 层次引用前缀规则；`unelaborated_source` 升为一等 preserve 原因 | interface 实例可改名；死源码不再混入缺陷 |
-| T113 | 真实工程的等价性证据强化（StCache Formal 或隐式 net 检查） | "不报错"从"能编译"升级为"可证等价" |
+| [`T112`](../../tasks/T112_gate_rename_audit.md) | **上线门禁**：只读 gate 漏改引用检查（隐式 net 差分 + 残留旧名作用域检查） | 排除"编译干净但功能错误" |
+| T113 | 层次引用前缀规则；`unelaborated_source` 升为一等 preserve 原因 | interface 实例可改名 |
 | T114（可选） | 逐符号完整性判据作为保证机制 | 需先定性探测器口径下未解释的 47% |
 
 顺序理由：T110 之前不动组级事务，是为了让"三个形状是否真的修好"可独立复审。
@@ -323,3 +323,25 @@ token 1129 是 `.clk(` 的标签，1139 是实参 `clk`。标签不是表达式�
   端口连接里漏改的标识符会变成隐式 wire，**编译干净但功能错误**。因此真实工程的验收不能只有
   strict compile 与 byte-identical restore。
 - 不授权任何产品改动。是否改造、以及改造顺序，由服务器测量结果决定。
+
+### 6.3 严格编译不足以证明改写正确（实测）
+
+主 Agent 模拟"漏改引用"：被实例化模块的端口已改名为 `a_new`，父模块连接仍写
+`.a_new(old_signal_name)`，而 `old_signal_name` 从未声明。
+
+```text
+诊断总数: 0                                       ← PySlang 严格编译完全干净
+NetSymbol name='old_signal_name' isImplicit=True  ← 隐式 net 被明确暴露
+```
+
+因此：
+
+- `strict_compile_passed=true` **不能**证明改写正确。SystemVerilog 在缺省 `default_nettype`
+  下把未声明标识符变成隐式 wire，漏改一个引用会编译干净但功能错误。
+- `plaintext_leakage_rate` 只遍历 `execution.edits`，证明"计划的编辑都执行了"，
+  不证明"gate 中无残留旧名"；`occurrence_coverage` 同理；
+  `restored_byte_identical` 也不行——漏改处在原文件与 gate 中都是旧名，反向映射照样复原。
+- 但 `NetSymbol.isImplicit` 使该失败模式**可直接检测**，见 [`T112`](../../tasks/T112_gate_rename_audit.md)。
+
+意外捕获（内层符号改名后漏改的引用绑定到外层同名符号）不产生隐式 net，
+故 T112 另加"残留旧名的作用域检查"覆盖该情形。
