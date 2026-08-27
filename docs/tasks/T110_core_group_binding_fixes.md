@@ -1,6 +1,6 @@
 # T110：四核心组稳定改名的三处绑定修复与目标身份统一
 
-- 状态：`READY`
+- 状态：`READY_FOR_REVIEW`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`0e28030`（T109 已 `ACCEPTED`，T108 保持 `BLOCKED`）
 - 任务类型：`rename_index.py` 内的 occurrence 绑定修复 + 目标身份口径统一
@@ -200,6 +200,225 @@ python rtl_encrypt.py \
 ## 10. 执行记录
 
 ```text
-status: READY
-starting_head: 0e28030
+status: READY_FOR_REVIEW
+starting_head: 35a8e8a
+starting_head_note: 合同第 5 行记录的 0e28030 是创建本任务时的 HEAD；本任务单与
+  token_first_binding.md 的冻结提交 35a8e8a 之后才开始实现，实际 starting HEAD 为 35a8e8a
+worktree_at_start: clean（`git status --porcelain` 无输出）
+allowed_files_overlap_with_user_changes: none
+tool_form: `conda run -n rtl_obfuscation` 在本沙箱报 `__conda_exe:6: permission denied`，
+  改用同一环境的解释器 `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python`
+first_command: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python -m unittest
+  tests.test_t108_pyslang_rename_index tests.test_t108_public_core_flow tests.test_public_cli
+  tests.test_mapping_vnext tests.test_rewrite_vnext tests.test_orchestration_vnext
+  tests.test_restore_vnext  → Ran 27 tests, OK（baseline）
+baseline_binding_coverage: tests.test_binding_coverage → Ran 15 tests, OK（baseline）
 ```
+
+### 10.1 改动文件
+
+```text
+M  rtl_obfuscator/rename_index.py          §2.1–2.5 的 occurrence 绑定修复与目标身份统一
+M  docs/tasks/T110_core_group_binding_fixes.md   本执行记录
+A  tests/test_t110_binding_fixes.py        新增，14 个用例
+A  tests/fixtures/t110_binding_fixes/design.f
+A  tests/fixtures/t110_binding_fixes/design.sv
+A  tests/fixtures/t110_binding_fixes/formal.f
+A  tests/fixtures/t110_binding_fixes/formal_cone.sv
+```
+
+`docs/development/architecture/token_first_binding.md` 未改动（冻结提交 35a8e8a 已含本次口径）。
+
+### 10.2 测试用例的两处缺陷与修正
+
+两处缺陷都在 `tests/test_t110_binding_fixes.py`，与产品代码无关，`rtl_obfuscator/rename_index.py`
+未因此改动一行。
+
+1. **辅助方法名与 `unittest` 内部属性冲突（4 个 error）。**
+   原辅助方法名为 `_outcome`。`unittest.TestCase` 在运行期把**实例属性** `_outcome` 绑定为
+   runner 的 `_Outcome` 对象，实例属性优先于类方法，因此 `self._outcome(category)` 抛
+   `TypeError: '_Outcome' object is not callable`。四个用例在断言执行前就 error，
+   等于从未真正验证过。
+   修正：重命名为 `_category_outcome`，同步 4 处调用点（现第 80、86、338、356 行），
+   并在方法上留注释说明为何不得叫 `_outcome`。
+   重命名后逐条核对断言与实测数值，全部相符，未放宽任何断言：
+   `rename > 0` 且 `unsupported == 0`（四组实测 12/20/6/7，unsupported 全 0）；
+   无 `source_binding_incomplete`；interface 组 `rename == len(eligible) == 6`、
+   `preserve == len(instances) == 3`；四组 issues 不含
+   `cross_record_range_conflict` / `macro_origin_conflict`。
+
+2. **`test_wildcard_and_positional_connections_produce_no_label_occurrence` 选择范围写错（1 个 failure）。**
+   断言 `len(wild_child_ports) == 3` 实得 16。经查是**测试的选择范围错**，不是产品缺陷：
+   原选择用两个 module header 的 `rfind` 比较来界定 `t110_wild_child` 的字节范围，
+   该写法只给出下界、没有上界，于是把 `t110_wild_child` 之后声明的所有端口一并收进来。
+   `design.sv` 的模块顺序为 `t110_wild_child`(89–95)、`t110_wild_parent`(101–109)、
+   `t110_top`(111–173)，三者端口合计正好 16 个，与实得数字一致。
+   16 不是正确答案：`t110_wild_child` 只声明 `x, y, z` 三个端口，用例要证的正是
+   `.*` 隐式连接不给**该子模块自己的端口**产生 label occurrence。
+   修正：把范围收紧为该子模块自身的字节区间
+   `wild_start = design.index(b"module t110_wild_child")` 到
+   `wild_end = design.index(b"endmodule", wild_start)`（第 95 行的 `endmodule`，模块无嵌套）。
+   同时把断言**加强**而非削弱——由数量断言改为按声明位置排序的精确名字断言
+   `[symbol.name for symbol in wild_child_ports] == ["x", "y", "z"]`，
+   再对每个端口断言 `semantic_port_connection` occurrence 为空、
+   `support == "preserved"`、`reason == "outside_top_closure"`。
+
+### 10.3 四组实测结果（公开 CLI）
+
+```sh
+/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python rtl_encrypt.py \
+  --filelist tests/fixtures/t110_binding_fixes/design.f --top t110_top \
+  --category all --output-dir <tmp>        # exit 0
+```
+
+```text
+encryption_result=PASS_PARTIAL  strict_compile_passed=true  restored_byte_identical=true
+rename=45 preserve=20 unsupported=0  modified_tokens=177  occurrence_coverage=1.0
+mapping.schema_version=2
+
+category_outcomes:
+  signals    candidate=13 rename=12 preserve=1  unsupported=0  issues: outside_top_closure
+  ports      candidate=36 rename=20 preserve=16 unsupported=0  issues: outside_top_closure,
+                                                                       selected_top_boundary
+  interface  candidate=9  rename=6  preserve=3  unsupported=0  issues: hierarchical_prefix_unsupported
+  struct     candidate=7  rename=7  preserve=0  unsupported=0  issues: 无
+```
+
+四组均 `rename > 0`；无 `source_binding_incomplete`；服务器三个 signature
+（`PortSymbol` / `DefinitionSymbol` / `FieldSymbol` + `semantic target has no unique
+physical typed token`）均不再出现。
+
+### 10.4 Formal verification
+
+由 `tests.test_t110_binding_fixes.test_actual_gate_formal_positive_and_fixed_functional_negative`
+实际调用 `scripts/formal_equivalence.py` 完成。gate 为**真实改名后的 actual gate**，
+用例先断言 `gate/formal_cone.sv != fixture/formal_cone.sv`，不是恒等比较。
+`yosys` 取自 PATH：`/opt/homebrew/bin/yosys`，`Yosys 0.53`。
+
+正例：
+
+```text
+gold : tests/fixtures/t110_binding_fixes            （--gold-filelist formal.f --gold-root <fixture>）
+gate : <tmp>/t110-formal-*/gate                     （--gate-filelist design.f --gate-root <gate>）
+top  : t110_formal_top      seq: 5
+cmd  : python scripts/formal_equivalence.py --gold-filelist <fixture>/formal.f \
+         --gold-root <fixture> --gate-filelist <gate>/design.f --gate-root <gate> \
+         --top t110_formal_top --seq 5
+exit : 0
+json : {"formal_equivalence": "pass", "gate": "<gate>", "gold": "<fixture>",
+        "seq": 5, "top": "t110_formal_top"}
+gate 侧 encrypt summary: strict_compile_passed=true rename=14 preserve=4
+        unsupported=0 modified_tokens=49 restored_byte_identical=true
+```
+
+固定功能负例（在 actual gate 副本上改功能，非改名）：
+
+```text
+mutation : formal_cone.sv 内唯一的 `1'b0` → `1'b1`（t110_reorder）
+strict compile : catalog parse/semantic = 0/0，top_overlay parse/semantic = 0/0（编译仍通过）
+exit : 1（非零）
+evidence : 输出含 `unproven` 与 `equiv_status -assert`
+```
+
+用时说明：该 fixture 的 Formal cone 极小（`stat` 报 12 cells / 43 wires），
+裸跑 `yosys` 约 0.04s，因此整模块 14 个用例 0.5s 内跑完属正常，非跳过。
+
+### 10.5 五条固定验收命令的实际结果
+
+全部用 `/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python` 代替
+`conda run -n rtl_obfuscation python`（原因见 `tool_form`），按 §7 顺序执行，
+逐条读 `OK` / `FAILED` 判决行本身，未用管道 `tail` 掩盖退出码。
+
+```text
+1  -m unittest tests.test_t110_binding_fixes tests.test_t108_pyslang_rename_index
+     tests.test_t108_public_core_flow tests.test_public_cli tests.test_mapping_vnext
+     tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext -v
+   → Ran 41 tests, OK        exit 0
+2  -m unittest tests.test_binding_coverage -v
+   → Ran 15 tests, OK        exit 0
+3  -m py_compile rtl_obfuscator/rename_index.py tests/test_t110_binding_fixes.py
+   → 无输出                  exit 0
+4  git diff --check HEAD
+   → 无输出                  exit 0（本记录写入后复跑仍为 exit 0）
+5  状态守卫 t110_ready_for_review
+   → t110_ready_for_review=pass   exit 0
+```
+
+### 10.6 偏差与未覆盖边界
+
+```text
+deviation_product_code: none —— 未改动 rtl_obfuscator/rename_index.py，
+  未触碰 _apply_group_binding_issues（§3 禁止），未放宽或删除任何断言、校验器与 fixture。
+deviation_scope: 本次交付仅修 tests/test_t110_binding_fixes.py 的两处用例缺陷；
+  两处均确认为测试缺陷，无一指向产品缺陷，故无需 Main Agent 裁决。
+found_already_applied: 接手时磁盘上的 tests/test_t110_binding_fixes.py 已含这两处修正
+  （疑为本任务先前一次未完成的执行留下）。本次未重复改写，而是逐条复核诊断与断言强度：
+  确认 `_outcome` 调用点已全部消失、wildcard 范围已按子模块字节区间收紧且断言已加强，
+  并用实测数值核对了 4 个曾被冲突吞掉的用例的每条断言。
+uncovered_boundary_1: 非 ANSI `if.modport x;` 体内声明形式需取 ScopedName 左侧，
+  fixture 的 t110_mp_nonansi 覆盖了该分支，但仍属次要路径，未做穷尽变体。
+uncovered_boundary_2: 层次引用前缀未实现，interface_instance / interface_instance_array
+  以 hierarchical_prefix_unsupported 显式保留（§2.5 安全性修正），前缀规则归 T111。
+uncovered_boundary_3: ports 组的 preserve 中含 selected_top_boundary 与 outside_top_closure
+  两类既有原因，本任务未收缩其范围；覆盖率提升归后续任务（§0）。
+server_acceptance: §8 的 StCache 服务器验收未在本沙箱执行（无 ChipPlatform 源与服务器环境），
+  属本任务"第二半"，需 Main Agent 在服务器上另跑。
+risc_v_vector_formal: 未运行（CLAUDE.md 与 §3 均禁止在例行工作中运行）。
+blanket_discover: 未使用 unittest discover。
+git: 未 commit、未 push、未自设 ACCEPTED。
+```
+
+## 11. 主 Agent 独立本地验收记录
+
+主 Agent 未采信子 Agent 自报结果，独立复跑第 7 节五条门禁并独立审查代码。
+
+```text
+reviewed_at: 2026-08-27
+sub_agent_note: 实现由子 Agent 完成；其间两次因 API 鉴权 403 被外部终止，
+  非自身逻辑错误，恢复后完成。子 Agent 模型与 T108 冻结的 GPT-5.6 Luna 不同——
+  T110 合同未冻结模型，故不构成违约，此处显式记录不隐藏。
+
+main_gate_1: exit 0；Ran 41 tests；OK（读 OK/FAILED 判决行，未经 tail 掩盖退出码）
+main_gate_2: exit 0；tests.test_binding_coverage Ran 15 tests；OK
+main_gate_3: exit 0；py_compile rename_index.py + test_t110_binding_fixes.py
+main_gate_4: exit 0；git diff --check HEAD
+main_gate_5: exit 0；t110_ready_for_review=pass
+
+main_formal_positive: 真实 actual gate；exit 0；JSON formal_equivalence=pass；
+  top=t110_formal_top；seq=5；gate=/var/.../t110-formal-cki6iuou/gate
+main_formal_negative: exit 1；evidence "unproven; equiv_status -assert"；
+  mutation 1'b0 -> 1'b1 in t110_reorder
+main_formal_t108_regression: T108 正负例同样通过，无回归
+formal_freshness: 本次 Formal 临时目录 cki6iuou 与上一轮 o71q2qqb 不同，确认真实重跑非缓存
+
+main_cli_verification: 主 Agent 独立跑公开 CLI（--category all）：
+  PASS_PARTIAL；strict_compile_passed=true；restored_byte_identical=true
+  rename=45 preserve=20 unsupported=0；modified_tokens=177
+  occurrence_coverage=1.0；symbol_coverage=1.0；plaintext_leakage_rate=0.0
+main_category_outcomes:
+  signals    candidate=13 rename=12 preserve=1  unsupported=0  reason outside_top_closure
+  ports      candidate=36 rename=20 preserve=16 unsupported=0  reason outside_top_closure
+  interface  candidate=9  rename=6  preserve=3  unsupported=0  reason hierarchical_prefix_unsupported
+  struct     candidate=7  rename=7  preserve=0  unsupported=0
+main_signature_check: 全程无 source_binding_incomplete；
+  PortSymbol / DefinitionSymbol / FieldSymbol 三个服务器 signature 全部消失
+
+main_code_review:
+  - `_apply_group_binding_issues` 未出现在 diff 中，§3 边界守住
+  - 四项修改的函数齐备：_record_id_for_declaration、_named_port_connection_syntax、
+    _instance_ports_by_name、_interface_port_header、_interface_port_type_range、
+    _interface_port_modport_token、_member_access_range
+  - 无名称搜索、正则、文本扫描；无字节校验或 range 校验被移除
+  - 唯一新增 `except Exception` 位于 _member_access_range，作用是把意外属性错误转成
+    稳定 RENAME_INDEX_RANGE_INVALID，不是吞异常；该函数显式拒绝宏位置做偏移算术、
+    拒绝跨 buffer、按 end.offset - len(name) 锚定并做字节校验，begin <= start.offset 时返回 None
+  - wildcard 断言经复核为**加强**而非放宽：由 `len(...) == 3` 改为断言精确名字序列
+    ["x","y","z"] + 每个端口的 semantic_port_connection 为空 + support/reason 逐项校验；
+    原 bug 是 rfind 只限定下界，扫进了后续模块的 16 个端口
+  - 主 Agent 自我更正：先前误把"任务单+产品文件合计 247 insertions"读作产品文件单独数字，
+    据此怀疑产品被改动。产品文件前后均为 268 changed lines，实际未被改动，子 Agent 说法正确。
+
+main_local_result: PASS
+server_gate: PENDING —— §8 的 StCache 验收是本任务第二半，未通过前不得设 ACCEPTED
+delivery_note: 为使服务器能 pull 到本次修复，主 Agent 在 server_gate 之前提交并推送。
+  这是交付而非验收；沿用 T108 §11.1 的先例，并基于用户本轮给出的全权修改授权。

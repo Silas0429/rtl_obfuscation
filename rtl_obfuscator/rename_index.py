@@ -679,17 +679,40 @@ def _add_working(
     return current
 
 
+def _record_id_for_declaration(
+    records: dict[str, _WorkingSymbol], declaration: SourceRange
+) -> str | None:
+    """Identify one record by physical declaration position.
+
+    Elaboration produces a distinct Python object per instance for the same
+    physical declaration, so Python object identity is not a symbol identity:
+    a module instantiated four times yields four target objects for one source
+    token.  ``symbol_id`` already encodes the physical declaration range, so the
+    range plus the canonical category order is a total, deterministic identity
+    that never reports a false competing owner.
+    """
+
+    suffix = f"{declaration.file}:{declaration.start}:{declaration.end}"
+    for category in CANONICAL_CATEGORIES:
+        symbol_id = f"{category}:{suffix}"
+        if symbol_id in records:
+            return symbol_id
+    return None
+
+
 def _record_for_semantic_target(
     catalog: SourceCatalog,
     records: dict[str, _WorkingSymbol],
     target_map: dict[object, str],
     target: object,
 ) -> str | None:
-    """Resolve a PySlang target, including equivalent wrapper objects.
+    """Resolve a PySlang target by its physical declaration position.
 
-    PySlang can return a fresh Python wrapper for the same semantic symbol.
-    The target's own source location is still direct semantic evidence; it is
-    not a name lookup or a textual occurrence search.
+    PySlang returns one wrapper per elaborated instance for the same semantic
+    declaration, so the object cannot be the identity.  The target's own
+    declaration range is direct semantic evidence; it is not a name lookup or a
+    textual occurrence search.  ``target_map`` is only a memo of already
+    resolved wrappers.
     """
 
     if target is None:
@@ -709,11 +732,10 @@ def _record_for_semantic_target(
         )
     except RenameIndexError:
         return None
-    for candidate in records.values():
-        if candidate.declaration == target_range:
-            target_map[target] = candidate.symbol_id
-            return candidate.symbol_id
-    return None
+    symbol_id = _record_id_for_declaration(records, target_range)
+    if symbol_id is not None:
+        target_map[target] = symbol_id
+    return symbol_id
 
 
 def _interface_record_for_definition(
@@ -1059,6 +1081,11 @@ def _register_core_declarations(
                 impact="interface_abi", abi="internal", targets=(node,),
             )
         elif node_type == "InstanceSymbol" and getattr(node, "isInterface", False) and "interface" in selected:
+            # A hierarchical prefix (`if0.valid`) has no binding rule yet: the
+            # semantic reference resolves to the member, so renaming the
+            # instance would leave the old instance name in every prefix.  The
+            # instance is preserved explicitly with its own reason instead of
+            # relying on an unexplained group rollback.
             definition = getattr(node, "declaringDefinition", None)
             owner_module, semantic_owner, module, _ = _owner_info(
                 catalog, definition, modules_by_definition, interfaces_by_definition
@@ -1074,6 +1101,7 @@ def _register_core_declarations(
                 "interface", module, top=catalog.source_set.top,
                 interface_active=True, aggregate_active=True, interface_instance=True,
             )
+            support, reason = "preserved", "hierarchical_prefix_unsupported"
             _add_working(
                 records, target_map, catalog=catalog, category="interface", kind="interface_instance",
                 semantic_kind=node_type, name=name, declaration=declaration,
@@ -1109,6 +1137,7 @@ def _register_core_declarations(
                 "interface", module, top=catalog.source_set.top,
                 interface_active=True, aggregate_active=True, interface_instance=True,
             )
+            support, reason = "preserved", "hierarchical_prefix_unsupported"
             _add_working(
                 records, target_map, catalog=catalog, category="interface",
                 kind="interface_instance_array", semantic_kind=node_type,
@@ -1130,6 +1159,153 @@ def _instance_type_occurrence(catalog: SourceCatalog, node: object, expected: st
     syntax = getattr(node, "syntax", None)
     parent = getattr(syntax, "parent", None)
     return _range_for_token(catalog, getattr(parent, "type", None), expected)
+
+
+def _named_port_connection_syntax(node: object) -> tuple[object, ...]:
+    """Return one instance's named connection syntax nodes in source order.
+
+    ``syntax.connections`` interleaves comma tokens with connection syntax and
+    is in source order, while ``portConnections`` is in port declaration order.
+    Only a named connection carries a label token; ``.*`` wildcards and ordered
+    connections have no label and therefore no physical occurrence.
+    """
+
+    connections = _safe_attr(_safe_attr(node, "syntax"), "connections", ()) or ()
+    return tuple(
+        item
+        for item in connections
+        if _kind_name(_safe_attr(item, "kind")) == "NamedPortConnection"
+    )
+
+
+def _instance_ports_by_name(node: object) -> dict[str, object]:
+    """Map this instance's own port names to their semantic port symbols.
+
+    ``PortConnection`` exposes only ``expression``, ``ifaceConn`` and ``port``:
+    it has no ``syntax`` and no ``sourceRange``, so the semantic side cannot
+    supply the connection site, and pairing the two lists by index is invalid
+    because their orders differ.  A named port connection is bound by name in
+    the language definition, so resolving the label token inside this instance's
+    own port set executes that rule instead of searching the design.
+    """
+
+    result: dict[str, object] = {}
+    ambiguous: set[str] = set()
+    for connection in _safe_attr(node, "portConnections", ()) or ():
+        port = _safe_attr(connection, "port")
+        name = str(_safe_attr(port, "name", ""))
+        if not name:
+            continue
+        if name in result:
+            ambiguous.add(name)
+            continue
+        result[name] = port
+    for name in ambiguous:
+        result.pop(name, None)
+    return result
+
+
+def _interface_port_header(node: object) -> object:
+    """Return the port header syntax of one module interface port."""
+
+    return _safe_attr(_safe_attr(_safe_attr(node, "syntax"), "parent"), "header")
+
+
+def _interface_port_type_range(
+    catalog: SourceCatalog, node: object, expected: str
+) -> SourceRange | None:
+    """Bind the interface type token of one module interface port.
+
+    A modport-qualified header (``If.Mp p``) is ``InterfacePortHeaderSyntax``,
+    which has no ``dataType`` at all; its typed interface token is
+    ``nameOrKeyword``.  A plain interface port (``If p``) uses
+    ``VariablePortHeaderSyntax.dataType``.  The non-ANSI body declaration
+    ``If.Mp p;`` also exposes ``InterfacePortHeaderSyntax``, so both modport
+    forms use the same typed token.
+    """
+
+    header = _interface_port_header(node)
+    if _kind_name(_safe_attr(header, "kind")) == "InterfacePortHeader":
+        return _range_for_token(catalog, _safe_attr(header, "nameOrKeyword"), expected)
+    type_syntax = _safe_attr(header, "dataType")
+    if type_syntax is None:
+        # Non-ANSI interface ports without a modport expose the typed
+        # interface name on the declaration syntax rather than a header.
+        type_syntax = _safe_attr(_safe_attr(_safe_attr(node, "syntax"), "parent"), "type")
+    return _syntax_identifier_range(catalog, type_syntax, expected)
+
+
+def _interface_port_modport_token(node: object) -> object:
+    """Return the modport name token of ``If.Mp p``.
+
+    ``header.modport`` is a ``DotMemberClauseSyntax`` whose ``member`` is the
+    modport identifier token; ``InterfacePortSymbol.modport`` is only a string.
+    """
+
+    return _safe_attr(_safe_attr(_interface_port_header(node), "modport"), "member")
+
+
+def _interface_port_modport_symbol(node: object) -> object:
+    """Return the semantic ModportSymbol connected to one interface port.
+
+    ``InterfacePortSymbol.connection`` is a ``(instance, modport)`` tuple, so
+    the modport target comes from the elaborator and never from a name lookup.
+    """
+
+    connection = _safe_attr(node, "connection")
+    try:
+        if connection is None or len(connection) < 2:
+            return None
+        return connection[1]
+    except TypeError:
+        return None
+
+
+def _member_access_range(
+    catalog: SourceCatalog, node: object, expected: str
+) -> SourceRange | None:
+    """Bind one aggregate member reference token.
+
+    ``data.member`` exposes ``ScopedNameSyntax``, but ``data.member[3:0]``
+    exposes ``syntax = None``: slang drops the syntax link, so there is no typed
+    structure to walk and no select expression to descend.  The expression's own
+    ``sourceRange`` still ends exactly at the member token, so the member is the
+    last ``len(name)`` bytes of that range.  The candidate is byte-verified
+    against the original source and rejected when it would consume the whole
+    range, because a member reference always has a prefix.
+    """
+
+    syntax = _safe_attr(node, "syntax")
+    if syntax is not None:
+        return _syntax_identifier_range(catalog, syntax, expected)
+    source_range = _safe_attr(node, "sourceRange")
+    if source_range is None:
+        return None
+    expected_bytes = expected.encode("utf-8")
+    try:
+        start = source_range.start
+        end = source_range.end
+        manager = catalog.catalog_source_manager
+        if manager.isMacroLoc(start) or manager.isMacroLoc(end):
+            # A macro expansion range cannot be used for offset arithmetic.
+            return None
+        if start.buffer != end.buffer:
+            return None
+        file = _file_for_buffer(catalog, end.buffer)
+        stop = int(end.offset)
+        begin = stop - len(expected_bytes)
+    except RenameIndexError:
+        raise
+    except Exception as error:
+        raise RenameIndexError(
+            "RENAME_INDEX_RANGE_INVALID", "member access source range is invalid"
+        ) from error
+    if begin <= int(start.offset):
+        return None
+    data = _source_bytes(catalog, file)
+    if data[begin:stop] != expected_bytes:
+        return None
+    return SourceRange(file, begin, stop)
 
 
 def _claim_occurrence(
@@ -1231,6 +1407,11 @@ def _apply_group_binding_issues(
         "selected_top_boundary",
         "outside_top_closure",
         "macro_origin_conflict",
+        # An interface instance is preserved because the hierarchical prefix
+        # rule does not exist yet.  That is a per-record language boundary with
+        # a stated reason, not an unknown binding failure, so it must not roll
+        # back the rest of the interface group.
+        "hierarchical_prefix_unsupported",
     }
     unknown_by_category: dict[str, list[_WorkingSymbol]] = {}
     for record in records.values():
@@ -1288,9 +1469,11 @@ def _collect_occurrences(
             # physical edit.
             continue
         if node_type == "PortSymbol":
-            symbol_id = target_map.get(node)
+            symbol_id = _record_for_semantic_target(catalog, records, target_map, node)
             if symbol_id is None:
-                symbol_id = target_map.get(_safe_attr(node, "internalSymbol"))
+                symbol_id = _record_for_semantic_target(
+                    catalog, records, target_map, _safe_attr(node, "internalSymbol")
+                )
             if symbol_id is not None and records[symbol_id].category == "ports":
                 record = records[symbol_id]
                 source_range = _safe_occurrence_range(
@@ -1365,13 +1548,12 @@ def _collect_occurrences(
             if symbol_id is None:
                 continue
             record = records[symbol_id]
-            syntax = getattr(node, "syntax", None)
             source_range = _safe_occurrence_range(
                 catalog,
                 binding_issues,
                 record,
                 node,
-                lambda: _syntax_identifier_range(catalog, syntax, record.name),
+                lambda: _member_access_range(catalog, node, record.name),
             )
             if source_range is None:
                 continue
@@ -1443,29 +1625,40 @@ def _collect_occurrences(
                 catalog, records, target_map, getattr(node, "interfaceDef", None)
             )
             if interface_id is not None:
-                syntax = getattr(node, "syntax", None)
-                port_parent = getattr(syntax, "parent", None)
-                header = getattr(port_parent, "header", None)
-                type_syntax = getattr(header, "dataType", None)
-                if type_syntax is None:
-                    # Non-ANSI interface ports expose the typed interface
-                    # name on DataDeclarationSyntax.type rather than a
-                    # VariablePortHeaderSyntax.
-                    type_syntax = getattr(port_parent, "type", None)
                 record = records[interface_id]
                 source_range = _safe_occurrence_range(
                     catalog,
                     binding_issues,
                     record,
                     node,
-                    lambda: _syntax_identifier_range(
-                        catalog, type_syntax, record.name
-                    ),
+                    lambda: _interface_port_type_range(catalog, node, record.name),
                 )
                 if source_range is not None:
                     _claim_occurrence(
                         record,
                         SymbolOccurrence(source_range, "semantic_interface_port_type"),
+                        range_claims,
+                    )
+            modport_id = _record_for_semantic_target(
+                catalog, records, target_map, _interface_port_modport_symbol(node)
+            )
+            if modport_id is not None:
+                record = records[modport_id]
+                source_range = _safe_occurrence_range(
+                    catalog,
+                    binding_issues,
+                    record,
+                    node,
+                    lambda: _range_for_token(
+                        catalog, _interface_port_modport_token(node), record.name
+                    ),
+                )
+                if source_range is not None:
+                    _claim_occurrence(
+                        record,
+                        SymbolOccurrence(
+                            source_range, "semantic_interface_port_modport"
+                        ),
                         range_claims,
                     )
         if node_type == "InstanceArraySymbol":
@@ -1497,19 +1690,24 @@ def _collect_occurrences(
                         range_claims,
                     )
         if node_type == "InstanceSymbol" and getattr(node, "isModule", False):
-            syntax = getattr(node, "syntax", None)
-            syntax_connections = [
-                item for item in getattr(syntax, "connections", ())
-                if type(item).__name__ != "Token"
-            ]
-            for connection_syntax, connection in zip(syntax_connections, getattr(node, "portConnections", ())):
-                port = getattr(connection, "port", None)
-                symbol_id = target_map.get(port)
+            ports_by_name = _instance_ports_by_name(node)
+            for connection_syntax in _named_port_connection_syntax(node):
+                label = _safe_attr(connection_syntax, "name")
+                label_text = _safe_attr(label, "rawText", "")
+                if not isinstance(label_text, str):
+                    label_text = bytes(label_text).decode("utf-8", "replace")
+                port = ports_by_name.get(label_text)
+                if port is None:
+                    continue
+                symbol_id = _record_for_semantic_target(
+                    catalog, records, target_map, port
+                )
                 if symbol_id is None:
-                    symbol_id = target_map.get(getattr(port, "internalSymbol", None))
+                    symbol_id = _record_for_semantic_target(
+                        catalog, records, target_map, _safe_attr(port, "internalSymbol")
+                    )
                 if symbol_id is None:
                     continue
-                label = getattr(connection_syntax, "name", None)
                 record = records[symbol_id]
                 source_range = _safe_occurrence_range(
                     catalog,
