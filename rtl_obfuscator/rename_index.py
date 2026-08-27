@@ -1266,18 +1266,25 @@ def _member_access_range(
 ) -> SourceRange | None:
     """Bind one aggregate member reference token.
 
-    ``data.member`` exposes ``ScopedNameSyntax``, but ``data.member[3:0]``
-    exposes ``syntax = None``: slang drops the syntax link, so there is no typed
-    structure to walk and no select expression to descend.  The expression's own
-    ``sourceRange`` still ends exactly at the member token, so the member is the
-    last ``len(name)`` bytes of that range.  The candidate is byte-verified
-    against the original source and rejected when it would consume the whole
-    range, because a member reference always has a prefix.
+    ``data.member`` exposes ``ScopedNameSyntax``, but the typed path does not
+    always reach the member token.  ``data.member[3:0]`` exposes
+    ``syntax = None`` because slang drops the syntax link, and a member access
+    inside a sized cast such as ``(W)'(data.member)`` exposes
+    ``ParenthesizedExpressionSyntax``.  Neither shape offers a typed structure to
+    walk or a select expression to descend, so resolution is two stage: try the
+    typed identifier path first, and when it yields no range -- for any reason,
+    including ``None`` and any unhandled syntax kind -- fall back to the
+    expression's own ``sourceRange``, which still ends exactly at the member
+    token, so the member is the last ``len(name)`` bytes of that range.  The
+    candidate is byte-verified against the original source and rejected when it
+    would consume the whole range, because a member reference always has a
+    prefix.
     """
 
     syntax = _safe_attr(node, "syntax")
-    if syntax is not None:
-        return _syntax_identifier_range(catalog, syntax, expected)
+    typed = _syntax_identifier_range(catalog, syntax, expected)
+    if typed is not None:
+        return typed
     source_range = _safe_attr(node, "sourceRange")
     if source_range is None:
         return None

@@ -264,7 +264,7 @@ class T110BindingFixTests(unittest.TestCase):
                     self._bytes_at(occurrence.source_range), name.encode()
                 )
 
-    # --- T110 2.4: struct member selects and nested same-name members --------
+    # --- T110 2.4 / 12.2: struct member selects, nested members, sized casts --
 
     def test_struct_member_selects_and_nested_same_name_members_bind(self):
         design = self.data["design.sv"]
@@ -310,6 +310,71 @@ class T110BindingFixTests(unittest.TestCase):
                 for occurrence in record.occurrences
             )
         )
+
+    def test_all_member_access_shapes_bind_through_one_path(self):
+        """Bit select, part select, nested member and sized cast, one path.
+
+        Only `data.member` exposes ScopedNameSyntax.  A trailing select drops the
+        syntax link to None and a sized cast replaces it with
+        ParenthesizedExpressionSyntax, so while the end-anchor fallback was gated
+        behind `syntax is None` it never fired on the cast shape.  Every shape
+        must now reach the member token itself, with the same `semantic_member`
+        provenance and the same byte content.
+        """
+
+        design = self.data["design.sv"]
+        shapes = {
+            "bit_select": (design.index(b"word.user[2]") + len("word."), "user"),
+            "part_select": (design.index(b"word.user[7:4]") + len("word."), "user"),
+            "nested_same_name": (
+                design.index(b"word.a.a  = ok_i;") + len("word."),
+                "a",
+            ),
+            "sized_cast_parameter_width": (
+                design.index(b"(CAST_W)'(word.ok)") + len("(CAST_W)'(word."),
+                "ok",
+            ),
+            "sized_cast_literal_width": (
+                design.index(b"(1)'(inner.a)") + len("(1)'(inner."),
+                "a",
+            ),
+        }
+        claims = {
+            (occurrence.source_range.start, occurrence.provenance): symbol
+            for symbol in self.index.symbols
+            for occurrence in symbol.occurrences
+            if occurrence.source_range.file == "design.sv"
+        }
+        for label, (offset, name) in shapes.items():
+            self.assertEqual(
+                design[offset : offset + len(name)], name.encode("utf-8"), label
+            )
+            owner = claims.get((offset, "semantic_member"))
+            self.assertIsNotNone(owner, label)
+            self.assertEqual(owner.category, "struct", label)
+            self.assertEqual(owner.kind, "struct_field", label)
+            self.assertEqual(owner.name, name, label)
+            self.assertEqual(owner.support, "eligible", label)
+            self.assertIsNone(owner.reason, label)
+
+    def test_sized_cast_members_do_not_regress_the_struct_group(self):
+        """The cast shape must not reintroduce the server's struct signature.
+
+        On StCache every residual struct issue was `source_binding_incomplete /
+        FieldSymbol`, and the group transaction turned that into
+        `candidate=541 rename=0 preserve=541`.  The fixture now carries the same
+        shape, so the struct group must stay fully renamed with no issue at all.
+        """
+
+        outcome = self._category_outcome("struct")
+        self.assertGreater(outcome["rename"], 0)
+        self.assertEqual(outcome["preserve"], 0)
+        self.assertEqual(outcome["unsupported"], 0)
+        self.assertEqual(outcome["rename"], outcome["candidate"])
+        self.assertEqual(outcome["issues"], [])
+        for symbol in self._records(category="struct"):
+            self.assertEqual(symbol.support, "eligible", symbol.name)
+            self.assertIsNone(symbol.reason, symbol.name)
 
     # --- T110 2.5: interface instances are preserved explicitly -------------
 

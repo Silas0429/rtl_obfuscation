@@ -31,14 +31,17 @@ typedef struct packed {
     logic       ok;
 } t110_word_t;
 
-// Struct bit select, struct part select and the nested same-name member
-// word.a.a.
+// Struct bit select, struct part select, the nested same-name member word.a.a
+// and a member access inside a sized cast.
 module t110_struct_user (
     input  logic [3:0] tag_i,
     input  logic       ok_i,
     output logic       bit_o,
-    output logic [3:0] part_o
+    output logic [3:0] part_o,
+    output logic [1:0] cast_o,
+    output logic       cast_bit_o
 );
+    localparam int CAST_W = 2;
     t110_word_t  word;
     t110_inner_t inner;
     always_comb begin
@@ -52,6 +55,14 @@ module t110_struct_user (
     end
     assign bit_o  = word.user[2] ^ word.a.a ^ word.ok ^ inner.a;
     assign part_o = word.user[7:4] ^ word.a.b ^ inner.b;
+    // A member access inside a sized cast.  PySlang exposes
+    // ParenthesizedExpressionSyntax on the MemberAccessExpression here, which is
+    // neither ScopedNameSyntax nor None, so the typed path yields nothing and
+    // only the source-range end anchor can bind the member token.  Both a
+    // parameter width and a literal width are covered because both appear in
+    // real designs.
+    assign cast_o     = (CAST_W)'(word.ok);
+    assign cast_bit_o = (1)'(inner.a);
 endmodule
 
 // A modport-qualified ANSI interface port.  A member reference reached through
@@ -118,6 +129,8 @@ module t110_top (
     output logic       out_pos,
     output logic       out_bit,
     output logic [3:0] out_part,
+    output logic [1:0] out_cast,
+    output logic       out_cast_bit,
     output logic       out_if
 );
     t110_if bus0();
@@ -149,7 +162,9 @@ module t110_top (
         .tag_i(in_tag),
         .ok_i(in_a),
         .bit_o(out_bit),
-        .part_o(out_part)
+        .part_o(out_part),
+        .cast_o(out_cast),
+        .cast_bit_o(out_cast_bit)
     );
 
     t110_if_user u_if_user (

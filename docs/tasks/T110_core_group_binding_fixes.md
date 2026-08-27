@@ -80,8 +80,8 @@ ar_fifo_rdat.user[3:0] → MemberAccessExpression.syntax = None
                          sourceRange = [448:465]，正好是 "ar_fifo_rdat.user" 17 字节
 ```
 
-冻结做法：`MemberAccessExpression.syntax` 为 `None` 时，以 `sourceRange` 的**末端**锚定
-`len(member_name)` 个字节，并用既有字节校验确认。校验失败则按既有规则保留，不猜。
+冻结做法（**已被 §12 更正，见下**）：`MemberAccessExpression.syntax` 为 `None` 时，以 `sourceRange`
+的**末端**锚定 `len(member_name)` 个字节，并用既有字节校验确认。校验失败则按既有规则保留，不猜。
 
 ### 2.5 安全性修正：interface 实例必须显式保留
 
@@ -422,3 +422,327 @@ main_local_result: PASS
 server_gate: PENDING —— §8 的 StCache 验收是本任务第二半，未通过前不得设 ACCEPTED
 delivery_note: 为使服务器能 pull 到本次修复，主 Agent 在 server_gate 之前提交并推送。
   这是交付而非验收；沿用 T108 §11.1 的先例，并基于用户本轮给出的全权修改授权。
+
+## 12. 服务器门禁退回与 §2.4 更正（主 Agent，2026-08-27）
+
+服务器在提交 `09d36e0` 上运行第 8 节命令。结果：
+
+```text
+rename=5524  preserve=1560  unsupported=18  modified_tokens=19188
+加密率 0.3704（12706 / 34307 行）
+加密类型数 3：signals, ports, interface   ← struct 缺失
+struct: candidate=541  rename=0  preserve=541  unsupported=0
+struct issues 全部为：
+  message=source_binding_incomplete  semantic_kind=FieldSymbol
+  detail="semantic target has no unique physical typed token"
+```
+
+达成部分：`ports` 与 `interface` 由 0 变为真实改名，超过重构前 ports 单组 2636 的历史基线；
+§2.2 端口标签配对、§2.3 interface port header、§2.1 目标身份三项验证有效；
+`unsupported=18` 与历史 `macro_origin_conflict` 数量一致，属已知逐对象边界。
+
+未达成：`struct` 仍 `rename=0`，§8 通过条件"四组均 rename > 0"不满足。
+
+### 12.1 根因：§2.4 的触发条件被写窄了（主 Agent 的合同错误）
+
+主 Agent 取服务器三个样本的源码上下文，发现全部是**sized cast 内的成员访问**：
+
+```text
+(CREDIT_W)'(comb_rd_data_pre.alloc_en)
+(1)'(cl2waitc_cmd_if.chline_st)
+(IID_W)'(ar_fifo_rdat.id)
+```
+
+本地精确复现后测得：
+
+```text
+ar_fifo_rdat.id            → MemberAccessExpression.syntax = ScopedNameSyntax           现在能 work
+(IID_W)'(ar_fifo_rdat.id)  → MemberAccessExpression.syntax = ParenthesizedExpressionSyntax
+                             sourceRange = [238:253]，覆盖 'ar_fifo_rdat.id'
+                             末端锚定 end-len("id") = 'id'，字节校验通过
+```
+
+sized cast 内的 `syntax` **既不是 `None`，也不是 `_syntax_identifier_range` 能处理的种类**。
+§2.4 把触发条件冻结为"`syntax` 为 `None` 时"，因此 `_member_access_range` 在真实工程里从未被调用。
+末端锚定本身是正确的，被挡在门外的是那个前置条件。
+
+这是主 Agent 的错误，不是子 Agent 的执行问题：子 Agent 严格实现了合同写的条件。
+错误性质与 T108 §14 相同 —— **从单个本地样本推断形状，再把它写成冻结条件**。同类错误已连续两次。
+
+### 12.2 更正后的冻结条件（取代 §2.4 的原措辞）
+
+`MemberAccessExpression` 的 occurrence 解析改为两级，**不以 `syntax is None` 为前提**：
+
+1. 先试既有 typed syntax 路径（`_syntax_identifier_range`）；
+2. 该路径未给出结果时——无论原因是 `syntax` 为 `None`、为 `ParenthesizedExpressionSyntax`、
+   还是任何其他未处理种类——退到 `sourceRange` 末端锚定 `len(member_name)` 字节 + 字节校验；
+3. 既有守卫保持不变：宏位置不做偏移算术、跨 buffer 返回 `None`、
+   `begin <= start.offset` 返回 `None`、字节不匹配返回 `None`。失败仍按既有规则保留，不猜。
+
+同时新增回归 fixture：`struct_field` 出现在 sized cast `(W)'(s.field)` 内，
+并保留既有的 `s.field[bit]` / `s.field[part:select]` / `data.a.a` 覆盖，证明四种形状走同一条路径。
+
+### 12.3 边界不变
+
+§3 的排除项全部维持：不动 `_apply_group_binding_issues`（爆炸半径仍归 T111）、
+不实现层次引用前缀与 `NamedType`、不新增名称搜索或文本扫描。
+本次退回不新建任务，在同一 T110 合同内修正后重跑第 7 节五条门禁与第 8 节服务器门禁。
+
+## 13. §12.2 更正的执行记录（子 Agent，2026-08-27）
+
+```text
+status: READY_FOR_REVIEW
+starting_head: 09d36e0（§11 delivery_note 的交付提交）
+worktree_at_start: 仅 docs/tasks/T110_core_group_binding_fixes.md 被主 Agent 改动（§12 的退回记录）
+tool_form: `conda run -n rtl_obfuscation` 仍报 `__conda_exe: permission denied`，
+  全程改用同一环境的解释器 /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python
+```
+
+### 13.1 改动文件
+
+```text
+M  rtl_obfuscator/rename_index.py            仅 _member_access_range 一处：两级解析
+M  tests/fixtures/t110_binding_fixes/design.sv  新增 sized cast 内的成员访问回归形状
+M  tests/test_t110_binding_fixes.py          新增 2 个用例（14 → 16）
+M  docs/tasks/T110_core_group_binding_fixes.md  本节 + 两处 status
+```
+
+`docs/development/architecture/token_first_binding.md` 未改动。
+
+### 13.2 产品代码改动（唯一一处）
+
+`_member_access_range` 由「`syntax` 非 `None` 就直接返回 typed 结果」改为两级解析，
+**去掉 `syntax is None` 前置条件**：
+
+```text
+-    if syntax is not None:
+-        return _syntax_identifier_range(catalog, syntax, expected)
++    typed = _syntax_identifier_range(catalog, syntax, expected)
++    if typed is not None:
++        return typed
+```
+
+即：先试既有 typed syntax 路径；该路径**未给出结果时**（`syntax` 为 `None`、为
+`ParenthesizedExpressionSyntax`、或任何其他未处理种类）继续走既有的 `sourceRange` 末端锚定。
+函数体其余部分一行未动，四道守卫原样保留：宏位置不做偏移算术、跨 buffer 返回 `None`、
+`begin <= start.offset` 返回 `None`、字节校验不匹配返回 `None`。
+`_syntax_identifier_range` 抛出的 `RENAME_INDEX_RANGE_INVALID` 仍原样上抛（不吞、不退化为猜测），
+由既有 `_safe_occurrence_range` 转成组级 issue 并按既有规则保留。
+docstring 同步更新为记录两种"typed 路径到不了成员 token"的形状。
+
+未改动 `_apply_group_binding_issues`（§3 禁止）；未实现层次引用前缀、`NamedType`、
+`NamedParamAssignment`、`HierarchyInstantiation`；未新增名称搜索、文本扫描或正则。
+
+### 13.3 先在本地复现服务器故障，再修
+
+fixture 新增两处 sized cast 内的成员访问（参数宽度与字面量宽度各一，对应 §12.1 的
+`(CREDIT_W)'(...)` 与 `(1)'(...)` 两个样本），保留既有
+`word.user[2]` / `word.user[7:4]` / `word.a.a` 覆盖：
+
+```systemverilog
+localparam int CAST_W = 2;
+assign cast_o     = (CAST_W)'(word.ok);
+assign cast_bit_o = (1)'(inner.a);
+```
+
+**改产品代码之前**，本地 fixture 复现出与服务器逐字一致的故障：
+
+```text
+struct  candidate=7  rename=0  preserve=7  unsupported=0
+  message=source_binding_incomplete  semantic_kind=FieldSymbol  name=ok  start=2333
+    detail="semantic target has no unique physical typed token"
+  message=source_binding_incomplete  semantic_kind=FieldSymbol  name=a   start=2372
+    detail="semantic target has no unique physical typed token"
+（另有 7 条由组级事务连带产生的 source_binding_incomplete，覆盖该组其余对象）
+```
+
+start=2333 与 2372 正是两处 cast 内的成员 token。这证实 §12.1 的诊断：末端锚定本身没问题，
+被挡在门外的是 `syntax is None` 前置条件。修复后同一 fixture 变为
+`struct candidate=7 rename=7 preserve=0 unsupported=0`，issues 为空。
+
+### 13.4 五种成员访问形状走同一条路径（实测）
+
+```text
+形状                              offset  owner                              provenance
+word.user[2]        (bit select)    1806  struct/struct_field/user           semantic_member
+word.user[7:4]      (part select)   1871  struct/struct_field/user           semantic_member
+word.a.a            (nested outer)  1619  struct/struct_field/a (t110_word_t) semantic_member
+(CAST_W)'(word.ok)  (sized cast)    2338  struct/struct_field/ok             semantic_member
+(1)'(inner.a)       (sized cast)    2378  struct/struct_field/a (t110_inner_t) semantic_member
+```
+
+五处 owner 均 `support=eligible`、`reason=None`，字节内容与成员名逐字相符。
+gate 侧实际改写已核对：
+
+```text
+assign GrwzirwBdasvY1gJtVTL = (CAST_W)'(Se3iwsVXkyk9Zae96YCQ.YiAN_VrMHLxlZXBMRojB);
+assign kPOAJUdN9sdu8gqpgza9 = (1)'(We0b2kHI9QEHL7i07cra.xJAWA9spxj21mn8N7_k7);
+```
+
+`CAST_W` 是 localparam，不在四组范围内，按既有规则保持原文。
+
+### 13.5 新增的 2 个用例
+
+```text
+test_all_member_access_shapes_bind_through_one_path
+  断言上表五种形状全部以 semantic_member 命中成员 token 自身，owner 的
+  category/kind/name/support/reason 逐项校验，并先用字节比较确认 offset 指向的确是该成员名。
+test_sized_cast_members_do_not_regress_the_struct_group
+  断言 struct 组 rename>0、rename==candidate、preserve==0、unsupported==0、issues==[]，
+  且该组每个符号 support=eligible、reason=None——直接对住服务器
+  candidate=541 rename=0 preserve=541 的失败形态。
+```
+
+未放宽、未删除任何既有断言、验证器或 fixture；既有 14 个用例一字未改（仅 §2.4 分节注释
+补上 §12.2 引用）。
+
+### 13.6 四组实测结果（公开 CLI，`--category all`）
+
+```sh
+/Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python rtl_encrypt.py \
+  --filelist tests/fixtures/t110_binding_fixes/design.f --top t110_top \
+  --category all --output-dir <tmp>        # exit 0
+```
+
+```text
+encryption_result=PASS_PARTIAL  strict_compile_passed=true  restored_byte_identical=true
+rename=47 preserve=22 unsupported=0  modified_tokens=187
+occurrence_coverage=1.0  symbol_coverage=1.0  plaintext_leakage_rate=0.0
+mapping.schema_version=2   range_audit: declarations=69 occurrences=168 total_ranges=237
+
+category_outcomes:
+  signals    candidate=13 rename=12 preserve=1  unsupported=0  issues: outside_top_closure
+  ports      candidate=40 rename=22 preserve=18 unsupported=0  issues: outside_top_closure,
+                                                                       selected_top_boundary
+  interface  candidate=9  rename=6  preserve=3  unsupported=0  issues: hierarchical_prefix_unsupported
+  struct     candidate=7  rename=7  preserve=0  unsupported=0  issues: 无
+```
+
+四组均 `rename > 0`；全程无 `source_binding_incomplete`；残留 issue 中不含任何
+`semantic_kind`（`PortSymbol` / `DefinitionSymbol` / `FieldSymbol` 三个服务器 signature 均不出现）；
+preserve 原因只有 §8 允许的 `outside_top_closure` / `selected_top_boundary` /
+`hierarchical_prefix_unsupported`。
+与 §10.3 相比 ports 由 36→40 candidate、signals/interface 不变、struct 由 rename=0 恢复为 7，
+ports 的增量来自 fixture 新增的 4 个端口（`cast_o` / `cast_bit_o` 及其在 `t110_top` 的对偶）。
+
+### 13.7 Formal verification
+
+仍由 `tests.test_t110_binding_fixes.test_actual_gate_formal_positive_and_fixed_functional_negative`
+实际调用 `scripts/formal_equivalence.py`，gate 为真实改名后的 actual gate（用例先断言
+`gate/formal_cone.sv != fixture/formal_cone.sv`）。`yosys` 取自 PATH。
+
+```text
+正例
+gold : tests/fixtures/t110_binding_fixes  （--gold-filelist formal.f --gold-root <fixture>）
+gate : /var/.../t110-formal-wszdmllb/gate （--gate-filelist design.f --gate-root <gate>）
+top  : t110_formal_top     seq: 5
+cmd  : python scripts/formal_equivalence.py --gold-filelist <fixture>/formal.f \
+         --gold-root <fixture> --gate-filelist <gate>/design.f --gate-root <gate> \
+         --top t110_formal_top --seq 5
+exit : 0
+json : {"formal_equivalence": "pass", "gate": "<gate>", "gold": "<fixture>",
+        "seq": 5, "top": "t110_formal_top"}
+
+固定功能负例（在 actual gate 副本上改功能，非改名）
+mutation : formal_cone.sv 内唯一的 `1'b0` → `1'b1`（t110_reorder）
+strict compile : catalog parse/semantic = 0/0，top_overlay parse/semantic = 0/0（编译仍通过）
+exit : 1（非零）
+evidence : 输出含 `unproven` 与 `equiv_status -assert`
+```
+
+formal_freshness: 本轮临时目录 `wszdmllb` 与 §11 记录的 `cki6iuou` 不同，确认真实重跑非缓存。
+T108 正负例在同一次 gate 1 内一并通过（`T108_FORMAL_POSITIVE` exit 0 /
+`T108_FORMAL_NEGATIVE` exit 1），无回归。
+本次 fixture 改动只落在 `design.sv`，`formal.f` 只含 `formal_cone.sv`，故 Formal cone 未受影响。
+
+### 13.8 五条固定验收命令的实际结果
+
+按 §7 顺序执行，逐条读 `OK` / `FAILED (...)` 判决行本身并单独取退出码，
+未用管道 `tail` 掩盖退出码（`conda run` 替换原因见 §13 的 `tool_form`）。
+
+```text
+1  -m unittest tests.test_t110_binding_fixes tests.test_t108_pyslang_rename_index
+     tests.test_t108_public_core_flow tests.test_public_cli tests.test_mapping_vnext
+     tests.test_rewrite_vnext tests.test_orchestration_vnext tests.test_restore_vnext -v
+   → Ran 43 tests in 2.141s / OK        exit 0     （§10.5 为 41，本轮新增 2 个用例）
+2  -m unittest tests.test_binding_coverage -v
+   → Ran 15 tests in 0.180s / OK        exit 0
+3  -m py_compile rtl_obfuscator/rename_index.py tests/test_t110_binding_fixes.py
+   → 无输出                             exit 0
+4  git diff --check HEAD
+   → 无输出                             exit 0
+     首跑曾报 `new blank line at EOF`（本节写入时多留一个空行），删除后复跑为 exit 0；
+     该判决只涉及本任务单的文件尾空白，产品代码与用例未因此改动。
+5  状态守卫 t110_ready_for_review
+   → t110_ready_for_review=pass         exit 0
+```
+
+### 13.9 偏差与未覆盖边界
+
+```text
+deviation: none —— 本次改动完全落在 §4 允许修改的文件内，且严格等于 §12.2 冻结的两级解析。
+  未触碰 _apply_group_binding_issues（§3），未实现 §3 排除的任何类二规则，
+  未新增名称搜索/文本扫描/正则，未放宽或删除任何断言、校验器与 fixture。
+behavior_change_note: 去掉前置条件后，typed 路径返回 None 的 ScopedNameSyntax 也会落到
+  末端锚定。这不是放宽：末端锚定仍做字节校验，只可能返回字节等于成员名的区间，
+  且 begin <= start.offset（无前缀）时拒绝。实测 word.a.a 两层成员各自锚定正确，
+  内层 `a` 不被外层记录抢占（既有断言 test_struct_member_selects_... 继续通过）。
+uncovered_boundary_1: 只覆盖了 sized cast 的两种宽度写法（参数与字面量）。
+  其他"typed 路径到不了成员 token"的语法种类未穷举——但按设计它们全部落到同一条
+  末端锚定 + 字节校验路径，失败则按既有规则逐个保留，不猜。
+uncovered_boundary_2: cast 内再套 select（如 `(W)'(s.f[3:0])`）未加 fixture；
+  该形状的 sourceRange 末端不是成员 token，字节校验会拒绝并逐个保留，属既有安全失败路径。
+uncovered_boundary_3: §10.6 的三条边界不变（非 ANSI if.modport 次要路径、层次引用前缀归 T111、
+  ports 组 selected_top_boundary / outside_top_closure 范围未收缩）。
+server_acceptance: §8 的 StCache 服务器验收未在本沙箱执行（无 ChipPlatform 源与服务器环境），
+  仍属本任务"第二半"，需主 Agent 在服务器上另跑。
+risc_v_vector_formal: 未运行。 blanket_discover: 未使用。
+git: 未 commit、未 push、未自设 ACCEPTED。
+```
+
+## 14. 主 Agent 对 §12.2 更正的独立本地验收
+
+主 Agent 未采信子 Agent 自报结果，独立复跑第 7 节五条门禁并独立审查代码与产物。
+
+```text
+reviewed_at: 2026-08-27（§12.2 更正后）
+main_gate_1: exit 0；Ran 43 tests；OK（读 OK/FAILED 判决行）
+main_gate_2: exit 0；tests.test_binding_coverage Ran 15 tests；OK
+main_gate_3: exit 0；py_compile
+main_gate_4: exit 0；git diff --check HEAD
+main_gate_5: exit 0；t110_ready_for_review=pass
+
+main_formal_positive: exit 0；formal_equivalence=pass；top=t110_formal_top；seq=5
+main_formal_negative: exit 1；evidence "unproven; equiv_status -assert"；mutation 1'b0 -> 1'b1
+main_formal_t108_regression: T108 正负例同样通过，无回归
+formal_freshness: 本轮临时目录 _xrqaw93，与子 Agent 的 2gb8ftlf 及 §11 的 cki6iuou 均不同，
+  确认每次真实重跑；测试文件内无 skipTest/skipUnless/skipIf
+formal_assertion_check: 测试内确有 assertEqual(positive_json["formal_equivalence"], "pass")，
+  非仅打印证据
+
+main_cli_verification（主 Agent 独立跑公开 CLI --category all）:
+  PASS_PARTIAL；strict_compile_passed=true；restored_byte_identical=true
+  rename=47 preserve=22 unsupported=0 modified_tokens=187
+  signals    candidate=13 rename=12 preserve=1  unsupported=0
+  ports      candidate=40 rename=22 preserve=18 unsupported=0
+  interface  candidate=9  rename=6  preserve=3  unsupported=0
+  struct     candidate=7  rename=7  preserve=0  unsupported=0
+  程序化断言"四组均 rename>0 且无 source_binding_incomplete" = True
+main_cast_rewrite_evidence: gate 内确认 sized cast 内的成员已被改写，例如
+  (CAST_W)'(dhMhztiqd_apDXuuN0ez.cVWjLHY91RQuZ7_4EcU6) 与 (1)'(pFm8b64K7U4PyttTvT5G.ZeNYXToiapvOVFQDrzra)
+
+main_code_review:
+  - 改动仅一处：`_member_access_range` 去掉 `if syntax is not None: return ...` 的提前返回，
+    改为先取 typed 结果、为 None 时继续走末端锚定。符合 §12.2。
+  - 四道守卫全部在位：isMacroLoc 拒绝偏移算术、跨 buffer 返回 None、
+    begin <= start.offset 返回 None、字节不匹配返回 None。
+  - `_apply_group_binding_issues` 在 diff 中出现 0 次，§3 边界守住。
+  - 未引入 re./regex/.find(/readlines 等禁止模式。
+  - 子 Agent 自报的行为说明经复核成立：放开前置条件后，typed 路径返回 None 的 ScopedName
+    也会走末端锚定，但锚定有字节校验且拒绝无前缀区间，不构成放宽。
+  - 未覆盖边界（子 Agent 已记录，主 Agent 确认）：cast 内再嵌 select，如 (W)'(s.f[3:0])，
+    其 range 末端不是成员 token，落到既有逐对象安全保留。
+
+main_local_result: PASS
+server_gate: PENDING_RETRY —— 服务器需拉取本次修正后重跑第 8 节命令
+delivery_note: 为使服务器能 pull，主 Agent 在 server_gate 之前提交推送；这是交付而非验收。
