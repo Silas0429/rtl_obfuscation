@@ -8,6 +8,7 @@ parse SystemVerilog text.
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -1508,6 +1509,330 @@ def _apply_group_binding_issues(
     return issues
 
 
+# The four CST declaration shapes that can form a physical design unit.  A unit
+# that never elaborates has no semantic body at all, so its span is dead source.
+_DESIGN_UNIT_SYNTAX_KINDS = frozenset(
+    {
+        "ModuleDeclaration",
+        "InterfaceDeclaration",
+        "PackageDeclaration",
+        "ProgramDeclaration",
+    }
+)
+
+
+def _syntax_nodes(catalog: SourceCatalog) -> list[Any]:
+    """Return every CST node of the compiled source.
+
+    The semantic tree cannot answer where dead source is, because dead source
+    produces no semantic node.  The CST is the only record that those bytes were
+    ever compiled at all, so it is read directly from the same Compilation the
+    semantic view came from; nothing is re-parsed and no text is scanned.
+    """
+
+    try:
+        trees = catalog.catalog_compilation.getSyntaxTrees()
+    except Exception as error:
+        raise RenameIndexError(
+            "RENAME_INDEX_SOURCE_INVALID",
+            "compilation does not expose its syntax trees",
+        ) from error
+    nodes: list[Any] = []
+    for tree in trees:
+        try:
+            tree.root.visit(nodes.append)
+        except Exception as error:
+            raise RenameIndexError(
+                "RENAME_INDEX_SOURCE_INVALID", "syntax tree cannot be walked"
+            ) from error
+    return nodes
+
+
+def _buffer_file(
+    catalog: SourceCatalog, buffer: object, cache: dict[object, str | None]
+) -> str | None:
+    """Resolve one PySlang buffer to a SourceSet-relative file, once per buffer.
+
+    A production design expands to hundreds of thousands of identifier tokens
+    drawn from a few hundred buffers, so resolving the same buffer per token is
+    pure cost.  This is the memo ``scripts/binding_coverage.py`` already keeps for
+    the same walk; it changes no judgement.
+    """
+
+    try:
+        return cache[buffer]
+    except KeyError:
+        pass
+    except TypeError:
+        # An unhashable buffer cannot be memoised; resolve it directly.
+        try:
+            return _file_for_buffer(catalog, buffer)
+        except (AttributeError, TypeError, ValueError):
+            return None
+    value: str | None
+    try:
+        value = _file_for_buffer(catalog, buffer)
+    except (AttributeError, TypeError, ValueError):
+        value = None
+    cache[buffer] = value
+    return value
+
+
+def _resolved_span(
+    catalog: SourceCatalog,
+    source_range: object,
+    cache: dict[object, str | None],
+) -> tuple[str, int, int] | None:
+    """Return one physical ``(file, start, end)`` span for a source range.
+
+    Macro locations are restored through the SourceManager first, exactly as
+    every other range in this module does.  A range that cannot be pinned to one
+    physical file is not a usable region and is reported as absent.
+    """
+
+    if source_range is None:
+        return None
+    try:
+        start_location = _physical_location(catalog, _safe_attr(source_range, "start"))
+        end_location = _physical_location(catalog, _safe_attr(source_range, "end"))
+        if start_location is None or end_location is None:
+            return None
+        file = _buffer_file(catalog, start_location.buffer, cache)
+        if file is None or file != _buffer_file(catalog, end_location.buffer, cache):
+            return None
+        start = int(start_location.offset)
+        end = int(end_location.offset)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return None if end <= start else (file, start, end)
+
+
+def _physical_declaration_key(
+    catalog: SourceCatalog,
+    location: object,
+    cache: dict[object, str | None],
+) -> tuple[str, int] | None:
+    """Identify one declaration by the physical position of its name token."""
+
+    try:
+        physical = _physical_location(catalog, location)
+        if physical is None:
+            return None
+        file = _buffer_file(catalog, physical.buffer, cache)
+        if file is None:
+            return None
+        return (file, int(physical.offset))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _elaborated_unit_keys(
+    catalog: SourceCatalog, nodes: list[Any], cache: dict[object, str | None]
+) -> set[tuple[str, int]]:
+    """Return the name-token keys of the design units PySlang really elaborated.
+
+    ``InstanceBodySymbol`` and ``PackageSymbol`` are the two semantic bodies a
+    physical design unit can produce.  A unit with neither was never elaborated.
+    """
+
+    keys: set[tuple[str, int]] = set()
+    for node in nodes:
+        if type(node).__name__ not in {"InstanceBodySymbol", "PackageSymbol"}:
+            continue
+        target = _safe_attr(node, "definition") or node
+        key = _physical_declaration_key(catalog, _safe_attr(target, "location"), cache)
+        if key is not None:
+            keys.add(key)
+    return keys
+
+
+def _dead_source_regions(
+    catalog: SourceCatalog,
+    nodes: list[Any],
+    syntax_nodes: list[Any],
+    cache: dict[object, str | None],
+) -> tuple[tuple[str, int, int], ...]:
+    """Return the physical source regions PySlang never elaborated.
+
+    Two shapes produce identifiers that no semantic reference can ever reach,
+    and they are the same two ``scripts/binding_coverage.py`` already detects and
+    reports; this is that judgement applied to the rename decision, not a second
+    detector:
+
+    * a design unit that never elaborates, because the only instantiation of it
+      sits in a generate branch that was not taken, so it has no
+      ``InstanceBodySymbol`` at all;
+    * an uninstantiated generate branch inside a unit that *was* elaborated,
+      which PySlang marks with ``GenerateBlockSymbol.isUninstantiated``.
+
+    Both compile without a single diagnostic, which is precisely why strict
+    compilation cannot see them.
+    """
+
+    elaborated = _elaborated_unit_keys(catalog, nodes, cache)
+    regions: list[tuple[str, int, int]] = []
+    for node in syntax_nodes:
+        if type(node).__name__ == "Token":
+            continue
+        if _kind_name(_safe_attr(node, "kind")) not in _DESIGN_UNIT_SYNTAX_KINDS:
+            continue
+        key = _physical_declaration_key(
+            catalog,
+            _safe_attr(_safe_attr(_safe_attr(node, "header"), "name"), "location"),
+            cache,
+        )
+        if key is None or key in elaborated:
+            continue
+        span = _resolved_span(catalog, _safe_attr(node, "sourceRange"), cache)
+        if span is not None:
+            regions.append(span)
+    for node in nodes:
+        if type(node).__name__ != "GenerateBlockSymbol":
+            continue
+        if not _safe_attr(node, "isUninstantiated", False):
+            continue
+        span = _resolved_span(
+            catalog, _safe_attr(_safe_attr(node, "syntax"), "sourceRange"), cache
+        )
+        if span is not None:
+            regions.append(span)
+    return tuple(regions)
+
+
+def _merge_regions(
+    regions: Iterable[tuple[str, int, int]]
+) -> dict[str, tuple[list[int], list[int]]]:
+    """Flatten possibly nested regions into per-file disjoint sorted intervals.
+
+    A dead generate branch can sit inside a dead design unit, so the raw regions
+    nest.  Merging them keeps containment a single ordered lookup while asking
+    the identical question: is this token inside any dead region.
+    """
+
+    by_file: dict[str, list[tuple[int, int]]] = {}
+    for file, start, end in regions:
+        by_file.setdefault(file, []).append((start, end))
+    merged: dict[str, tuple[list[int], list[int]]] = {}
+    for file, spans in by_file.items():
+        starts: list[int] = []
+        ends: list[int] = []
+        for start, end in sorted(spans):
+            if starts and start <= ends[-1]:
+                ends[-1] = max(ends[-1], end)
+                continue
+            starts.append(start)
+            ends.append(end)
+        merged[file] = (starts, ends)
+    return merged
+
+
+def _names_in_dead_source(
+    catalog: SourceCatalog,
+    syntax_nodes: list[Any],
+    regions: tuple[tuple[str, int, int], ...],
+    wanted: frozenset[str],
+    cache: dict[object, str | None],
+) -> frozenset[str]:
+    """Return which of ``wanted`` spellings a dead source region really contains.
+
+    Every candidate is an ``Identifier`` token taken from the CST, restored to
+    its physical location and verified byte for byte against the file before it
+    counts.  ``SystemIdentifier`` (``$clog2``) is a language built-in and never a
+    rename target, so the token kind filter is the same one the rest of this
+    module relies on.
+    """
+
+    merged = _merge_regions(regions)
+    if not merged or not wanted:
+        return frozenset()
+    found: set[str] = set()
+    file_bytes: dict[str, bytes] = {}
+    identifier = pyslang.parsing.TokenKind.Identifier
+    for node in syntax_nodes:
+        if len(found) == len(wanted):
+            break
+        if type(node).__name__ != "Token":
+            continue
+        try:
+            if node.kind != identifier:
+                continue
+            raw = str(node.rawText)
+        except Exception:
+            continue
+        if raw not in wanted or raw in found:
+            continue
+        key = _physical_declaration_key(catalog, _safe_attr(node, "location"), cache)
+        if key is None:
+            continue
+        file, start = key
+        bounds = merged.get(file)
+        if bounds is None:
+            continue
+        starts, ends = bounds
+        index = bisect.bisect_right(starts, start) - 1
+        encoded = raw.encode("utf-8")
+        end = start + len(encoded)
+        if index < 0 or end > ends[index]:
+            continue
+        data = file_bytes.get(file)
+        if data is None:
+            data = _source_bytes(catalog, file)
+            file_bytes[file] = data
+        if not 0 <= start < end <= len(data) or data[start:end] != encoded:
+            continue
+        found.add(raw)
+    return frozenset(found)
+
+
+def _apply_unelaborated_references(
+    catalog: SourceCatalog, nodes: list[Any], records: dict[str, _WorkingSymbol]
+) -> None:
+    """Preserve every record whose spelling also exists in dead source.
+
+    T112 section 14 measured the fail-open this closes.  A module that *is*
+    defined but instantiated only inside an untaken generate branch becomes an
+    ``UninstantiatedDefSymbol``: PySlang binds none of its connection actuals and
+    reports no diagnostic, so those actuals are physically present and
+    semantically invisible.  Renaming the declaration alone leaves the old name
+    written in the gate, where it silently becomes an implicit net and the port
+    it used to reach is left dangling -- 1514 times on one production design,
+    with strict compilation, occurrence coverage and byte-identical restore all
+    reporting success.
+
+    T109 proved the reference itself is unrecoverable: an untaken branch produces
+    no AST node, so PySlang cannot say what those tokens mean.  The rule is
+    therefore detection plus conservative preservation, never rewriting: a dead
+    token spelling ``n`` may even belong to a different symbol also spelled
+    ``n``, which is exactly why a match preserves the record instead of moving
+    it.  Preserving one record too many costs coverage; renaming one reference
+    too few costs correctness.
+
+    The preserve is per record, in the T111 sense: a record whose spelling is
+    absent from dead source stays renameable even when a sibling of the same core
+    group is preserved here.
+    """
+
+    wanted = frozenset(
+        record.name
+        for record in records.values()
+        if record.support == "eligible" and record.name
+    )
+    if not wanted:
+        return
+    buffer_files: dict[object, str | None] = {}
+    syntax_nodes = _syntax_nodes(catalog)
+    regions = _dead_source_regions(catalog, nodes, syntax_nodes, buffer_files)
+    if not regions:
+        return
+    dead = _names_in_dead_source(
+        catalog, syntax_nodes, regions, wanted, buffer_files
+    )
+    for record in records.values():
+        if record.support == "eligible" and record.name in dead:
+            record.support = "preserved"
+            record.reason = "unelaborated_reference"
+
+
 def _collect_occurrences(
     catalog: SourceCatalog,
     nodes: list[Any],
@@ -1921,6 +2246,13 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         source_catalog, nodes, target_map, alias_map, records, binding_issues
     )
     group_issues = _apply_group_binding_issues(records, binding_issues)
+    # Last, and deliberately after every other rule has settled: a record that
+    # is still eligible here is one this run would really rename, so it is the
+    # only set the dead-source check has to ask about.  Running it after
+    # `_apply_group_binding_issues` also keeps that function's per-record
+    # transaction boundary untouched; this preserve reports itself through
+    # `_category_outcomes` like any other stated per-record reason.
+    _apply_unelaborated_references(source_catalog, nodes, records)
     for category, category_issues in binding_issues.items():
         existing = list(range_issues.get(category, ()))
         for issue in category_issues:

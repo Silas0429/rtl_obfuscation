@@ -24,6 +24,17 @@ PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-b
 宏对象本身不加密。宏正文或实参中的 identifier 只有在 PySlang 直接绑定某个选中 RTL symbol 且物理来源
 唯一时才作为该 symbol 的 occurrence；多个 symbol 共享同一物理 token 时报告 `macro_origin_conflict` 并保留。
 
+## 死源码引用保留
+
+未被 elaborate 的源码区域里的 identifier 不产生任何语义引用节点，PySlang 也不为此报任何诊断。
+两种形态属于死源码：只在未选中 generate 分支里被实例化、因而没有任何语义 body 的设计单元；
+以及已 elaborate 单元内 `isUninstantiated` 的 generate 分支。
+
+一个符号的旧名只要在死源码里被写出，就报告 `unelaborated_reference` 并保留该条记录：
+那些 token 物理存在而语义不可见，只改声明会把旧名留在 gate 里变成隐式 net。死源码里拼写相同的
+token 也可能属于另一个同名符号，所以这条规则是保守保留，不做名字猜测式改写。保留逐条生效，
+同组内其他已证明的记录仍然改名。
+
 ## 结果状态
 
 每个核心组在 mapping 的 `category_outcomes` 中按固定顺序输出 `renamed`、`preserved` 或 `empty`，并给出

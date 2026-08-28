@@ -91,6 +91,21 @@ python rtl_decrypt.py \
 `PASS_FULL` 表示本次选中对象全部改名；存在明确边界或安全保留时为 `PASS_PARTIAL`；验证或绑定失败为
 `REFUSED_ATOMIC`，不会发布半成品。
 
+保留记录的 `reason` 说明为什么该对象没有改名。常见值：
+
+| `reason` | 含义 |
+| --- | --- |
+| `selected_top_boundary` | selected top 的 ABI 对象按边界保留 |
+| `outside_top_closure` | 对象不在 selected top 的层次闭包内 |
+| `macro_origin_conflict` | 一个物理 token 被多个符号共享，来源无法唯一确定 |
+| `hierarchical_prefix_unsupported` | 该对象需要层次引用前缀改写，当前不支持 |
+| `source_binding_incomplete` | 该记录缺少完整的声明与引用绑定证据 |
+| `unelaborated_reference` | 旧名还写在未被 elaborate 的源码里，那里的引用语义不可见 |
+
+`unelaborated_reference` 覆盖只在未选中 generate 分支或从未 elaborate 的设计单元里出现的引用。
+那些 token 物理存在但不产生任何语义引用，严格编译也不报错，所以只改声明会把旧名留在加密结果里
+变成隐式 net。工具选择保留该符号：宁可少改，不可改错。
+
 ## 常用参数
 
 | 选项 | 说明 |

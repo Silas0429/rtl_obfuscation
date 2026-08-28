@@ -84,6 +84,32 @@ endmodule
 这正是本节 §2 判据要买的那份安全：未归属 token 存在时不得改名。
 在实现该判据之前，`NamedType` 成员类型引用是一个 fail-open 面，需单独立项。
 
+### 2.2 T113 已交付：死源码里的引用一律保留
+
+T112 §14 在服务器上量到了同一个 fail-open 的另一面，而且它更危险：**编译器完全看不见**。
+模块**有定义**但只在**未选中 generate 分支**里被实例化时，PySlang 建
+`UninstantiatedDefSymbol`，**不绑定任何连接实参**，且 `semantic_errors=0`。
+于是声明被改名、死分支里的实参留旧名，gate 严格编译通过，旧名变成隐式 net，
+端口悬空 —— StCache 上 1514 处，而 `occurrence_coverage=1.0`、
+`renamed_range_bytes.mismatched=0`、`restored_byte_identical=true` 全部为真。
+
+T109 已证明这些 token **不可能**被绑定：未选中分支不产生任何 AST 节点，PySlang 无法说出
+它们指向谁。因此 T113 的做法是**识别其存在并保守保留**，不是绑定：
+
+| 死源码形态 | 判定 |
+| --- | --- |
+| 设计单元从未 elaborate | CST 的设计单元声明跨度中，名字 token 不在任何 `InstanceBodySymbol`/`PackageSymbol` 的声明位置集合里 |
+| 已 elaborate 单元内含未选中分支 | `GenerateBlockSymbol.isUninstantiated == True`，取 `syntax.sourceRange` |
+
+这与 `scripts/binding_coverage.py` 已验证的两种死区检测是**同一判定**，不是第二套探测器。
+死区内的 identifier token 经 `getFullyOriginalLoc` 还原并逐字节校验后枚举；
+旧名一旦出现，该记录报 `unelaborated_reference` 并保留。
+
+必须承认这条规则**不做名字猜测**：死区 token 无语义引用，所以无法证明它确实指向该符号，
+同名的另一个符号也可能。所以它保留而不改写 —— 与 §2 的按名字完整性判据同向，
+但仍不是那条判据的完整实现。保留逐条生效，`_apply_group_binding_issues` 的
+T111 边界未被触碰。
+
 ## 3. 两类 occurrence，只有一类曾是无穷的
 
 | 类别 | 定义 | 数量级 | 处理方式 |
@@ -387,6 +413,18 @@ T111 的服务器数据满足该条件，且 `occurrence_coverage=1.0`、`plaint
 
 上线判据必须叠加 `gate_rename_audit` 的 `verdict=clean`。修复归
 [`T113`](../../tasks/T113_unelaborated_reference.md)。
+
+#### 8.2.1 该审计器有一个偏保守的假报模式（T113 验收时发现）
+
+`gate_rename_audit.py` 翻译 gold 隐式 net 用的 `rename_map` 是**全局 `旧名 → 新名` 字典**，
+而同一拼写在不同作用域会被改成不同新名。本地 RISC-V-Vector 上实测
+**206 个旧名被改成多于一个新名**（`i` 有 27 个、`clk` 有 15 个）。字典只留最后一个，
+于是 gold 的隐式 net 被翻译成错误的新名，报出假 `gate_only`。
+
+方向是**偏保守**的：产生假 `suspect`，不会产生假 `clean`，所以它从未放行过错误的 gate，
+§8 在 StCache 上的结论不受影响（那 1514 条全是旧名）。判读服务器结果的规则因此是：
+`gate_only_detail` 里若是**旧名**，是真漏改；若是**新混淆名**，是本条缺陷。
+修复归 T114，详见 [`T113 §13`](../../tasks/T113_unelaborated_reference.md)。
 
 ### 8.3 这也印证了 §2 的完整性判据
 
