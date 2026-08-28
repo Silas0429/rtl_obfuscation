@@ -475,3 +475,18 @@ ports   stsram_rdat  (StChReqTagRw) StChReqTagRw.sv:6254 / 18383 / 19400
 
 `gate_only == 0` 排除了"变成未声明标识符"这条路径，但排除不了意外捕获。
 **因此这四条需要看源码确认，结论待补。** 不因 `verdict=clean` 而跳过。
+
+判读过程中发现一处审计器缺陷，先记录（属 T112/T114 的只读工具，不属本任务）：
+
+`gate_rename_audit.py` 的 `residual_old_names` 明细里 `shadowed_by_other_declaration`
+取自 `_View.declared_names()`，而后者用 `self._root_symbol.visit(...)`——**语义根遍历**。
+T115 §2.3 已实测该遍历**到不了聚合成员 `FieldSymbol`**（这正是本任务必须写
+`_aggregate_field_symbols` 沿 `canonicalType`/`elementType` 递归的原因）。
+
+后果：**对 struct 字段，`shadowed_by_other_declaration` 会假报 `False`**——
+另一个 typedef 里同名的字段声明它看不见，于是即使存在合法的同名声明也报 `False`。
+方向是**让人以为更可疑**，不会掩盖真问题，所以不影响 `verdict`（该字段本就是报告项）；
+但它会误导人工判读，本轮就差点让主 Agent 排除掉正确的解释。
+
+修复方向：`declared_names()` 应复用 T115 的 `_aggregate_field_symbols` 同一判定，
+不得新写第二套。归后续任务；`verdict` 口径不受影响，不阻塞演示。
