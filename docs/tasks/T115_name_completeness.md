@@ -498,8 +498,51 @@ ports   stsram_rdat  (StChReqTagRw) StChReqTagRw.sv:6254 / 18383 / 19400
 漏改的引用绑定到了外层同名符号，因此不产生隐式 net、编译也干净
 （`token_first_binding.md` §6.3 记录的正是这一形态，T112 §2.2 为此把该检查降级为报告项）。
 
-`gate_only == 0` 排除了"变成未声明标识符"这条路径，但排除不了意外捕获。
-**因此这四条需要看源码确认，结论待补。** 不因 `verdict=clean` 而跳过。
+`gate_only == 0` 排除了"变成未声明标识符"这条路径，但排除不了意外捕获，
+所以逐条看了 gate 源码。**结论：四条全部无害，无意外捕获。**
+
+判读时踩过一个坑，记下来：`residual_old_names` 的 `start` 是 **gate 侧偏移**
+（`build_report` 里遍历的是 `gate.identifier_tokens()`），主 Agent первый次指向 `$PROJ`
+原始源码去探，四处 `matches=False`，差点误判为审计器有问题。
+明细字段没有像 `implicit_nets` 那样标明 gold/gate 归属，见 §13.4。
+
+指向 gate 后四处 `matches=True`，逐条如下：
+
+```text
+StChCommon.sv:299    logic[4:0]       rsp_cmd_ptr;              全文整词出现 1 次
+StChReqTagRw.sv:133  stsram_dat_t     stsram_rdat;              全文整词出现 3 次
+StChReqTagRw.sv:375  <struct>[fifo_wr_ptr].stsram_rdat <= PBX9LIJy7kAHDtgMePrj;
+StChReqTagRw.sv:396  <struct>[fifo_rd_ptr].stsram_rdat;
+```
+
+- **第 1 条**是另一个 struct 字段的**声明**。gold 中 `rsp_cmd_ptr` 整词出现 2 次、
+  gate 中 1 次：一条记录被改名，这一条是**另一个同名字段**且未被改名
+  （不在 top closure 或另有保留原因），合法保留其拼写。
+- **第 2 条**是 typedef `inf_ramrdata` 的**字段声明** `stsram_rdat`，
+  而被改名的记录是 `StChReqTagRw` 的**端口** `stsram_rdat`。字段与端口同名、不同符号。
+- **第 3、4 条**是对该字段的**成员访问** `.stsram_rdat`，指向字段而非端口。
+
+**第 3 条是正面证明，不只是"没出错"**：同一行上 `.stsram_rdat`（字段，未改名）
+与 `PBX9LIJy7kAHDtgMePrj`（端口，已改名）并存，说明产品把两个同名符号正确区分开了——
+这正是 T110 成员访问绑定与 `mismatched=0` 所保证的那件事在真实工程上的体现。
+上一行 `assign tgrw2getc_stsram_rdat = ...` 也印证了审计器的整词匹配：
+`tgrw2getc_stsram_rdat` 是另一个更长的标识符，未被误命中。
+
+因此 StCache 的 `verdict=clean` **完整成立**，无待判读项。
+
+### 13.4 `shadowed_by_other_declaration` 的假报已由本轮实测确认
+
+上文那条"审计器 `declared_names()` 到不了 `FieldSymbol`、因此对 struct 字段假报 `False`"
+原为**推断**，本轮四条实测将其确认为**事实**：四条全部报 `shadowed=False`，
+而实际上每一条都存在合法的同名声明（两条本身就是字段声明，两条是对字段的成员访问）。
+`declared_names()` 走 `self._root_symbol.visit(...)`，看不见聚合成员，所以 100% 假报。
+
+方向仍是"让人以为更可疑"，不影响 `verdict`；但四条里四条都假报，
+说明这个字段在有 struct 的设计上基本不可用，修复优先级应高于原先判断。
+修复方式：复用 T115 的 `_aggregate_field_symbols`，不新写第二套。
+
+同时应修 `residual_old_names` 明细的可判读性：`start` 未标明是 gate 侧偏移，
+本轮已实际造成一次误判和一次多余的服务器往返。两项一并归后续任务。
 
 判读过程中发现一处审计器缺陷，先记录（属 T112/T114 的只读工具，不属本任务）：
 
