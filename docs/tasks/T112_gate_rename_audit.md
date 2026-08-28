@@ -1,6 +1,6 @@
 # T112：上线前的 gate 漏改引用检查（只读）
 
-- 状态：`READY_FOR_REVIEW`
+- 状态：`ACCEPTED`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`4926831`（T111 已 `ACCEPTED`）
 - 任务类型：只读验证工具 + 确定性测试；**不修改产品代码**
@@ -185,7 +185,7 @@ reason: this task produces no rewritten RTL; the auditor is read-only and emits
 ## 11. 执行记录
 
 ```text
-status: READY_FOR_REVIEW
+status: ACCEPTED
 starting_head: 4926831
 ```
 
@@ -280,3 +280,84 @@ server_gate: PENDING —— §9 的上线门禁需在 StCache gate 上运行
 本地用 StCache 的真实布局验证：深埋的 `aic_ss/src/stcache/StCache.f` 正确推导出
 `ChipPlatform`，且断言"filelist 自身目录是错误答案"。新增 4 条测试
 （`GoldRootDerivationTest`），测试总数 6 → 10。
+
+## 14. 服务器上线门禁结果：`suspect`，禁止上线（2026-08-27）
+
+在 T111 已验证的 gate（`stcache_all_t111_001`）上运行 §9 命令：
+
+```text
+gold /home/lufengchi/workspace/ChipPlatform   source units 154
+renamed records 5931（3347 个不同旧名）
+compile: gold 0/0   gate 0/0          ← 严格编译两侧都干净
+renamed_range_bytes: checked 21922  leaked 0  misplaced 0  mismatched 0
+implicit_nets: gold 17  gate 1526  gate_only 1514
+residual_old_names: 5450（报告项）
+VERDICT: suspect      exit 1
+```
+
+**禁止上线。**审计抓到真实缺陷，正是它被造出来要防的那一类。
+
+### 14.1 为什么这不是误报
+
+三条同时成立只有一个解释：`mismatched=0` 说明计划的编辑全部正确落地；
+`gate` 严格编译 0/0 说明编译器查不出问题；而 `gate_only=1514` 说明 gate 里
+多出 1514 个隐式 net，其名字全是 `AR_CACHE_CFG0_Ctrl_q` / `_qs` / `_wd` / `_we` / `_addrhit`
+这类**生成式 CSR 旧名**，不是随机新名。
+
+即：工具正确改了声明，但某些引用从未被识别，gate 里那些引用仍是旧名 → 未声明 → 隐式 wire。
+
+逐名验证 `AR_CACHE_CFG0_Ctrl_q`：
+
+```text
+gold 2 处：  output logic [2:0]  AR_CACHE_CFG0_Ctrl_q,   ← 端口声明（已改名）
+             .q  (AR_CACHE_CFG0_Ctrl_q),                  ← 连接实参（未改名）
+gate 1 处：  .q  (AR_CACHE_CFG0_Ctrl_q),                  ← 残留
+```
+
+该输出端口在 gate 中已悬空。功能确实错误。
+
+### 14.2 根因：死 generate 分支内的连接实参不产生任何引用节点
+
+主 Agent 并排实测三种实例化情形：
+
+| 情形 | errors | `UninstantiatedDefSymbol` | 实参的 AST 引用数 |
+| --- | --- | --- | --- |
+| A 模块有定义、实例化在活代码 | 无 | 0 | **1**（正常绑定） |
+| B 模块无定义（真黑盒） | `UnknownModule`（error） | 1 | **0** |
+| **C 模块有定义、实例化在未选中 generate 分支** | **无** | **1** | **0** |
+
+情形 C 与 StCache 完全吻合：编译干净（`semantic_errors=0`）、
+`UninstantiatedDefSymbol` 非零（StCache 为 357）、连接实参不可见。
+情形 B 会报 error，故 StCache 不是它。
+
+再模拟 gate 状态确认闭环——声明已改名、死分支实参留旧名：
+
+```text
+errors = []            ← 严格编译查不出来
+隐式 net = ['CFG_q']    ← 旧名以隐式 wire 出现
+```
+
+这就是 1514 个 gate-only 隐式 net 的完整机制。
+
+### 14.3 这暴露了一个必须写进判据的结论
+
+**"四组均 rename > 0 且无未解释 preserve 原因" 不足以作为上线判据。**
+
+T111 的服务器数据满足了那个条件，`occurrence_coverage=1.0`、
+`plaintext_leakage_rate=0.0`、`restored_byte_identical=true`、`strict_compile_passed=true`
+全部为真，而 gate 仍然功能错误。原因是这些指标都只覆盖**工具已识别的** occurrence，
+对"从未识别"无能为力。
+
+上线判据必须叠加本审计：`verdict=clean`。
+
+### 14.4 T112 自身的验收结论
+
+审计器**按设计工作**：在真实工程上首次运行即发现了既有指标全部漏掉的功能性缺陷，
+且两项检查表现符合预期——`renamed_range_bytes` 证明落盘无误（`mismatched=0`），
+`implicit_nets` 差分定位到 1514 处漏改。`residual_old_names` 作为报告项也验证了
+降级决定正确：5450 条中混有大量合法项（如 `.clk` 标签指向子模块端口），
+若当初作为门禁会淹没真正的信号。
+
+`main_result: ACCEPTED`（审计器本身）
+`ship_decision: BLOCKED` —— 修复归 T113，修复后必须重新加密并重跑本审计
+

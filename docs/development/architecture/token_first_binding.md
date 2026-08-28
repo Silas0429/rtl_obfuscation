@@ -1,6 +1,6 @@
 # Token-first 绑定:方向倒置的论证与覆盖率测量
 
-- 文档状态：`SERVER_VALIDATED_BLAST_RADIUS_IS_DOMINANT`
+- 文档状态：`SERVER_AUDIT_FOUND_FAIL_OPEN_SHIP_BLOCKED`
 - 记录日期：2026-08-27
 - 起因：StCache（`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`）在提交 `c3cf87a` 上
   `ports/interface/struct` 三组 `rename=0`
@@ -345,3 +345,52 @@ NetSymbol name='old_signal_name' isImplicit=True  ← 隐式 net 被明确暴露
 
 意外捕获（内层符号改名后漏改的引用绑定到外层同名符号）不产生隐式 net，
 故 T112 另加"残留旧名的作用域检查"覆盖该情形。
+
+## 8. 服务器审计推翻了"编译通过即正确"（2026-08-27，决定性）
+
+T112 的只读审计在 StCache 上首次运行即判定 `suspect`：
+
+```text
+compile: gold 0/0  gate 0/0                  ← 严格编译两侧干净
+renamed_range_bytes: 21922 检查  mismatched 0  ← 计划的编辑全部落地
+implicit_nets: gold 17  gate 1526  gate_only 1514  ← gate 多出 1514 个隐式 net
+```
+
+泄漏名全是生成式 CSR 旧名。逐名验证 `AR_CACHE_CFG0_Ctrl_q`：gold 2 处（端口声明 + 连接实参），
+gate 残留 1 处（实参）。**声明改了、实参没改，该输出端口在 gate 中悬空。**
+
+### 8.1 根因：死 generate 分支内的连接实参不产生引用节点
+
+并排实测：
+
+| 情形 | errors | `UninstantiatedDefSymbol` | 实参 AST 引用数 |
+| --- | --- | --- | --- |
+| A 有定义、活代码 | 无 | 0 | **1** |
+| B 无定义（真黑盒） | `UnknownModule`（error） | 1 | **0** |
+| **C 有定义、死 generate 分支** | **无** | **1** | **0** |
+
+StCache 是情形 C（`semantic_errors=0` 且 `UninstantiatedDefSymbol=357`）。
+gate 状态复现确认：声明改名 + 死分支实参留旧名 → `errors=[]`、隐式 net 出现旧名。
+
+### 8.2 必须写进判据的结论
+
+**"四组均 rename > 0 且无未解释 preserve 原因" 不足以作为上线判据。**
+
+T111 的服务器数据满足该条件，且 `occurrence_coverage=1.0`、`plaintext_leakage_rate=0.0`、
+`restored_byte_identical=true`、`strict_compile_passed=true` 全部为真，而 gate 仍功能错误。
+原因是这些指标**只覆盖工具已识别的 occurrence**，对"从未识别"无能为力：
+
+- `plaintext_leakage_rate` 遍历 `execution.edits`，即工具自己的计划；
+- `occurrence_coverage` 是已识别 occurrence 的覆盖率；
+- `restored_byte_identical` 在漏改处原文件与 gate 同为旧名，反向映射照样复原；
+- `strict_compile` 被 SystemVerilog 的隐式 net 规则吸收。
+
+上线判据必须叠加 `gate_rename_audit` 的 `verdict=clean`。修复归
+[`T113`](../../tasks/T113_unelaborated_reference.md)。
+
+### 8.3 这也印证了 §2 的完整性判据
+
+§2 提出的逐符号完整性判据（"存在未归属的同名 token 时不得改名"）正是这个缺陷的通用解。
+T113 采用的是它在死源码这一子情形上的保守实现：识别死区内的同名 token 即保留该符号，
+不试图绑定它们——因为 T109 已证明死源码里的 token 不可能有语义引用。
+
