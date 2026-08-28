@@ -467,6 +467,20 @@ def _read_filelist(
                 visit(child, next_active)
                 continue
 
+            library_source = bool(tokens and tokens[0] == "-v")
+            if library_source:
+                if len(tokens) != 2:
+                    if len(tokens) == 1:
+                        raise SourceSetError(
+                            "SOURCESET_INVALID_ARGUMENT",
+                            "-v requires a source path on the same line",
+                            text,
+                        )
+                    _raise_unsupported_filelist_directive(text)
+                entry = tokens[1]
+            else:
+                entry = tokens[0] if tokens else text
+
             context = _parse_filelist_context_directive(
                 root=root,
                 text=text,
@@ -482,15 +496,23 @@ def _read_filelist(
                 defines.extend(directive_defines)
                 continue
 
-            if text.startswith(("+", "-")) or len(tokens) != 1:
+            if not library_source and (
+                text.startswith(("+", "-")) or len(tokens) != 1
+            ):
                 _raise_unsupported_filelist_directive(text)
 
             relative = _normalize_filelist_entry(
                 root=root,
-                text=tokens[0],
+                text=entry,
                 environment=environment_snapshot,
                 base=canonical.parent if relative_entries_to_filelist else None,
             )
+            if library_source and not is_source_file(relative):
+                raise SourceSetError(
+                    "SOURCESET_UNSUPPORTED_FILE",
+                    "-v source unit must use the .sv or .v suffix",
+                    relative,
+                )
             if relative in seen:
                 raise SourceSetError(
                     "SOURCESET_DUPLICATE_FILE",
@@ -500,7 +522,7 @@ def _read_filelist(
             seen.add(relative)
             absolute, _ = _resolve_filelist_path(
                 root=root,
-                text=tokens[0],
+                text=entry,
                 environment=environment_snapshot,
                 label="filelist entry",
                 base=canonical.parent if relative_entries_to_filelist else None,

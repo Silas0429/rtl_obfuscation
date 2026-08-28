@@ -268,9 +268,12 @@ def _cli_vnext_filelist_origin(
                 continue
             tokens = text.split()
             nested = tokens[0] == "-f" and len(tokens) == 2
-            if not nested and (len(tokens) != 1 or text.startswith(("+", "-"))):
+            library_source = tokens[0] == "-v" and len(tokens) == 2
+            if not nested and not library_source and (
+                len(tokens) != 1 or text.startswith(("+", "-"))
+            ):
                 continue
-            entry = tokens[1] if nested else tokens[0]
+            entry = tokens[1] if nested or library_source else tokens[0]
             resolved: list[Path] = []
             for base in (canonical.parent, source_root):
                 if base is None:

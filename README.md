@@ -71,10 +71,11 @@ python rtl_encrypt.py \
 `--category` 必须显式提供，可重复使用，允许值只有：
 `signals`、`ports`、`interface`、`struct`、`all`。`all` 按固定顺序展开为四个核心组。
 
-filelist 中的 `.sv/.v` 是 source unit；被 include 的 `.svh/.vh` 和显式列出的 `.h` 是只读上下文，
-不会成为宏 rename target。`-f` 嵌套 filelist、`+incdir+`、`+define+`、`$NAME` 和 `${NAME}`
-按出现顺序处理。filelist 模式禁止同时提供 `--source-root`；源码根目录由 filelist 和 include
-路径自动推导。
+filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
+unit，当前语义与同位置的裸 `PATH` 相同，不提供仿真器的惰性 library search。被 include 的
+`.svh/.vh` 和显式列出的 `.h` 是只读上下文，不会成为宏 rename target。`-f` 嵌套 filelist、
+`+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
+`--source-root`；源码根目录由 filelist 和 include 路径自动推导。
 
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
@@ -83,7 +84,7 @@ filelist 中的 `.sv/.v` 是 source unit；被 include 的 `.svh/.vh` 和显式�
 ### 需要补依赖时用包装 filelist，原始 filelist 一行不动
 
 原始 filelist 缺少若干必需文件时不必修改它：新建一个包装 filelist，用 `-f` 引用原始文件再补上
-缺的条目即可。`-f` 递归、`+incdir+`、`+define+`、`$NAME`/`${NAME}` 和 `//` 注释都已支持。
+缺的条目即可。`-f` 递归、`-v PATH`、`+incdir+`、`+define+`、`$NAME`/`${NAME}` 和 `//` 注释都已支持。
 
 ```sh
 cat > "$PROJ/wrapper.f" <<'EOF'
