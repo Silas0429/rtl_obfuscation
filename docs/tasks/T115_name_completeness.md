@@ -410,3 +410,68 @@ StCache 是 154 文件、61659 token，约 8 倍规模，因此预期在几十�
 
 `main_result: ACCEPTED`（判据本身与其验证均成立）
 `ship_decision: 服务器门禁（第 10 节）未跑，上线仍阻塞`
+
+## 13. 服务器门禁结果：`clean`（2026-08-28，决定性）
+
+第 10 节两步门禁在真实 StCache 上实测（经包装 filelist `StCache_encrypt.f`，
+原始 filelist 未改动；154 source units、7 个 included header）：
+
+```text
+加密侧
+  用时 107.478s（读 filelist 2.804s、编译与 elaborate 4.640s、
+                 构建改名索引 57.044s、生成映射 3.514s、写出 5.351s、回填校验 0.608s）
+  总代码行数 34307   实际加密行数 7640   加密率 22.27%
+  总文件数 154       加密文件数 71       文件覆盖率 46.10%
+  rename 2930  preserve 4154  unsupported 18  实际修改对象数 2930
+
+审计侧
+  compile: gold 0/0  gate 0/0
+  implicit_nets: gold 17  gate 17  gate_only 0
+  gold_fallback_to_old_name 8
+  renamed_range_bytes: checked 10898  leaked 0  misplaced 0  mismatched 0
+  residual_old_names 4（报告项）
+  VERDICT: clean      exit 0
+```
+
+**判据全部满足**：`gate_only == 0`、`mismatched == 0`、`verdict=clean`。
+`gold 17 / gate 17` 表明 gold 自带的 17 个隐式 net 一一对应保留，
+与 `gold_fallback_to_old_name = 8`（这 8 个未被改名，故按旧名期望）自洽。
+
+### 13.1 与前两轮的对比
+
+| 轮次 | rename | `gate_only` | `residual_old_names` | verdict |
+| --- | --- | --- | --- | --- |
+| T111 | 5931 | 1514 | 5450 | suspect |
+| T113 | 4728 | 1324 | 3481 | suspect |
+| **T115** | **2930** | **0** | **4** | **clean** |
+
+代价与收益都由数据给出：rename 由 5931 降到 2930（-51%），
+换来 1514 处功能错误归零。这正是 §1 声明的交换，方向由用户确认。
+
+T109 曾预测 StCache 的 `renameable_name_ratio = 1035/3637 = 28.46%`；
+实测按记录数是 2930/7102 = 41.3%，按行数是 22.27%。
+两者口径不同（名字比 vs 记录比 vs 行比），不能直接互相印证，此处如实并列，不做等价宣称。
+
+### 13.2 §2.4 性能实测
+
+构建改名索引 **57.044s**，是六个阶段中的主导项（总 107s）。
+低于 §2.4 设定的 60 秒判断线，但已接近。该开销来自全 token 枚举与三源归属，
+是判据本身的成本，不属于可优化掉的浪费；若未来成为瓶颈，
+优化方向是按名字集合剪枝 token 遍历，而不是收窄分母（§2.3 禁止）。
+
+### 13.3 唯一仍需人工判读的一项
+
+`residual_old_names` 由 3481 降到 4，已小到可逐条判读。四条全部 `shadowed=False`：
+
+```text
+struct  rsp_cmd_ptr  ($unit)        StChCommon.sv:10939
+ports   stsram_rdat  (StChReqTagRw) StChReqTagRw.sv:6254 / 18383 / 19400
+```
+
+这两个符号**被改名了**，而旧拼写仍在同文件出现。两种可能：
+同名的另一个符号合法地占用该拼写（无害），或"意外捕获"——
+漏改的引用绑定到了外层同名符号，因此不产生隐式 net、编译也干净
+（`token_first_binding.md` §6.3 记录的正是这一形态，T112 §2.2 为此把该检查降级为报告项）。
+
+`gate_only == 0` 排除了"变成未声明标识符"这条路径，但排除不了意外捕获。
+**因此这四条需要看源码确认，结论待补。** 不因 `verdict=clean` 而跳过。

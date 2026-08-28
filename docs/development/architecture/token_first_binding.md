@@ -1,6 +1,11 @@
 # Token-first 绑定:方向倒置的论证与覆盖率测量
 
-- 文档状态：`SERVER_AUDIT_FOUND_FAIL_OPEN_SHIP_BLOCKED`
+- 文档状态：`SERVER_AUDIT_CLEAN_ON_STCACHE`（2026-08-28）
+- 结论：§2 的逐符号完整性判据经 T115 进入产品后，StCache 的
+  `gate_rename_audit` 首次判定 `clean`——`implicit_nets.gate_only` 由 1514 降为 **0**，
+  `residual_old_names` 由 5450 降为 **4**。代价是 `rename` 由 5931 降为 2930。
+  详见 [`T115 §13`](../../tasks/T115_name_completeness.md)。
+  仍未闭合的一项：那 4 条 residual 需人工判读是否为"意外捕获"（§6.3 形态）
 - 记录日期：2026-08-27
 - 起因：StCache（`ChipPlatform/aic_ss/src/stcache/StCache.f`，top `StChCore`）在提交 `c3cf87a` 上
   `ports/interface/struct` 三组 `rename=0`
