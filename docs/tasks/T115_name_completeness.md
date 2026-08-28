@@ -437,6 +437,31 @@ StCache 是 154 文件、61659 token，约 8 倍规模，因此预期在几十�
 `gold 17 / gate 17` 表明 gold 自带的 17 个隐式 net 一一对应保留，
 与 `gold_fallback_to_old_name = 8`（这 8 个未被改名，故按旧名期望）自洽。
 
+### 13.0 第二次运行逐项复现（确定性证据）
+
+同一命令换输出目录重跑一次（`stcache_demo` → `stcache_demo2`），
+新混淆名不同（`rsp_cmd_ptr` 第一次 `MWgdqERjW_u77N0S6B9M`、第二次 `jH33o8SQVxWYoHP80qho`），
+而下列每一项完全相同：
+
+```text
+rename 2930  preserve 4154  unsupported 18   实际修改对象数 2930
+总代码行数 34307  实际加密行数 7640  加密率 22.27%
+总文件数 154  加密文件数 71  文件覆盖率 46.10%
+implicit_nets: gold 17  gate 17  gate_only 0   gold_fallback_to_old_name 8
+renamed_range_bytes: checked 10898  mismatched 0
+residual_old_names 4，且四处 file/start 完全一致
+  （10939 / 6254 / 18383 / 19400）
+VERDICT: clean
+```
+
+这条复现有独立价值：§12.2 记录的 `id()` 复用缺陷曾让改名决策依赖分配历史，
+在本地表现为 1/5 的间歇。**真实工程上连续两次逐项一致，是该修复在生产规模上的确认**，
+不只是本地 40 次重复的推断。偏移量一致也说明新名长度固定为 20，
+gate 的字节布局不随随机名变化。
+
+用时两次分别为 107.478s 与 120.213s（构建改名索引 57.044s / 58.650s），
+差异来自机器负载，不来自判定。
+
 ### 13.1 与前两轮的对比
 
 | 轮次 | rename | `gate_only` | `residual_old_names` | verdict |
