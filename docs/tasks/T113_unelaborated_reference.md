@@ -476,3 +476,42 @@ RISC-V-Vector 上实测 **206 个旧名被改成多于一个新名**（`i` 有 2
 若是**新混淆名**，是本节的审计器缺陷。
 
 修复归 T114，本任务第 5 节不允许改 `scripts/gate_rename_audit.py`，故不在此处顺手改。
+
+## 14. 服务器结果：部分生效，但门禁仍 `suspect`（2026-08-28）
+
+第 9 节两步门禁实测：
+
+```text
+加密侧: rename 4728  preserve 2356  unsupported 18
+        strict_compile_passed=true  restored_byte_identical=true
+        （T111 基线为 rename 5931；本次下降 1203，即判据生效）
+审计侧: renamed_range_bytes: checked 15078  mismatched 0
+        implicit_nets: gold 17  gate 1341  gate_only 1324
+        gold_fallback_to_old_name 6（mask_n / cnt_upd_* / tagram_ena，均在其他文件）
+        residual_old_names 3481（报告项）
+        VERDICT: suspect
+```
+
+`gate_only` 从 1514 降到 1324——**T113 消掉了 190 条，但没有覆盖主体**。
+剩余 1324 条全在 `aic_ss/src/stcache/src/Csr/csr_behvr.sv`，全是旧名。
+
+已排除的两种解释：
+
+- **不是 T114 的假报**：命中全是旧名；`gold_fallback_to_old_name` 仅 6 条且在别的文件。
+- **不是真黑盒**：`UnknownModule` 未被抑制（进 `semantic_errors`），
+  且 `expand_hierarchy` 会把缺失模块的文件拉进闭包，真找不到则以 `UNRESOLVED_MODULE` 硬失败；
+  StCache `semantic_errors=0`。
+
+形态线索（来自 `residual_old_names` 的偏移量）：`reg_we` 4044/4055、`reg_re` 4093/4104、
+`reg_wdata` 4191/4202、`reg_wstrb` 4240/4251——**相距 11 字节的成对出现**，
+即 `.reg_we    (reg_we)` 这种对齐排版的具名端口连接，标签与实参都留旧名，
+而该信号在 `csr_behvr` 内的声明已改名。
+
+**主 Agent 的判断：不再定性这第三种形态。** 连续三轮"发现形状 → 加一条兼容"
+（T110 三个形状、T113 死源码、本次又一种）已经证明该路径不收敛。
+改为实现 `token_first_binding.md` §2 的逐符号完整性判据，见
+[`T115`](T115_name_completeness.md)。该判据与形状无关，一次覆盖全部已知与未知形状。
+
+T113 本身的结论不变：它修的机制真实存在，本地 RISC-V-Vector 上
+`verdict` 由 `suspect` 转 `clean` 是它独立证实的成果（§12.3），
+`unelaborated_reference` 保留继续有效，且比 T115 的通用原因诊断价值更高，因此保留优先级在前。
