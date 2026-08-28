@@ -24,6 +24,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 AUDITOR = REPOSITORY / "scripts" / "gate_rename_audit.py"
 T110_FIXTURE = REPOSITORY / "tests" / "fixtures" / "t110_binding_fixes"
 T112_FIXTURE = REPOSITORY / "tests" / "fixtures" / "t112_gate_rename_audit"
+T114_FIXTURE = REPOSITORY / "tests" / "fixtures" / "t114_implicit_net_collision"
 
 
 def _load_auditor():
@@ -93,6 +94,66 @@ def _compile_gate(gate_dir: Path, source_set: dict) -> tuple[int, int]:
     return len(view.parse_errors), len(view.semantic_errors)
 
 
+def _revert_one_renamed_reference(
+    gate: Path,
+    mapping: dict,
+    source_set: dict,
+    destination: Path,
+    only_old_name: str | None = None,
+) -> tuple[Path, str, int] | None:
+    """Copy the gate and revert one renamed reference to its old name.
+
+    Not every reverted edit stays invisible to the compiler: reverting a
+    connection *label* names a port that no longer exists, and strict
+    compilation rightly rejects that.  This audit exists for the edits that the
+    compiler accepts, so the damage point is chosen by trying candidates and
+    keeping the first whose damaged gate still compiles with zero errors.  The
+    search is deterministic for a fixed fixture.
+
+    ``only_old_name`` narrows the search to one spelling, which is how a fixture
+    can demand that the damage land on the identifier it was built around.
+
+    Returns ``(damaged gate, reverted old name, gate offset)``, or ``None`` when
+    no candidate left the gate compiling cleanly -- which means the audit's
+    premise no longer holds for that fixture.
+    """
+
+    candidates: list[tuple[str, str, str, dict]] = []
+    for entry in mapping["mapping_execution"]["per_file_mapping"]:
+        for record in entry["records"]:
+            if record.get("action") != "rename":
+                continue
+            if only_old_name is not None and record["original_name"] != only_old_name:
+                continue
+            for item in record["ranges"]:
+                if item.get("provenance") != "semantic_reference":
+                    continue
+                candidates.append(
+                    (
+                        entry["file"],
+                        record["original_name"],
+                        record["renamed_name"],
+                        item["gate_range"],
+                    )
+                )
+    assert candidates, "fixture has no semantic_reference edit"
+
+    for file, original, renamed, gate_range in candidates:
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(gate, destination)
+        path = destination / file
+        data = bytearray(path.read_bytes())
+        start, end = gate_range["start"], gate_range["end"]
+        if bytes(data[start:end]).decode(errors="replace") != renamed:
+            continue
+        data[start:end] = original.encode()
+        path.write_bytes(bytes(data))
+        if _compile_gate(destination, source_set) == (0, 0):
+            return destination, original, start
+    return None
+
+
 class GateRenameAuditTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -110,50 +171,23 @@ class GateRenameAuditTest(unittest.TestCase):
     def _damaged_gate(self) -> tuple[Path, str, int]:
         """Copy the gate and revert one renamed reference to its old name.
 
-        Not every reverted edit stays invisible to the compiler: reverting a
-        connection *label* names a port that no longer exists, and strict
-        compilation rightly rejects that.  This audit exists for the edits that
-        the compiler accepts, so the damage point is chosen by trying candidates
-        and keeping the first whose damaged gate still compiles with zero
-        errors.  The search is deterministic for a fixed fixture.
+        The damage point is searched for rather than fixed, because reverting a
+        connection label is rejected by strict compilation while reverting an
+        actual is not; see ``_revert_one_renamed_reference``.
         """
 
-        candidates: list[tuple[str, str, str, dict]] = []
-        for entry in self.mapping["mapping_execution"]["per_file_mapping"]:
-            for record in entry["records"]:
-                if record.get("action") != "rename":
-                    continue
-                for item in record["ranges"]:
-                    if item.get("provenance") != "semantic_reference":
-                        continue
-                    candidates.append(
-                        (
-                            entry["file"],
-                            record["original_name"],
-                            record["renamed_name"],
-                            item["gate_range"],
-                        )
-                    )
-        self.assertTrue(candidates, "fixture has no semantic_reference edit")
-
-        damaged = Path(self._temporary.name) / "damaged"
-        for file, original, renamed, gate_range in candidates:
-            if damaged.exists():
-                shutil.rmtree(damaged)
-            shutil.copytree(self.gate, damaged)
-            path = damaged / file
-            data = bytearray(path.read_bytes())
-            start, end = gate_range["start"], gate_range["end"]
-            if bytes(data[start:end]).decode(errors="replace") != renamed:
-                continue
-            data[start:end] = original.encode()
-            path.write_bytes(bytes(data))
-            if _compile_gate(damaged, self.source_set) == (0, 0):
-                return damaged, original, start
-        self.fail(
-            "no reverted edit left the gate compiling cleanly; the audit's "
-            "premise no longer holds for this fixture"
+        found = _revert_one_renamed_reference(
+            self.gate,
+            self.mapping,
+            self.source_set,
+            Path(self._temporary.name) / "damaged",
         )
+        if found is None:
+            self.fail(
+                "no reverted edit left the gate compiling cleanly; the audit's "
+                "premise no longer holds for this fixture"
+            )
+        return found
 
     def test_intact_gate_is_clean(self) -> None:
         code, report = _audit(
@@ -313,6 +347,247 @@ class GoldRootDerivationTest(unittest.TestCase):
                 self._args(gold_filelist=None), self.source_set
             )
         self.assertEqual(raised.exception.code, 2)
+
+
+class ImplicitNetCollisionTest(unittest.TestCase):
+    """Translating a gold implicit net must be decided by position, not by name.
+
+    Measured on ``rtl_samples/RISC-V-Vector``: 169 old names are renamed to more
+    than one new name, ``i`` to 27 of them.  A global ``old name -> new name``
+    dictionary keeps only the last of them, so a gold implicit net gets
+    translated to a spelling the gate does not hold and a correct gate is
+    reported ``suspect``.  T113 hit exactly that on ``valid`` in
+    ``rtl/vector/vmu.sv``, which carries no declaration at all.
+
+    That sample can no longer reproduce it: T113 now preserves every ``valid``
+    as ``unelaborated_reference``, so the spelling has no rename record left to
+    collide with.  Hence this dedicated fixture, which holds the shape open.
+
+    Three directions are asserted: the name-keyed translation must false-report
+    the intact gate, the position-keyed one must call it clean, and the
+    position-keyed one must still flag a gate whose reference was reverted --
+    otherwise ``gate_only == 0`` could have been bought by simply widening
+    ``expected_gate``.
+    """
+
+    COLLIDING_NAME = "valid"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._temporary = TemporaryDirectory(prefix="t114-collision-")
+        base = Path(cls._temporary.name)
+        cls.gate = base / "gate"
+        _encrypt(T114_FIXTURE / "collision.f", "t114_collision_top", cls.gate)
+        cls.payload = json.loads((cls.gate / "mapping.json").read_text())
+        cls.source_set = cls.payload["source_set"]
+        cls.renames = [
+            record
+            for record in cls.payload["mapping"]["records"]
+            if record.get("action") == "rename"
+        ]
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._temporary.cleanup()
+
+    def _implicit_nets(self, root: Path) -> set[tuple[str, int, str]]:
+        """Ask the auditor itself for the positioned implicit nets of a tree."""
+
+        module = _load_auditor()
+        view = module._View("probe", root, self.source_set)
+        self.assertEqual((view.parse_errors, view.semantic_errors), (0, 0))
+        return view.implicit_nets()
+
+    def _gold_implicit_collision(self) -> tuple[str, int, str]:
+        gold = self._implicit_nets(T114_FIXTURE)
+        matching = sorted(
+            item for item in gold if item[2] == self.COLLIDING_NAME
+        )
+        self.assertEqual(
+            len(matching),
+            1,
+            f"fixture must hold exactly one gold implicit {self.COLLIDING_NAME}",
+        )
+        return matching[0]
+
+    def test_fixture_really_reproduces_the_key_collision(self) -> None:
+        """Without these preconditions the fixture would prove nothing.
+
+        If the colliding spelling also appeared in dead source, T113's
+        ``unelaborated_reference`` rule would preserve every one of its records,
+        nothing would be renamed, and the key collision could not happen -- while
+        the fixture still passed.  So the preconditions are asserted, not assumed.
+        """
+
+        records = [
+            record
+            for record in self.payload["mapping"]["records"]
+            if record.get("original_name") == self.COLLIDING_NAME
+        ]
+        self.assertGreaterEqual(len(records), 3, records)
+
+        # No record of this spelling may be preserved at all, and in particular
+        # not for T113's dead-source reason.
+        self.assertEqual(
+            [record for record in records if record.get("action") != "rename"],
+            [],
+            "the colliding spelling must be fully renamed",
+        )
+        self.assertNotIn(
+            "unelaborated_reference",
+            {str(record.get("reason")) for record in records},
+        )
+
+        # The new names must be pairwise distinct; that is what a single-valued
+        # dictionary cannot represent.
+        new_names = [record["renamed_name"] for record in records]
+        self.assertEqual(len(set(new_names)), len(new_names), new_names)
+
+        # And the value a global dictionary would keep must differ from the one
+        # the gold implicit net actually got, or there would be nothing to fix.
+        file, offset, _ = self._gold_implicit_collision()
+        implicit_new_name = {
+            (record["declaration"]["file"], record["declaration"]["start"]):
+                record["renamed_name"]
+            for record in records
+        }[(file, offset)]
+        name_keyed = {
+            record["original_name"]: record["renamed_name"]
+            for record in self.renames
+        }[self.COLLIDING_NAME]
+        self.assertNotEqual(name_keyed, implicit_new_name)
+
+    def test_name_keyed_translation_false_reports_the_intact_gate(self) -> None:
+        """The old behaviour, rebuilt locally: it must blame a correct gate.
+
+        Rebuilt in the test rather than kept in the product script, so there is
+        only one translation path shipped.  The fingerprint asserted here is the
+        one T113 recorded: the flagged name is a *new* obfuscated name, not an
+        old name a rewrite could have missed.
+        """
+
+        gold = self._implicit_nets(T114_FIXTURE)
+        gate = self._implicit_nets(self.gate)
+
+        name_keyed = {
+            record["original_name"]: record["renamed_name"]
+            for record in self.renames
+        }
+        expected = {
+            (file, name_keyed.get(name, name)) for file, _, name in gold
+        }
+        gate_only = sorted({(file, name) for file, _, name in gate} - expected)
+
+        self.assertTrue(gate_only, "the collision must produce a false report")
+        old_names = {record["original_name"] for record in self.renames}
+        new_names = {record["renamed_name"] for record in self.renames}
+        for _, name in gate_only:
+            self.assertIn(name, new_names, name)
+            self.assertNotIn(name, old_names, name)
+
+    def test_position_keyed_translation_keeps_the_intact_gate_clean(self) -> None:
+        code, report = _audit(
+            self.gate / "mapping.json", self.gate, T114_FIXTURE
+        )
+        implicit = report["implicit_nets"]
+        self.assertGreater(implicit["gold"], 0, "fixture must have one")
+        self.assertEqual(implicit["gate_only"], 0, implicit["gate_only_detail"])
+        self.assertEqual(report["verdict"], "clean")
+        self.assertEqual(code, 0)
+        # Every gold implicit net was located, so no expectation was widened by
+        # falling back to an old name.
+        self.assertEqual(
+            implicit["gold_fallback_to_old_name"], 0, implicit["gold_fallback_detail"]
+        )
+        self.assertIn("report only", implicit["gold_fallback_note"])
+        self.assertEqual(report["compile"]["gold"]["semantic_errors"], 0)
+        self.assertEqual(report["compile"]["gate"]["semantic_errors"], 0)
+
+    def test_position_keyed_translation_still_flags_a_damaged_gate(self) -> None:
+        """The anti-cheat: ``gate_only == 0`` must not come from a wider net.
+
+        Widening ``expected_gate`` would reach a clean verdict trivially, so the
+        same fixture is damaged the way the compiler cannot see -- one already
+        renamed reference reverted to its old name -- and the audit must name
+        precisely that old name.
+        """
+
+        found = _revert_one_renamed_reference(
+            self.gate,
+            self.payload,
+            self.source_set,
+            Path(self._temporary.name) / "damaged",
+        )
+        if found is None:
+            self.fail(
+                "no reverted edit left the gate compiling cleanly; the audit's "
+                "premise no longer holds for this fixture"
+            )
+        damaged, original, offset = found
+
+        # The premise: the damage is invisible to strict compilation.
+        self.assertEqual(_compile_gate(damaged, self.source_set), (0, 0))
+
+        code, report = _audit(self.gate / "mapping.json", damaged, T114_FIXTURE)
+        self.assertEqual(report["verdict"], "suspect")
+        self.assertEqual(code, 1)
+        self.assertEqual(report["implicit_nets"]["gate_only"], 1)
+        self.assertEqual(
+            [item["name"] for item in report["implicit_nets"]["gate_only_detail"]],
+            [original],
+        )
+        self.assertEqual(report["implicit_nets"]["gold_fallback_to_old_name"], 0)
+
+        # Check 2 independently flags the same offset from the published bytes.
+        flagged = {
+            item["start"]
+            for item in report["renamed_range_bytes"]["misplaced_detail"]
+            + report["renamed_range_bytes"]["leaked_detail"]
+        }
+        self.assertIn(offset, flagged)
+
+    def test_damage_on_the_colliding_spelling_itself_is_still_flagged(self) -> None:
+        """The cheapest wrong fix is masked exactly here.
+
+        Widening ``expected_gate`` to hold both the old and the new spelling of a
+        colliding name would reach ``gate_only == 0`` on the intact gate and
+        would also swallow a genuinely missed reference to that same name.  The
+        previous test cannot see that, because its damage point is whichever
+        reference the search happens to reach first.  This one forces the damage
+        onto the colliding spelling and requires the audit to still name it.
+        """
+
+        found = _revert_one_renamed_reference(
+            self.gate,
+            self.payload,
+            self.source_set,
+            Path(self._temporary.name) / "damaged-colliding",
+            only_old_name=self.COLLIDING_NAME,
+        )
+        if found is None:
+            self.fail(
+                f"no reverted {self.COLLIDING_NAME} reference left the gate "
+                "compiling cleanly; the audit's premise no longer holds here"
+            )
+        damaged, original, offset = found
+        self.assertEqual(original, self.COLLIDING_NAME)
+        self.assertEqual(_compile_gate(damaged, self.source_set), (0, 0))
+
+        code, report = _audit(self.gate / "mapping.json", damaged, T114_FIXTURE)
+        self.assertEqual(report["verdict"], "suspect")
+        self.assertEqual(code, 1)
+        self.assertEqual(report["implicit_nets"]["gate_only"], 1)
+        self.assertEqual(
+            [item["name"] for item in report["implicit_nets"]["gate_only_detail"]],
+            [self.COLLIDING_NAME],
+        )
+        self.assertEqual(report["implicit_nets"]["gold_fallback_to_old_name"], 0)
+        flagged = {
+            item["start"]
+            for item in report["renamed_range_bytes"]["misplaced_detail"]
+            + report["renamed_range_bytes"]["leaked_detail"]
+        }
+        self.assertIn(offset, flagged)
 
 
 if __name__ == "__main__":

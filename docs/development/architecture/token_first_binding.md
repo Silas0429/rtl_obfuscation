@@ -414,17 +414,31 @@ T111 的服务器数据满足该条件，且 `occurrence_coverage=1.0`、`plaint
 上线判据必须叠加 `gate_rename_audit` 的 `verdict=clean`。修复归
 [`T113`](../../tasks/T113_unelaborated_reference.md)。
 
-#### 8.2.1 该审计器有一个偏保守的假报模式（T113 验收时发现）
+#### 8.2.1 该审计器曾有一个偏保守的假报模式（T113 验收时发现，T114 已修）
 
-`gate_rename_audit.py` 翻译 gold 隐式 net 用的 `rename_map` 是**全局 `旧名 → 新名` 字典**，
-而同一拼写在不同作用域会被改成不同新名。本地 RISC-V-Vector 上实测
-**206 个旧名被改成多于一个新名**（`i` 有 27 个、`clk` 有 15 个）。字典只留最后一个，
+`gate_rename_audit.py` 翻译 gold 隐式 net 曾用**全局 `旧名 → 新名` 字典**，
+而同一拼写在不同作用域会被改成不同新名，字典只留最后一个。
 于是 gold 的隐式 net 被翻译成错误的新名，报出假 `gate_only`。
 
 方向是**偏保守**的：产生假 `suspect`，不会产生假 `clean`，所以它从未放行过错误的 gate，
-§8 在 StCache 上的结论不受影响（那 1514 条全是旧名）。判读服务器结果的规则因此是：
-`gate_only_detail` 里若是**旧名**，是真漏改；若是**新混淆名**，是本条缺陷。
-修复归 T114，详见 [`T113 §13`](../../tasks/T113_unelaborated_reference.md)。
+§8 在 StCache 上的结论不受影响（那 1514 条全是旧名）。判读规则：
+`gate_only_detail` 里若是**旧名**，是真漏改；若是**新混淆名**，是本条缺陷的指纹。
+
+T114 把该翻译改为**按物理位置判定**——与 T112 §2.2 为检查 2 确立的是同一条原则
+（精确位置比对不依赖名字匹配，因此不会把同名的另一个符号算进来）。
+位置查不到才回退到旧名，且回退次数发布为 `implicit_nets.gold_fallback_to_old_name`，
+report only，不参与 `verdict`。`verdict` 口径未变。
+
+一个必须记录的计量陷阱：本地 RISC-V-Vector 上"被改成多于一个新名的旧名"数
+在 T113 前后不同 —— T113 之前 **206** 个（`clk` 15、`valid` 5），
+T113 之后 **169** 个（`clk` 与 `valid` 均降为 0，因为它们被整体保留为
+`unelaborated_reference`），`i` 两次都是 27。两个数字在各自条件下都正确。
+
+**后果比数字重要**：T113 之后该样本已**无法**复现这个假报（没有 `valid` 改名记录可冲突了），
+所以它的 `clean` 只是无回退检查，不是 T114 有效性的证据。有效性由
+`tests/fixtures/t114_implicit_net_collision` 的 before/after 对承载。
+这也是一条通用教训：**当上游修复消除了某个缺陷的触发条件时，必须为该缺陷单独固定一个 fixture，
+否则回归测试会在"看不见"和"已修好"之间无法区分。**
 
 ### 8.3 这也印证了 §2 的完整性判据
 

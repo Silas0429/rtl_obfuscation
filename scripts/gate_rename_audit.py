@@ -128,14 +128,21 @@ class _View:
             return location
         return location
 
-    def implicit_nets(self) -> set[tuple[str, str]]:
-        """Return (file, name) of every implicitly created net.
+    def implicit_nets(self) -> set[tuple[str, int, str]]:
+        """Return (file, offset, name) of every implicitly created net.
 
         An implicit net is how SystemVerilog absorbs an undeclared identifier,
         so it is exactly the footprint a missed reference leaves behind.
+
+        The physical offset is reported alongside the name because the gold
+        side has to be translated into the spelling the gate should hold, and
+        that translation is only decidable by position -- see
+        ``_renamed_name_at``.  An offset of ``-1`` marks a net whose location
+        could not be resolved to a file; it can never match a renamed range and
+        so falls back to its old name, visibly.
         """
 
-        result: set[tuple[str, str]] = set()
+        result: set[tuple[str, int, str]] = set()
         nodes: list[Any] = []
         self._root_symbol.visit(nodes.append)
         for node in nodes:
@@ -146,12 +153,15 @@ class _View:
             name = str(_safe_attr(node, "name", "") or "")
             if not name:
                 continue
+            file, offset = None, -1
             try:
                 location = self.physical(_safe_attr(node, "location"))
                 file = self.file_of(_safe_attr(location, "buffer"))
+                if file is not None:
+                    offset = int(location.offset)
             except Exception:
-                file = None
-            result.add((file or "$unknown", name))
+                file, offset = None, -1
+            result.add((file or "$unknown", offset, name))
         return result
 
     def identifier_tokens(self) -> list[tuple[str, int, str]]:
@@ -297,6 +307,55 @@ def _load_mapping(path: Path) -> tuple[dict[str, Any], dict[str, Any], list[dict
         if record.get("action") == "rename"
     ]
     return payload, source_set, records
+
+
+def _renamed_name_at(records: list[dict[str, Any]]) -> dict[tuple[str, int], str]:
+    """Index the new name of every renamed range by its exact gold position.
+
+    Check 1 has to translate each gold implicit net into the spelling the gate
+    should hold for it.  Translating by name is wrong: a real design holds
+    several distinct symbols spelling the same identifier and each is renamed
+    independently, so a global ``old name -> new name`` dictionary silently keeps
+    only one of them.  The gold net then translates to a spelling the gate does
+    not hold, and a correct gate is reported ``suspect``.
+
+    Measured on ``rtl_samples/RISC-V-Vector`` (project root, top ``vector_top``):
+    169 old names are renamed to more than one new name, ``i`` to 27 of them.
+    T113 measured 206 on the same sample before its own fix landed, when ``clk``
+    reached 15 and ``valid`` 5; both of those spellings are now preserved
+    outright as ``unelaborated_reference``, so they no longer collide.  The
+    mechanism is unchanged -- only which spellings take part in it moved.
+
+    Position is decidable where the name is not -- the same reason
+    ``_renamed_range_bytes`` verifies by position.  An implicit net has no
+    declaration of its own, so the mapping stores its first occurrence as the
+    record's ``declaration`` range; measured, the gold ``NetSymbol.location``
+    offset equals that range's start.  Both the declaration range and every
+    occurrence range are therefore indexed.
+    """
+
+    index: dict[tuple[str, int], str] = {}
+    for record in records:
+        renamed = str(record.get("renamed_name") or "")
+        if not renamed:
+            continue
+        ranges: list[Any] = [record.get("declaration")]
+        ranges += [
+            item.get("source_range")
+            for item in record.get("occurrences", ()) or ()
+            if isinstance(item, dict)
+        ]
+        for item in ranges:
+            if not isinstance(item, dict):
+                continue
+            file, start = item.get("file"), item.get("start")
+            if file is None or start is None:
+                continue
+            try:
+                index[(str(file), int(start))] = renamed
+            except (TypeError, ValueError):
+                continue
+    return index
 
 
 def _renamed_range_bytes(
@@ -457,21 +516,34 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     # Check 1: implicit nets the rewrite introduced.  Differenced against gold,
     # because the original design may legitimately rely on implicit nets.
     #
-    # The gold names must be translated through the rename map first: an
-    # implicit net has no declaration but its occurrences are still renamed, so
-    # the same net reappears in the gate under the new spelling.  Comparing raw
-    # names would report every renamed implicit net as newly introduced.
-    rename_map = {
-        str(record.get("original_name")): str(record.get("renamed_name"))
-        for record in renamed
-        if record.get("original_name") and record.get("renamed_name")
-    }
+    # Each gold name must first be translated into the spelling the gate should
+    # hold: an implicit net has no declaration but its occurrences are still
+    # renamed, so the same net reappears in the gate under the new spelling.
+    # Comparing raw names would report every renamed implicit net as newly
+    # introduced.
+    #
+    # The translation is decided by the net's physical position, not by its
+    # name -- see ``_renamed_name_at`` for the measurement that forced this.
+    # The rule is stated by its result, not by the one cause that exposed it:
+    # look the position up, and fall back to the unchanged old name when the
+    # lookup misses.  Every fallback is counted in the report, because that is
+    # the only way this check can go blind.
+    renamed_at = _renamed_name_at(renamed)
     gold_implicit = gold.implicit_nets()
     gate_implicit = gate.implicit_nets()
-    expected_gate = {
-        (file, rename_map.get(name, name)) for file, name in gold_implicit
-    }
-    gate_only = sorted(gate_implicit - expected_gate)
+
+    expected_gate: set[tuple[str, str]] = set()
+    fallback: list[dict[str, Any]] = []
+    for file, offset, name in sorted(gold_implicit):
+        translated = renamed_at.get((file, offset))
+        if translated is None:
+            fallback.append({"name": name, "file": file, "start": offset})
+            translated = name
+        expected_gate.add((file, translated))
+
+    gold_names = {(file, name) for file, _, name in gold_implicit}
+    gate_names = {(file, name) for file, _, name in gate_implicit}
+    gate_only = sorted(gate_names - expected_gate)
     gate_spans = gate.unit_spans()
 
     # Check 2: an old name still spelled inside its owner unit in the gate.
@@ -538,13 +610,22 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "distinct_old_names": len(by_old_name),
         },
         "implicit_nets": {
-            "gold": len(gold_implicit),
-            "gate": len(gate_implicit),
+            "gold": len(gold_names),
+            "gate": len(gate_names),
             "gate_only": len(gate_only),
             "gate_only_detail": [
                 {"name": name, "file": file}
                 for file, name in gate_only[: args.examples]
             ],
+            "gold_fallback_to_old_name": len(fallback),
+            "gold_fallback_note": (
+                "report only, not part of the verdict: a gold implicit net whose "
+                "physical position matches no renamed range is expected in the "
+                "gate under its unchanged old name. That is correct when the net "
+                "was never renamed, and it is the one way this check can go "
+                "blind, so the count is published instead of swallowed"
+            ),
+            "gold_fallback_detail": fallback[: args.examples],
         },
         "renamed_range_bytes": range_bytes,
         "residual_old_names": {
@@ -575,6 +656,8 @@ def _print_summary(report: dict[str, Any]) -> None:
         "  [gate] implicit nets -- a missed reference becomes one",
         f"    gold {implicit['gold']}   gate {implicit['gate']}"
         f"   gate-only {implicit['gate_only']}",
+        "    gold nets expected under their old name because no renamed range"
+        f" covers their position: {implicit['gold_fallback_to_old_name']}",
     ]
     for item in implicit["gate_only_detail"]:
         lines.append(f"      !! {item['name']}  {item['file']}")
