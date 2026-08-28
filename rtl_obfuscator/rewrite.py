@@ -14,7 +14,9 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from typing import Any
+import unicodedata
 
 from rtl_obfuscator import orchestration_vnext
 from rtl_obfuscator import restore_vnext
@@ -25,6 +27,7 @@ from rtl_obfuscator.category_registry_vnext import (
 )
 from rtl_obfuscator.source_set import (
     SourceSetError,
+    _resolve_filelist_path,
     from_filelist,
     from_project_root,
     from_single_file,
@@ -53,12 +56,14 @@ class _CliVNextError(ValueError):
         detail: str | None = None,
         path: str | None = None,
         details: list[dict[str, Any]] | None = None,
+        position: list[str] | None = None,
     ) -> None:
         self.code = code
         self.message = message
         self.detail = detail
         self.path = path
         self.details = list(details or [])
+        self.position = list(position or [])
         super().__init__(f"{code}: {message}" if message else code)
 
 
@@ -84,6 +89,9 @@ _CLI_VNEXT_PUBLIC_INPUT_HINT = (
     "请检查三种输入模式；单文件只用 --input；filelist 模式不要提供 --source-root，"
     "推荐的 filelist 使用 --filelist [--top]；project-root 使用 --source-root + --top。"
 )
+#: ``--examples`` does not exist on this entry point, so section 3.3 of T116
+#: fixes the number of listed diagnostics and requires the total to be stated.
+_CLI_VNEXT_DIAGNOSTIC_EXAMPLES = 10
 
 
 def _cli_vnext_fail(
@@ -93,6 +101,7 @@ def _cli_vnext_fail(
     detail: str | None = None,
     path: str | None = None,
     details: list[dict[str, Any]] | None = None,
+    position: list[str] | None = None,
 ) -> None:
     raise _CliVNextError(
         code,
@@ -100,6 +109,7 @@ def _cli_vnext_fail(
         detail=detail,
         path=path,
         details=details,
+        position=position,
     )
 
 
@@ -133,7 +143,11 @@ def _cli_vnext_diagnostic_details(
 
 
 def _cli_vnext_fail_source_set(
-    error: SourceSetError, diagnostic_root: Path
+    error: SourceSetError,
+    diagnostic_root: Path,
+    *,
+    filelist: Path | None = None,
+    source_root: Path | None = None,
 ) -> None:
     _cli_vnext_fail(
         "CLI_VNEXT_INPUT_INVALID",
@@ -141,7 +155,171 @@ def _cli_vnext_fail_source_set(
         detail=error.code,
         path=_cli_vnext_relative_diagnostic_path(error.path, diagnostic_root),
         details=_cli_vnext_diagnostic_details(error.details, diagnostic_root),
+        position=_cli_vnext_failure_position(
+            error,
+            diagnostic_root,
+            filelist=filelist,
+            source_root=source_root,
+        ),
     )
+
+
+def _cli_vnext_absolute_diagnostic_path(value: object, root: Path) -> Path | None:
+    """Resolve one reported diagnostic path back to a real absolute path."""
+
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        candidate = Path(value).expanduser()
+        absolute = candidate if candidate.is_absolute() else root / candidate
+        return Path(os.path.normpath(str(absolute)))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _cli_vnext_line_column(path: Path, offset: int) -> tuple[int, int, str] | None:
+    """Render one already-resolved diagnostic offset as ``line``, ``column``, text.
+
+    The file and the byte offset are produced by
+    ``project_discovery._diagnostic_position``; this only turns that offset into
+    the ``line:column`` a person can jump to, and never resolves a position of
+    its own.
+    """
+
+    try:
+        data = path.read_bytes()
+    except (OSError, ValueError):
+        return None
+    if offset < 0 or offset > len(data):
+        return None
+    begin = data.rfind(b"\n", 0, offset) + 1
+    end = data.find(b"\n", offset)
+    if end < 0:
+        end = len(data)
+    line = data.count(b"\n", 0, offset) + 1
+    column = offset - begin + 1
+    text = data[begin:end].decode("utf-8", errors="replace").strip()
+    return line, column, text
+
+
+def _cli_vnext_diagnostic_positions(
+    details: list[dict[str, Any]], root: Path
+) -> list[str]:
+    """Report ``file:line:column`` plus the diagnostic for a parse/elaborate stop."""
+
+    located = [
+        detail
+        for detail in details
+        if isinstance(detail, dict)
+        and isinstance(detail.get("path"), str)
+        and type(detail.get("start")) is int
+    ]
+    if not located:
+        return []
+    shown = located[:_CLI_VNEXT_DIAGNOSTIC_EXAMPLES]
+    lines = [
+        f"diagnostics: 共 {len(details)} 条，以下列出前 {len(shown)} 条"
+    ]
+    for detail in shown:
+        code = detail.get("code")
+        code_text = code if isinstance(code, str) else ""
+        absolute = _cli_vnext_absolute_diagnostic_path(detail["path"], root)
+        position = (
+            None if absolute is None else _cli_vnext_line_column(absolute, detail["start"])
+        )
+        if position is None:
+            lines.append(f"  {detail['path']}:+{detail['start']}  {code_text}")
+            continue
+        line, column, text = position
+        lines.append(f"  {detail['path']}:{line}:{column}  {code_text}")
+        if text:
+            lines.append(f"      源码: {text}")
+    return lines
+
+
+def _cli_vnext_filelist_origin(
+    filelist: Path | None, target: Path, source_root: Path | None
+) -> str | None:
+    """Return ``<filelist>:<line>`` for the entry that names ``target``.
+
+    The filelist grammar itself is not re-implemented here: every candidate line
+    is resolved through the same ``source_set._resolve_filelist_path`` the reader
+    uses, so an entry located by this walk is the entry the reader rejected.
+    """
+
+    if filelist is None:
+        return None
+    environment = dict(os.environ)
+    visited: set[Path] = set()
+    pending: list[Path] = [Path(filelist).expanduser()]
+    while pending:
+        current = pending.pop(0)
+        try:
+            canonical = current.resolve()
+            if canonical in visited or not canonical.is_file():
+                continue
+            visited.add(canonical)
+            content = canonical.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            continue
+        for number, raw in enumerate(content.splitlines(), start=1):
+            text = raw.strip()
+            if not text or text.startswith("#") or text.startswith("//"):
+                continue
+            tokens = text.split()
+            nested = tokens[0] == "-f" and len(tokens) == 2
+            if not nested and (len(tokens) != 1 or text.startswith(("+", "-"))):
+                continue
+            entry = tokens[1] if nested else tokens[0]
+            resolved: list[Path] = []
+            for base in (canonical.parent, source_root):
+                if base is None:
+                    continue
+                try:
+                    absolute, _relative = _resolve_filelist_path(
+                        root=None,
+                        text=entry,
+                        environment=environment,
+                        label="filelist entry",
+                        base=base,
+                    )
+                except (SourceSetError, OSError, RuntimeError, ValueError):
+                    continue
+                resolved.append(absolute)
+            if nested:
+                pending.extend(resolved)
+                continue
+            if target in resolved:
+                return f"{canonical.as_posix()}:{number}"
+    return None
+
+
+def _cli_vnext_failure_position(
+    error: SourceSetError,
+    diagnostic_root: Path,
+    *,
+    filelist: Path | None,
+    source_root: Path | None,
+) -> list[str]:
+    """Locate one input failure: a byte position, or a missing file's origin."""
+
+    positions = _cli_vnext_diagnostic_positions(error.details, diagnostic_root)
+    if positions:
+        return positions
+    absolute = _cli_vnext_absolute_diagnostic_path(error.path, diagnostic_root)
+    if absolute is None:
+        return []
+    try:
+        resolved = absolute.resolve()
+    except (OSError, RuntimeError):
+        resolved = absolute
+    if resolved.exists():
+        return []
+    lines = [f"position: {resolved.as_posix()}"]
+    origin = _cli_vnext_filelist_origin(filelist, resolved, source_root)
+    if origin is not None:
+        lines.append(f"filelist: {origin}")
+    return lines
 
 
 def _cli_vnext_path_overlap(first: Path, second: Path) -> bool:
@@ -239,7 +417,9 @@ def _cli_vnext_validate_arguments(
                     include_dirs=args.include_dirs,
                 )
             except SourceSetError as error:
-                _cli_vnext_fail_source_set(error, filelist_path.parent)
+                _cli_vnext_fail_source_set(
+                    error, filelist_path.parent, filelist=filelist_path
+                )
             except (OSError, RuntimeError, TypeError, ValueError) as error:
                 _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
         elif source_root_value is not None or args.top is not None:
@@ -419,7 +599,13 @@ def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
             top=args.top,
         )
     except SourceSetError as error:
-        _cli_vnext_fail_source_set(error, source_root)
+        filelist = getattr(args, "filelist", None)
+        _cli_vnext_fail_source_set(
+            error,
+            source_root,
+            filelist=None if filelist is None else Path(filelist).expanduser(),
+            source_root=source_root,
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", str(error))
 
@@ -548,6 +734,21 @@ def _cli_vnext_action_counts(report: dict[str, Any]) -> dict[str, int]:
     return action_counts
 
 
+def _cli_vnext_renamed_categories(records: list[dict[str, Any]]) -> tuple[str, ...]:
+    """The one category set behind both the persisted and the terminal summary."""
+
+    category_set = {
+        record.get("category")
+        for record in records
+        if isinstance(record, dict)
+        and record.get("action") == "rename"
+        and isinstance(record.get("category"), str)
+    }
+    return tuple(
+        category for category in CANONICAL_CATEGORIES if category in category_set
+    )
+
+
 def _cli_vnext_encryption_summary(
     report: dict[str, Any],
     metrics_report: dict[str, Any],
@@ -570,18 +771,7 @@ def _cli_vnext_encryption_summary(
     ):
         _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
     action_counts = _cli_vnext_action_counts(report)
-    renamed_records = []
-    for record in records:
-        if record.get("action") == "rename":
-            renamed_records.append(record)
-    category_set = {
-        record.get("category")
-        for record in renamed_records
-        if isinstance(record.get("category"), str)
-    }
-    categories = tuple(
-        category for category in CANONICAL_CATEGORIES if category in category_set
-    )
+    categories = _cli_vnext_renamed_categories(records)
     return "\n".join(
         (
             f"改名对象（rename）：{action_counts['rename']}",
@@ -595,6 +785,200 @@ def _cli_vnext_encryption_summary(
             f"加密类型：{', '.join(categories)}",
         )
     ) + "\n"
+
+
+class _CliVNextProgress:
+    """The one stage clock and the one stderr writer of the encryption CLI.
+
+    stdout keeps carrying exactly the single machine-readable JSON line it
+    carried before; progress and the human summary belong to stderr, so a demo
+    can show both streams and redirecting stdout to a file leaves only the
+    report on the terminal.  Elapsed time is read from ``time.monotonic`` and is
+    never allowed to go backwards, and the observer only reads the boundaries of
+    stages that already ran in this order.
+    """
+
+    _STAGE_LABELS = {
+        "source_set": "读取 filelist / 组装 SourceSet",
+        orchestration_vnext._STAGE_COMPILE: "PySlang 编译与 elaborate",
+        orchestration_vnext._STAGE_RENAME_INDEX: "构建改名索引",
+        orchestration_vnext._STAGE_MAPPING: "生成映射",
+        orchestration_vnext._STAGE_GATE: "写出加密结果",
+        orchestration_vnext._STAGE_RESTORE: "逐字节回填校验",
+    }
+
+    def __init__(self, *, quiet: bool, stream: Any = None) -> None:
+        self._quiet = bool(quiet)
+        self._stream = sys.stderr if stream is None else stream
+        self._origin = time.monotonic()
+        self._elapsed = 0.0
+        self._begun: dict[str, float] = {}
+
+    def elapsed(self) -> float:
+        value = time.monotonic() - self._origin
+        if value < self._elapsed:
+            value = self._elapsed
+        self._elapsed = value
+        return value
+
+    def write(self, text: str) -> None:
+        if self._quiet:
+            return
+        try:
+            self._stream.write(text)
+            self._stream.flush()
+        except (OSError, ValueError):
+            pass
+
+    def stage(self, stage: str, phase: str) -> None:
+        label = self._STAGE_LABELS.get(stage, stage)
+        now = self.elapsed()
+        if phase == "begin":
+            self._begun[stage] = now
+            self.write(f"[{now:7.3f}s] 开始 {label}\n")
+            return
+        started = self._begun.get(stage)
+        spent = "" if started is None else f"（本阶段 {now - started:.3f}s）"
+        self.write(f"[{now:7.3f}s] 完成 {label}{spent}\n")
+
+
+_CLI_VNEXT_REPORT_LABEL_WIDTH = 26
+_CLI_VNEXT_REPORT_VALUE_WIDTH = 12
+
+
+def _cli_vnext_display_width(text: str) -> int:
+    return sum(
+        2 if unicodedata.east_asian_width(character) in "WF" else 1
+        for character in text
+    )
+
+
+def _cli_vnext_report_row(label: str, value: str) -> str:
+    """One label with its value right-aligned on a fixed terminal column."""
+
+    label_pad = max(1, _CLI_VNEXT_REPORT_LABEL_WIDTH - _cli_vnext_display_width(label))
+    value_pad = max(0, _CLI_VNEXT_REPORT_VALUE_WIDTH - _cli_vnext_display_width(value))
+    return "  " + label + " " * (label_pad + value_pad) + value
+
+
+def _cli_vnext_report_text_row(label: str, value: str) -> str:
+    """One label with a name list, which is text and so stays left-aligned."""
+
+    label_pad = max(1, _CLI_VNEXT_REPORT_LABEL_WIDTH - _cli_vnext_display_width(label))
+    return "  " + label + " " * label_pad + value
+
+
+def _cli_vnext_report_ratio(numerator: object, denominator: object) -> str:
+    """A percentage, or ``n/a`` when the denominator carries no information."""
+
+    if type(numerator) is not int or type(denominator) is not int:
+        return "n/a"
+    if denominator <= 0:
+        return "n/a"
+    return f"{numerator * 100 / denominator:.2f}%"
+
+
+def _cli_vnext_report_count(value: object) -> str:
+    return str(value) if type(value) is int else "n/a"
+
+
+def _cli_vnext_landed_edits(report: dict[str, Any]) -> tuple[int, int]:
+    """Files and records that really carry a landed edit.
+
+    Neither number exists in ``summary`` today, so T116 section 3.2 defines both
+    against ``mapping_execution.per_file_mapping``: a landed edit is a projected
+    range of a ``rename`` record, which is exactly the position ``write_gate``
+    rewrote.  ``rename`` in the summary counts decisions instead, so the two are
+    reported side by side rather than merged.
+    """
+
+    execution = report.get("mapping_execution")
+    per_file = execution.get("per_file_mapping") if isinstance(execution, dict) else None
+    if not isinstance(per_file, list):
+        return 0, 0
+    files = 0
+    symbols: set[str] = set()
+    for entry in per_file:
+        if not isinstance(entry, dict) or not isinstance(entry.get("records"), list):
+            continue
+        landed = [
+            record
+            for record in entry["records"]
+            if isinstance(record, dict)
+            and record.get("action") == "rename"
+            and isinstance(record.get("ranges"), list)
+            and record["ranges"]
+        ]
+        if not landed:
+            continue
+        files += 1
+        symbols.update(
+            record["symbol_id"]
+            for record in landed
+            if isinstance(record.get("symbol_id"), str)
+        )
+    return files, len(symbols)
+
+
+def _cli_vnext_terminal_report(report: dict[str, Any], *, elapsed: float) -> str:
+    """The human summary of one encryption run, for stderr only.
+
+    Every count is read back from the report the run already produced; this
+    formats existing measurements and never recomputes a second set.
+    """
+
+    summary = report.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    mapping = report.get("mapping")
+    records = mapping.get("records") if isinstance(mapping, dict) else None
+    categories = _cli_vnext_renamed_categories(records if isinstance(records, list) else [])
+    effective_lines = summary.get("effective_line_total")
+    affected_lines = summary.get("affected_line_count")
+    files = summary.get("files")
+    encrypted_files, modified_records = _cli_vnext_landed_edits(report)
+    groups = (
+        (_cli_vnext_report_row("用时", f"{elapsed:.3f}s"),),
+        (
+            _cli_vnext_report_row("加密类型数", str(len(categories))),
+            _cli_vnext_report_text_row(
+                "加密类型", ", ".join(categories) if categories else "-"
+            ),
+        ),
+        (
+            _cli_vnext_report_row("总代码行数", _cli_vnext_report_count(effective_lines)),
+            _cli_vnext_report_row("实际加密行数", _cli_vnext_report_count(affected_lines)),
+            _cli_vnext_report_row(
+                "加密率", _cli_vnext_report_ratio(affected_lines, effective_lines)
+            ),
+        ),
+        (
+            _cli_vnext_report_row("总文件数", _cli_vnext_report_count(files)),
+            _cli_vnext_report_row("加密文件数", str(encrypted_files)),
+            _cli_vnext_report_row(
+                "文件覆盖率", _cli_vnext_report_ratio(encrypted_files, files)
+            ),
+        ),
+        (
+            _cli_vnext_report_row(
+                "改名对象数(rename)", _cli_vnext_report_count(summary.get("rename"))
+            ),
+            _cli_vnext_report_row(
+                "保留对象数(preserve)", _cli_vnext_report_count(summary.get("preserve"))
+            ),
+            _cli_vnext_report_row(
+                "不支持对象数(unsupported)",
+                _cli_vnext_report_count(summary.get("unsupported")),
+            ),
+            _cli_vnext_report_row("实际修改对象数", str(modified_records)),
+        ),
+    )
+    footnote = (
+        "  注：加密文件数与实际修改对象数取自 mapping_execution.per_file_mapping 中"
+        "至少落地一处编辑的文件数与记录数；\n"
+        "      rename 是决策数，实际修改对象数是真正改到字节的记录数。\n"
+    )
+    body = "\n\n".join("\n".join(group) for group in groups)
+    return "加密总结\n\n" + body + "\n\n" + footnote
 
 
 def _cli_vnext_remove(path: Path) -> None:
@@ -637,6 +1021,7 @@ def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
 
 
 def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
+    progress = _CliVNextProgress(quiet=bool(getattr(args, "quiet", False)))
     (
         source_root,
         (output_dir, map_file, metrics_file),
@@ -645,7 +1030,9 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         rate,
         (map_default, metrics_default),
     ) = _cli_vnext_validate_arguments(args)
+    progress.stage("source_set", "begin")
     source_set = _cli_vnext_source_set(args, source_root)
+    progress.stage("source_set", "end")
     try:
         staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-cli-vnext-"))
     except OSError as error:
@@ -661,6 +1048,7 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
                 encryption_rate=rate,
                 gate_dir=gate_dir,
                 restore_dir=restore_dir,
+                stage_observer=progress.stage,
             )
             report = result.to_report()
         except orchestration_vnext.OrchestrationVNextError as error:
@@ -705,6 +1093,7 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         if not metrics_default:
             artifacts.append((staged_metrics, metrics_file))
         _cli_vnext_publish(artifacts)
+        progress.write(_cli_vnext_terminal_report(report, elapsed=progress.elapsed()))
         return {
             "format": "rtl-obfuscation.cli-vnext",
             "schema_version": 2,
@@ -798,6 +1187,7 @@ def _register_encrypt_arguments(
         "output_dir": "加密输出目录；运行前必须不存在",
         "map": "mapping.json 的自定义路径；默认写入加密目录",
         "metrics": "metrics.json 的自定义路径；默认写入加密目录",
+        "quiet": "不在 stderr 输出实时进度与加密总结；stdout 的 JSON 不受影响",
     }
     parser.add_argument(
         "--input",
@@ -866,6 +1256,11 @@ def _register_encrypt_arguments(
         required=not public_cli,
         type=Path,
         help=public_help["metrics"] if public_cli else None,
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help=public_help["quiet"] if public_cli else None,
     )
     parser.set_defaults(public_cli=public_cli)
 
@@ -988,6 +1383,7 @@ def _run_cli_operation(
                 "details: "
                 + json.dumps(error.details, ensure_ascii=False, separators=(",", ":"))
             )
+        lines.extend(error.position)
         lines.append(f"hint: {hint}")
         parser.exit(1, "\n".join(lines) + "\n")
 

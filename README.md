@@ -23,6 +23,41 @@ python rtl_decrypt.py \
 `summary.restored_byte_identical` 均为 `true`。结果中的 `rename`、`preserve`、`unsupported`
 分别表示实际改名、按边界保留、因证据不足保留。
 
+## 终端输出：stdout 是机器接口，stderr 是给人看的
+
+两个流分工固定，互不影响：
+
+| 流 | 内容 |
+| --- | --- |
+| stdout | 一行 JSON，`format=rtl-obfuscation.cli-vnext`、`schema_version=2`，供脚本解析 |
+| stderr | 各阶段的实时进度与累计用时，以及结束时的加密总结 |
+
+所以运行时终端同时看到进度和总结；只想看总结就把 stdout 重定向到文件：
+
+```sh
+python rtl_encrypt.py \
+  --filelist design.f \
+  --category all \
+  --output-dir <尚不存在的输出目录> > summary.json
+```
+
+进度按既有流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
+SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验。
+真实工程上编译与索引通常是主要耗时段，所以分阶段计时比只报总时间有用。
+
+加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
+总文件数 / 加密文件数 / 文件覆盖率，以及
+改名对象数(rename) / 保留对象数(preserve) / 不支持对象数(unsupported) / 实际修改对象数。
+其中**加密文件数**和**实际修改对象数**指真正落地了编辑的文件数与记录数：`rename` 是决策数，
+`实际修改对象数` 是字节确实被改写的记录数，使用 `--encryption-rate` 时前者会大于后者。
+分母为 0 时相应比率显示 `n/a`。
+
+`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON，也不会让失败变安静：
+失败仍然打印错误码、`message` 和位置。
+
+输入失败会指出位置：文件缺失给出解析后的绝对路径以及它来自哪个 filelist 的第几行；
+解析或 elaborate 错误给出 `文件:行:列`、诊断码和该行源码，并注明诊断总条数。
+
 ## Filelist 模式（真实工程首选）
 
 ```sh
@@ -44,6 +79,25 @@ filelist 中的 `.sv/.v` 是 source unit；被 include 的 `.svh/.vh` 和显式�
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
 保留对应对象，不发布不确定的 gate。
+
+### 需要补依赖时用包装 filelist，原始 filelist 一行不动
+
+原始 filelist 缺少若干必需文件时不必修改它：新建一个包装 filelist，用 `-f` 引用原始文件再补上
+缺的条目即可。`-f` 递归、`+incdir+`、`+define+`、`$NAME`/`${NAME}` 和 `//` 注释都已支持。
+
+```sh
+cat > "$PROJ/wrapper.f" <<'EOF'
+// 原始 filelist 不修改
+-f $PROJ/original.f
+$PROJ/rtl/extra_assert.sv
+$PROJ/rtl/extra_if.sv
+EOF
+python rtl_encrypt.py --filelist "$PROJ/wrapper.f" --category all --output-dir <输出目录>
+```
+
+一个坑：自动推导源码根目录时会把 **filelist 自身所在目录**算进公共路径，所以包装文件应放在
+`$PROJ` 内（例如与原始 filelist 同目录）。放在 `$PROJ` 之外会让推导出的源码根目录上移一层，
+改变输出里的相对路径；确实无法写入 `$PROJ` 时改用 project-root 模式的 `--source-root` 显式指定。
 
 ## 四个核心加密组
 
@@ -123,6 +177,7 @@ python rtl_decrypt.py \
 | `--encryption-rate RATE` | 目标行加密率，`0 < RATE <= 1` |
 | `--map PATH` | 自定义 mapping 路径 |
 | `--metrics PATH` | 自定义 metrics 路径 |
+| `--quiet` | 不在 stderr 输出进度与加密总结；stdout 的 JSON 不受影响 |
 
 ## 安装
 

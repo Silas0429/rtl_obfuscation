@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import re
 from pathlib import Path
 import shutil
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .mapping_vnext import MappingVNext, NameFactory, build_mapping_vnext
 from .metrics_vnext import MetricsVNext, MetricsVNextError, build_metrics_vnext
@@ -55,6 +55,26 @@ class OrchestrationVNextError(ValueError):
 
 def _fail(code: str, message: str) -> None:
     raise OrchestrationVNextError(code, message)
+
+
+#: Observer for the boundaries of the existing pipeline stages.  It is called
+#: with ``(stage, "begin")`` immediately before and ``(stage, "end")``
+#: immediately after a stage that already ran in this order.  It exposes the
+#: boundaries only: it cannot reorder, skip, or influence any stage, and the
+#: pipeline behaves identically when it is ``None``.
+StageObserver = Callable[[str, str], None]
+
+_STAGE_COMPILE = "compile"
+_STAGE_RENAME_INDEX = "rename_index"
+_STAGE_MAPPING = "mapping"
+_STAGE_GATE = "gate"
+_STAGE_RESTORE = "restore"
+
+
+def _observe(observer: StageObserver | None, stage: str, phase: str) -> None:
+    if observer is None:
+        return
+    observer(stage, phase)
 
 
 def _portable_report(value: object) -> object:
@@ -170,19 +190,27 @@ def _build_mapping(
     categories: Iterable[str],
     name_length: int,
     name_factory: NameFactory,
+    stage_observer: StageObserver | None = None,
 ) -> MappingVNext:
     try:
         selected_categories = normalize_categories(categories, default=False)
+        _observe(stage_observer, _STAGE_COMPILE, "begin")
         catalog = build_source_catalog(source_set)
+        _observe(stage_observer, _STAGE_COMPILE, "end")
+        _observe(stage_observer, _STAGE_RENAME_INDEX, "begin")
         rename_index = build_rename_index(
             catalog,
             categories=selected_categories,
         )
-        return build_mapping_vnext(
+        _observe(stage_observer, _STAGE_RENAME_INDEX, "end")
+        _observe(stage_observer, _STAGE_MAPPING, "begin")
+        mapping = build_mapping_vnext(
             rename_index,
             name_length=name_length,
             name_factory=name_factory,
         )
+        _observe(stage_observer, _STAGE_MAPPING, "end")
+        return mapping
     except (
         CategoryRegistryError,
         SourceCatalogError,
@@ -334,14 +362,19 @@ def _run_no_rate(
     *,
     gate_dir: Path,
     restore_dir: Path,
+    stage_observer: StageObserver | None = None,
 ) -> tuple[MappingVNext, MappingExecutionVNext, MetricsVNext, None]:
     try:
+        _observe(stage_observer, _STAGE_GATE, "begin")
         execution = write_gate_vnext(mapping, output_dir=gate_dir)
+        _observe(stage_observer, _STAGE_GATE, "end")
+        _observe(stage_observer, _STAGE_RESTORE, "begin")
         restore_result = restore_gate_vnext(
             execution,
             gate_dir=gate_dir,
             output_dir=restore_dir,
         )
+        _observe(stage_observer, _STAGE_RESTORE, "end")
     except RewriteVNextError as error:
         _fail("ORCHESTRATION_EXECUTION_INVALID", error.message)
     try:
@@ -358,18 +391,23 @@ def _run_rate(
     encryption_rate: str,
     gate_dir: Path,
     restore_dir: Path,
+    stage_observer: StageObserver | None = None,
 ) -> tuple[MappingVNext, MappingExecutionVNext, MetricsVNext, RateMetricsVNext]:
     try:
         selection = build_rate_selection_vnext(mapping, encryption_rate)
+        _observe(stage_observer, _STAGE_GATE, "begin")
         rate_execution = write_rate_selected_gate_vnext(mapping, selection, gate_dir)
+        _observe(stage_observer, _STAGE_GATE, "end")
     except (RateVNextError, RateExecutionVNextError) as error:
         _fail("ORCHESTRATION_RATE_INVALID", error.message)
     try:
+        _observe(stage_observer, _STAGE_RESTORE, "begin")
         rate_metrics = build_rate_metrics_vnext(
             rate_execution,
             gate_dir=gate_dir,
             restore_dir=restore_dir,
         )
+        _observe(stage_observer, _STAGE_RESTORE, "end")
     except RateMetricsVNextError as error:
         _fail("ORCHESTRATION_AUDIT_INVALID", error.message)
     effective_mapping = rate_execution.rewrite_execution.mapping_vnext
@@ -385,6 +423,7 @@ def run_vnext(
     encryption_rate: str | None = None,
     gate_dir: Path,
     restore_dir: Path,
+    stage_observer: StageObserver | None = None,
 ) -> OrchestrationVNext:
     """Build, execute, restore, and audit one vNext SourceSet pipeline."""
 
@@ -397,12 +436,14 @@ def run_vnext(
             categories=categories,
             name_length=name_length,
             name_factory=name_factory,
+            stage_observer=stage_observer,
         )
         if encryption_rate is None:
             effective_mapping, mapping_execution, metrics, rate_metrics = _run_no_rate(
                 mapping,
                 gate_dir=gate_path,
                 restore_dir=restore_path,
+                stage_observer=stage_observer,
             )
         elif isinstance(encryption_rate, str):
             effective_mapping, mapping_execution, metrics, rate_metrics = _run_rate(
@@ -410,6 +451,7 @@ def run_vnext(
                 encryption_rate=encryption_rate,
                 gate_dir=gate_path,
                 restore_dir=restore_path,
+                stage_observer=stage_observer,
             )
         else:
             _fail("ORCHESTRATION_RATE_INVALID", "encryption_rate must be string or None")
