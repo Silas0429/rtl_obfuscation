@@ -254,3 +254,30 @@ product_untouched: git status 中无 rtl_obfuscator/ 条目，§3/§4 边界守�
 local_result: PASS
 server_gate: PENDING —— §9 的上线门禁需在 StCache gate 上运行
 ```
+
+### 12.3 gold 源码根推导错误（实现缺陷，服务器暴露）
+
+服务器首次运行报：
+
+```text
+{"error": "AUDIT_COMPILE_FAILED",
+ "message": "gold: No such file or directory:
+  '/home/lufengchi/workspace/ChipPlatform/aic_ss/src/stcache/aic_ss/src/stcache/src/Csr'"}
+```
+
+路径重复。首版把 `--gold-filelist` 的**父目录**当作源码根，但 `compile_order` 里的条目
+是相对更高层的根的。StCache 的 filelist 位于 `<root>/aic_ss/src/stcache/StCache.f`，
+其 compile_order 形如 `aic_ss/src/stcache/src/Csr/...`——相对 `<root>`，
+因为 `--include-dir` 把 SourceSet 推导出的根抬到了 ChipPlatform。
+
+同时确认：**mapping 不持久化源码根**（`source_set` 只有相对路径，这是可移植性设计），
+所以根必须推导，不能从文件里读。
+
+已更正为 `_resolve_gold_root`：从 filelist 所在目录逐级向上，取第一个能让
+`compile_order` 全部解析的祖先目录；`--gold-root` 显式指定时优先；
+都无法确定时以退出码 2 明确失败并列出尝试过的路径。
+
+本地用 StCache 的真实布局验证：深埋的 `aic_ss/src/stcache/StCache.f` 正确推导出
+`ChipPlatform`，且断言"filelist 自身目录是错误答案"。新增 4 条测试
+（`GoldRootDerivationTest`），测试总数 6 → 10。
+

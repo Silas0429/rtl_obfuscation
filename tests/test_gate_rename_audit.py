@@ -252,5 +252,68 @@ class GateRenameAuditTest(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.gate.iterdir()), before)
 
 
+class GoldRootDerivationTest(unittest.TestCase):
+    """The mapping stores only relative paths, so the root must be derived.
+
+    A filelist commonly sits deep inside the tree it describes: StCache's is at
+    ``<root>/aic_ss/src/stcache/StCache.f`` while its compile order is relative
+    to ``<root>``, because the include directories pull the inferred root up.
+    Taking the filelist's own directory as the root produced a duplicated path
+    on the server, so the resolver walks up until the compile order resolves.
+    """
+
+    def setUp(self) -> None:
+        self.module = _load_auditor()
+        self._temporary = TemporaryDirectory(prefix="t112-root-")
+        base = Path(self._temporary.name)
+        self.root = base / "ChipPlatform"
+        (self.root / "aic_ss/src/stcache/src/Csr").mkdir(parents=True)
+        (self.root / "aic_ss/src/stcache/src/Csr/StChCsr.sv").write_text(
+            "module m; endmodule\n"
+        )
+        self.filelist = self.root / "aic_ss/src/stcache/StCache.f"
+        self.filelist.write_text("src/Csr/StChCsr.sv\n")
+        self.source_set = {
+            "compile_order": ["aic_ss/src/stcache/src/Csr/StChCsr.sv"]
+        }
+
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
+
+    def _args(self, **overrides) -> object:
+        import argparse
+
+        values = {"gold_root": None, "gold_filelist": str(self.filelist)}
+        values.update(overrides)
+        return argparse.Namespace(**values)
+
+    def test_root_is_derived_by_walking_up_from_the_filelist(self) -> None:
+        derived = self.module._resolve_gold_root(self._args(), self.source_set)
+        self.assertEqual(derived, self.root.resolve())
+        # The filelist's own directory is explicitly the wrong answer here.
+        self.assertNotEqual(derived, self.filelist.parent.resolve())
+
+    def test_explicit_gold_root_wins(self) -> None:
+        derived = self.module._resolve_gold_root(
+            self._args(gold_root=str(self.root)), self.source_set
+        )
+        self.assertEqual(derived, self.root.resolve())
+
+    def test_undecidable_root_fails_loudly(self) -> None:
+        missing = Path(self._temporary.name) / "nowhere" / "x.f"
+        with self.assertRaises(SystemExit) as raised:
+            self.module._resolve_gold_root(
+                self._args(gold_filelist=str(missing)), self.source_set
+            )
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_missing_both_inputs_fails_loudly(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            self.module._resolve_gold_root(
+                self._args(gold_filelist=None), self.source_set
+            )
+        self.assertEqual(raised.exception.code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

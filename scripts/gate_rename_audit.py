@@ -394,17 +394,50 @@ def _renamed_range_bytes(
     }
 
 
+def _resolve_gold_root(args: argparse.Namespace, source_set: dict[str, Any]) -> Path:
+    """Recover the original source root that ``compile_order`` is relative to.
+
+    The mapping deliberately stores only relative paths so a report stays
+    portable, which means the root is not in the file.  A filelist commonly
+    sits deep inside the tree it describes -- StCache's is at
+    ``<root>/aic_ss/src/stcache/StCache.f`` while its entries are relative to
+    ``<root>`` -- so the filelist's own directory is usually the wrong answer.
+    Walk up from it and take the first ancestor where the recorded compile
+    order actually resolves.
+    """
+
+    if args.gold_root:
+        return Path(args.gold_root).expanduser().resolve()
+
+    order = list(source_set.get("compile_order") or ())
+    if not order:
+        _fail("AUDIT_MAP_INVALID", "mapping has no SourceSet compile order")
+    if not args.gold_filelist:
+        _fail(
+            "AUDIT_GOLD_ROOT_INVALID",
+            "pass --gold-root, or --gold-filelist so the root can be derived",
+        )
+
+    start = Path(args.gold_filelist).expanduser().resolve().parent
+    tried: list[str] = []
+    for candidate in (start, *start.parents):
+        tried.append(str(candidate))
+        if all((candidate / relative).is_file() for relative in order):
+            return candidate
+    _fail(
+        "AUDIT_GOLD_ROOT_INVALID",
+        "cannot locate a source root where the recorded compile order resolves; "
+        f"pass --gold-root explicitly. Tried: {', '.join(tried[:6])}",
+    )
+    raise AssertionError("unreachable")
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     map_path = Path(args.map).expanduser().resolve()
     gate_dir = Path(args.gate_dir).expanduser().resolve()
     payload, source_set, renamed = _load_mapping(map_path)
 
-    gold_root = Path(
-        args.gold_root
-        or (Path(args.gold_filelist).expanduser().resolve().parent
-            if args.gold_filelist
-            else source_set.get("source_root", ""))
-    ).expanduser()
+    gold_root = _resolve_gold_root(args, source_set)
     if not gold_root.is_dir():
         _fail("AUDIT_GOLD_ROOT_INVALID", f"gold root is not a directory: {gold_root}")
     if not gate_dir.is_dir():
