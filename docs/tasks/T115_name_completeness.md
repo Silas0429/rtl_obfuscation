@@ -502,7 +502,7 @@ ports   stsram_rdat  (StChReqTagRw) StChReqTagRw.sv:6254 / 18383 / 19400
 所以逐条看了 gate 源码。**结论：四条全部无害，无意外捕获。**
 
 判读时踩过一个坑，记下来：`residual_old_names` 的 `start` 是 **gate 侧偏移**
-（`build_report` 里遍历的是 `gate.identifier_tokens()`），主 Agent первый次指向 `$PROJ`
+（`build_report` 里遍历的是 `gate.identifier_tokens()`），主 Agent 第一次指向 `$PROJ`
 原始源码去探，四处 `matches=False`，差点误判为审计器有问题。
 明细字段没有像 `implicit_nets` 那样标明 gold/gate 归属，见 §13.4。
 
