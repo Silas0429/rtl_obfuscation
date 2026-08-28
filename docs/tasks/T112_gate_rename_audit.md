@@ -280,4 +280,3 @@ server_gate: PENDING —— §9 的上线门禁需在 StCache gate 上运行
 本地用 StCache 的真实布局验证：深埋的 `aic_ss/src/stcache/StCache.f` 正确推导出
 `ChipPlatform`，且断言"filelist 自身目录是错误答案"。新增 4 条测试
 （`GoldRootDerivationTest`），测试总数 6 → 10。
-
