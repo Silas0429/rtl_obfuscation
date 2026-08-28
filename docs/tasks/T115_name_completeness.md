@@ -1,6 +1,6 @@
 # T115：把逐符号完整性判据搬进产品，作为保留门禁
 
-- 状态：`READY`
+- 状态：`ACCEPTED`
 - 主 Agent：Claude Fable 5
 - 起始 HEAD：`3f3b343`（T113、T114 均 `ACCEPTED`）
 - 任务类型：`rename_index.py` 的保留门禁改为可证明的完整性判据
@@ -183,7 +183,11 @@ assert s=="- 状态：`READY_FOR_REVIEW`", s; print("t115_ready_for_review=pass"
 
 T113/T114 之后该样本的基线是 `rename 863 / preserve 244`、`verdict=clean`、`gate_only=0`。
 本判据会让 rename **进一步下降**，这是预期的；`verdict` 必须仍为 `clean`。
-硬条件是四组仍 `rename > 0`。
+硬条件是**任何 candidate > 0 的组不得跌到 `rename = 0`**。
+
+（原文写"四组仍 `rename > 0`"，但 RISC-V-Vector 没有 interface，
+`interface` 的 candidate 恒为 0，该条件在该样本上数学上不可满足。
+这是主 Agent 的契约缺陷，与 T110 §1/§8 vs §3 同类，见 §12.6。）
 
 不运行该样本的 Formal，不运行 `tests.test_risc_v_vector_project_root`。
 
@@ -221,6 +225,188 @@ python scripts/gate_rename_audit.py \
 ## 11. 执行记录
 
 ```text
-status: READY
-（子 Agent 开工前改为 IN_PROGRESS 并记录 starting_head、tool_form、first_command）
+status: IN_PROGRESS
+starting_head: c1ca685
+tool_form: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python
+           （`conda run -n rtl_obfuscation` 在本机以 `__conda_exe: permission denied` 失败，
+            与 T110–T114 相同的替代形式；PySlang 11.0.0、CPython 3.12.13）
+first_command: git rev-parse HEAD -> c1ca685125118dd140789c38e9b9f1181c7efc1d（工作区干净）
 ```
+
+
+## 12. 主 Agent 独立验收记录
+
+```text
+reviewed_at: 2026-08-28
+reviewed_head: c1ca685
+tool_form: /Users/lufengchi/anaconda3/envs/rtl_obfuscation/bin/python
+
+第 7 节五条门禁，主 Agent 亲自跑：
+  1) 12 模块 unittest              → Ran 91 tests，OK，exit 0（清空全部 __pycache__ 后复跑仍 OK）
+  2) tests.test_binding_coverage    → Ran 15 tests，OK，exit 0
+  3) py_compile 两文件              → exit 0
+  4) git diff --check HEAD          → 无输出，exit 0
+  5) T115 状态守卫                  → t115_ready_for_review=pass，exit 0
+
+T115 自身模块单跑：Ran 11 tests，OK
+  Formal 正例 exit 0、{"formal_equivalence": "pass", "seq": 5, "top": "t115_formal_top"}
+  Formal 负例 exit 1、"unproven; equiv_status -assert"（1'b0 → 1'b1 in t115_cone_mix）
+
+边界核对：改动仅 README、docs 四个文件、rtl_obfuscator/rename_index.py，
+  加两个未跟踪的新增（测试与 fixture），全部在第 4 节允许列表内。
+  `tests/test_t110_binding_fixes.py`、`test_t111_*`、`test_t108_*`、`test_t113_*`
+  一行未改 —— 既有断言零同步、零放宽，且在新判据下原样通过。
+```
+
+### 12.1 流程偏差：本任务的收尾验证与一处修复由主 Agent 完成（显式记录）
+
+子 Agent 完成了实现、fixture 与测试（`rename_index.py` +439/-7、
+`tests/test_t115_name_completeness.py` 776 行 11 用例、fixture 四个文件、四份文档），
+但在"重跑完整测试面与 §8 回归"之前被停止。用户在被告知代价后选择由主 Agent 直接收尾。
+
+代价是本任务的**验证环节**失去"实现者与验收者分离"的双重检查（实现环节仍是分离的），
+且 §12.2 记录的那处间歇缺陷修复也由主 Agent 直接完成，因此该修复没有第二人复审。
+如实记录，不隐藏。为部分补偿，主 Agent 额外做了 12.3 的两项作弊复现，
+并对该修复做了 40 次重复运行的统计验证而非单次通过。
+
+### 12.2 一个真实的间歇缺陷，以及主 Agent 中途一次错误的撤回
+
+这一节记录三步，包括主 Agent 自己判断反复的过程，因为过程本身是结论的一部分。
+
+**第一步，观测。** 首次跑 §7 第一条命令得到 `Ran 91, FAILED (failures=3)`，
+全在 `test_t110_binding_fixes`：`nested_same_name` 变 `preserved`、struct `preserve` 0→3、
+`incomplete_name_coverage` 不在该测试的允许集合。据此判定为"顺序相关的状态泄漏"。
+
+**第二步，错误的撤回。** 随后 15 次以上运行全过，逐个 T115 用例配 T110 的十组二分全部 0 失败，
+进程内两种顺序直接建 T110 索引都是 0 条 `incomplete_name_coverage`，
+清空 `__pycache__`（发现同时存在 `cpython-312` 与 `cpython-313` 两份字节码）后也通过。
+主 Agent 据此**撤回了缺陷判断，记为"不可复现的观测"**。
+
+**这次撤回是错的。** 真实原因是那些实验的统计功效不足：缺陷发生率约 1/5，
+而每组只跑 1 到 5 次——6 次全过的概率约 33%，所以"某组不触发"这个结论根本站不住。
+后续加大样本立刻复现：
+
+```text
+T115 产品代码，11 个模块（不含 T115 自己的测试），10 次   → 2/10 失败
+  且命中模块会变：一次 test_t110_binding_fixes，一次 test_t111_record_scope_preserve
+HEAD 产品代码（无 T115），同样 11 个模块，10 次            → 0/10 失败
+```
+
+命中模块会变这一点排除了"某个测试写坏了 fixture"（已另外用 fixture 校验和确认未被改动），
+并把范围锁定为**产品代码引入的进程级不确定性**。
+
+**第三步，定性并修复。** 根因在 `_aggregate_field_symbols` 的去重守卫：
+
+```python
+visited: set[int] = set()      # 按 id(canonical) 去重
+```
+
+`id()` 只在对象**同时存活**时唯一，而 PySlang 每次属性访问都可能新建 Python 包装对象。
+包装对象被回收后 CPython 复用其地址，于是一个从未访问过的聚合类型可能拿到已回收对象的
+`id`，被误判"已访问"而整个跳过——它的字段声明不进归属集合，同名 token 变成未归属，
+冒出没有依据的 `incomplete_name_coverage` 保留。是否发生取决于分配历史，
+也就是**同进程里之前跑过什么**，因此表现为间歇且命中位置漂移。
+
+这正是 [`token_first_binding.md §5.1`](../development/architecture/token_first_binding.md)
+已经写明的禁令（身份必须用物理声明位置，绝不用对象身份）在一个去重守卫里被重新引入。
+讽刺的是 `_reference_spans` 的 docstring 正确复述了这条禁令，而它自己的回退分支
+`("$unresolved", id(target))` 犯了同一个错。
+
+修复两处，都朝"证不出身份就保留"的安全方向：
+
+| 位置 | 修法 |
+| --- | --- |
+| `_aggregate_field_symbols` | 新增 `alive: list[Any]`，把每个已访问对象强引用住，使其 `id` 在遍历期间不可能被复用。若 PySlang 确实每次返回新包装，守卫只是不再命中、重复做功，代价是时间而非正确性 |
+| `_reference_spans` | 物理位置取不到时**丢弃该引用**，不再伪造 `id()` 身份。伪造身份的危险方向是两个不同声明碰撞成同一身份 → 最窄区间不再打平 → token 被归属给错误的 owner → 改了不该改的名 |
+
+修复后的验证（修复前是 2/10）：
+
+```text
+11 个模块 × 20 次   → 0/20 失败
+12 个模块 × 20 次   → 0/20 失败
+```
+
+按 1/5 的发生率，20 次全过的偶然概率约 1.2%，两组合计约 1.5e-4，故认定修复成立。
+RISC-V-Vector 连跑 3 次结果完全一致（`rename=836 preserve=271`，各组与 reason 计数逐项相同），
+说明修复没有改变判定结果，只是让它变得确定。
+
+**方法论教训，值得写进流程：** 对疑似间歇缺陷做二分，每组样本数必须先按估计发生率定，
+否则"通过"只是没抽中。本项目此前的合同错误都是"从单样本推断机制"
+（T108 §14、T110 §2.4），这次是同一个毛病的另一种形态：**从单样本推断"没有缺陷"**。
+
+### 12.3 主 Agent 复现两种"收窄分母"的错误修法
+
+§2.3 的全部效力取决于分母是否诚实，所以主 Agent 不只读断言，而是把错误修法写出来实跑：
+
+```text
+作弊 A：把 name.endswith("_t") 的 token 排除出分母（"类型名另有处理"）
+        → Ran 11, FAILED (failures=7)
+        含 test_the_token_denominator_is_every_physical_spelling_in_the_source、
+        test_exactly_one_token_of_this_fixture_is_unattributed、
+        test_shape_one_is_preserved_...、公开 CLI 用例
+        与子 Agent 记录的"7 个失败"完全一致，独立复现成立。
+
+作弊 B：把 unverified.add(name) 三处改为静默丢弃（"定位不到就不算"）
+        → Ran 11, OK          ← 全部通过，测试不设防
+```
+
+作弊 A 被牢牢守住：ground truth 是**对 fixture 文件的原始字节搜索**，不经过 PySlang，
+任何收窄都会让某个拼写对不上。这是正确的做法。
+
+作弊 B 暴露一个真实盲区，见 12.5。
+
+### 12.4 第 8 节回归，主 Agent 实测
+
+`rtl_samples/RISC-V-Vector`（project-root，top `vector_top`，19 文件）：
+
+```text
+category      cand   rename   preserve
+signals        675      542        133
+ports          359      239        120
+interface        0        0          0     ← 该设计无 interface（改动前后一致）
+struct          73       55         18
+total rename=836  preserve=271        （T113/T114 基线 863/244，即 -27）
+reasons: unelaborated_reference 227、incomplete_name_coverage 27、
+         selected_top_boundary 11、outside_top_closure 6
+strict_compile=(0,0,0,0)   byte_identical=True
+
+审计：verdict=clean   exit 0
+  implicit_nets: gold 5  gate 5  gate_only 0
+  gold_fallback_to_old_name 1（valid @ rtl/vector/vmu.sv:20220，与 T114 §11.2 同一条）
+  renamed_range_bytes: checked 4061  mismatched 0
+  residual_old_names: 4              （T114 基线为 11，本次下降）
+```
+
+下降的 27 条全部落在 `signals`，全部原因为 `incomplete_name_coverage`，
+与文档 §2.3 已写的数字一致。无回退，`residual_old_names` 还改善了。
+
+§2.4 耗时：`build_rename_index` 在该设计上全程 **2.71s**（19 文件）。
+StCache 是 154 文件、61659 token，约 8 倍规模，因此预期在几十秒量级，
+远低于 §2.4 的 60 秒判断线；确切数字由第 10 节服务器门禁给出。
+
+### 12.5 未覆盖边界（主 Agent 新发现，需记录）
+
+**`unverified` 路径没有断言守着。** fixture 上 `unverified == frozenset()`，
+即没有任何定位不到或字节校验不过的 token，所以"定位不到 → 按未归属 → 保留"这条
+安全默认从未被走到。产品行为今天是正确的（12.3 作弊 B 的改动在本 fixture 上行为等价），
+但将来有人把它改成静默丢弃，不会有任何测试失败——而丢弃是 fail-open 方向，
+正是造成 T112/T113/T115 这一连串问题的那一类错误。
+
+不在本任务补：要构造一个 PySlang 定位不到的 token 并不直接，
+`scripts/binding_coverage.py` 把 `outside_source_set` / `byte_mismatch` 也列为边界而非可控输入。
+应另立任务，或在实现层面把该分支改为可注入以便断言。
+
+### 12.6 主 Agent 自己的契约缺陷（第三次同类错误，如实记录）
+
+第 8 节写"硬条件是四组仍 `rename > 0`"。但 RISC-V-Vector **没有 interface**
+（`interface` candidate=0，改动前后都是 0），该条件在这个样本上数学上不可满足。
+
+正确表述应为"任何 candidate > 0 的组不得跌到 rename = 0"。
+
+这与 `token_first_binding.md §6.2` 已记录的 T110 §1/§8 vs §3 是**同一类错误**：
+契约要求了它自己边界所禁止的结果。同类错误在本项目已出现三次
+（T108 §14、T110 §2.4、T110 §1/§8），本条是第四次，均由主 Agent 造成。
+判据条件必须按**可满足性**校验，不能只按语义直觉写。
+
+`main_result: ACCEPTED`（判据本身与其验证均成立）
+`ship_decision: 服务器门禁（第 10 节）未跑，上线仍阻塞`

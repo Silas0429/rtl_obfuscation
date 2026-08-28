@@ -82,7 +82,10 @@ endmodule
 `probe_inner_t` 物理出现在 3 处，产品只绑定 2 处（声明与变量类型），遗漏成员类型那 1 处，
 `struct` 组 issues 为空，`write_gate_vnext` 报 `CATALOG_SEMANTIC_FAILED`。
 这正是本节 §2 判据要买的那份安全：未归属 token 存在时不得改名。
-在实现该判据之前，`NamedType` 成员类型引用是一个 fail-open 面，需单独立项。
+
+该 fail-open 已由 T115 关闭，且**不是**靠为 `NamedType` 补一条绑定规则关闭的——
+本判据不试图绑定它，只是拒绝在它存在时改名。最小复现已固定为
+`tests/fixtures/t115_name_completeness`，before/after 两个方向都有断言（§2.3）。
 
 ### 2.2 T113 已交付：死源码里的引用一律保留
 
@@ -109,6 +112,34 @@ T109 已证明这些 token **不可能**被绑定：未选中分支不产生任�
 同名的另一个符号也可能。所以它保留而不改写 —— 与 §2 的按名字完整性判据同向，
 但仍不是那条判据的完整实现。保留逐条生效，`_apply_group_binding_issues` 的
 T111 边界未被触碰。
+
+### 2.3 T115 已交付：§2 判据本身进入产品
+
+T113 之后服务器门禁仍为 `suspect`：`gate_only` 由 1514 降到 1324，剩余 1324 条全在
+`csr_behvr.sv`。连续三轮"发现形状 → 加一条兼容"（T110 三形状、T113 死源码、以及这第三种）
+证明该路径不收敛，因此 T115 不再定性第三种形态，直接把 §2 判据落进
+`rename_index.py` 的 `_apply_name_completeness`，新原因为 `incomplete_name_coverage`。
+
+判定复用探测器已验证的全部机制，不新增第二套：CST 全部 `Identifier` token 逐字节校验
+（`_tokens_spelling`）、最小包含区间归属（`_reference_attributions`）、
+目标身份按物理声明位置（`_reference_spans`，绝不用 `id()`，见 §5.1）、
+声明归属（`_declaration_attributions`）。运行在 T113 规则之后，逐记录生效。
+
+归属证据必须是三类之和，缺一不可：
+
+| 来源 | 为什么必须有 |
+| --- | --- |
+| 本次运行自身记录的 declaration + occurrence range | 产品真正的绑定规则（具名端口标签、interface port type、成员访问、类型引用）都在这里。少了它，`struct` 组会因 typedef 类型引用全灭 |
+| 设计中每个具名 symbol 的声明 token | 四组之外的 parameter/genvar/module/subroutine，以及**嵌套聚合成员**。`Compilation.getRoot().visit` 到不了聚合成员，外层聚合的成员表也到不了内层匿名聚合的成员，`_aggregate_field_symbols` 因此要沿 `canonicalType`/`elementType` 递归到底 |
+| 最小包含且目标同名的通用引用规则 | 覆盖产品不建记录的符号的引用 |
+
+分母的口径不得为了覆盖率收窄。唯一合法排除是 `SystemIdentifier`（语言内建，永不可能是改名目标）；
+"暂时没有绑定规则"不是排除理由。无法定位或字节校验失败的 token 也不静默丢弃，按未归属处理。
+`tests/test_t115_name_completeness.py` 用**独立于 PySlang 的字节搜索**做 ground truth 钉住这条口径：
+注入一条"类型名另有处理"的假排除后，11 个用例里 7 个失败（含公开 CLI 用例）。
+
+实测代价与耗时见 T115 §8、§11。本地 `rtl_samples/RISC-V-Vector` 上 rename 863 → 836
+（-27，全部落在 `signals`），`verdict` 保持 `clean`、`gate_only=0`。
 
 ## 3. 两类 occurrence，只有一类曾是无穷的
 
@@ -329,6 +360,11 @@ token 1129 是 `.clk(` 的标签，1139 是实参 `clk`。标签不是表达式�
 | [`T112`](../../tasks/T112_gate_rename_audit.md) | **上线门禁**：只读 gate 漏改引用检查（隐式 net 差分 + 残留旧名作用域检查） | 排除"编译干净但功能错误" |
 | T113 | 层次引用前缀规则；`unelaborated_source` 升为一等 preserve 原因 | interface 实例可改名 |
 | T114（可选） | 逐符号完整性判据作为保证机制 | 需先定性探测器口径下未解释的 47% |
+
+该表是 T110 当时的规划，编号此后发生了偏移：实际的 T114 是审计器假报修复（§8.2.1），
+逐符号完整性判据由 [`T115`](../../tasks/T115_name_completeness.md) 交付（§2.3）。
+它也推翻了本表最后一行的前提——**不需要**先定性那 47%：判据与形状无关，
+未定性的残差不再是实现它的前置条件，而只是覆盖率数字。
 
 顺序理由：T110 之前不动组级事务，是为了让"三个形状是否真的修好"可独立复审。
 该隔离已达到目的——T110 的服务器数据证明三处修复生效（struct 根因由一大批降为 3 个），

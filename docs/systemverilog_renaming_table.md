@@ -35,6 +35,26 @@ PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-b
 token 也可能属于另一个同名符号，所以这条规则是保守保留，不做名字猜测式改写。保留逐条生效，
 同组内其他已证明的记录仍然改名。
 
+## 逐符号名字完整性
+
+改名的前置条件是一条与形状无关的判据：对旧名为 `n` 的符号，令 T 为源码集合中所有拼写 `n` 的
+物理 identifier token；只有当 T 中不存在**未归属** token 时才改名。未归属即既没有归属给任何
+语义引用，也没有归属给任何声明。只要存在一个未归属的同名 token，所有拼写 `n` 的记录都报告
+`incomplete_name_coverage` 并保留。
+
+归属证据有三类，缺一不可：本次运行自身记录的声明与 occurrence 物理 range；设计中每一个具名
+symbol 的声明 token（含 parameter、genvar、module、subroutine 等四组之外的名字，以及嵌套聚合
+的成员）；以及"最小包含且目标同名的引用"这条通用规则。
+
+分母是 CST 里全部 `Identifier` token，逐字节校验，宏位置先经 `SourceManager` 还原。唯一被排除的
+是 `SystemIdentifier`（`$clog2` 一类语言内建，永远不可能是改名目标）。**不得**因为"暂时没有绑定
+规则"而把某类 token 排除在分母之外——那正是本判据要抓的 token。无法定位或校验失败的 token 同样
+按未归属处理。
+
+该判据与形状无关，因此一次性覆盖已知与未知的 fail-open，代价是覆盖率下降；这是"改得少但可证明
+正确"对"编译过但功能错"的取舍。`unelaborated_reference` 更具体，诊断价值更高，因此优先级在前，
+已被它保留的记录不再改报本原因。保留逐条生效，不升级为整组。
+
 ## 结果状态
 
 每个核心组在 mapping 的 `category_outcomes` 中按固定顺序输出 `renamed`、`preserved` 或 `empty`，并给出

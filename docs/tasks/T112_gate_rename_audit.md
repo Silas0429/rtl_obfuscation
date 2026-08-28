@@ -173,8 +173,9 @@ python scripts/gate_rename_audit.py \
 
 允许的 preserve 原因集合为：`selected_top_boundary`、`outside_top_closure`、
 `macro_origin_conflict`、`hierarchical_prefix_unsupported`、`source_binding_incomplete`，
-以及 T113 新增的 `unelaborated_reference`（旧名还写在未被 elaborate 的源码里）。
-出现该集合以外的原因需人工判读。
+T113 新增的 `unelaborated_reference`（旧名还写在未被 elaborate 的源码里），
+以及 T115 新增的 `incomplete_name_coverage`（源码里还有拼写该旧名的 token 无法归属给
+任何引用或声明）。出现该集合以外的原因需人工判读。
 
 若 `verdict=suspect`，**不得上线**：明细中的每一条都是一个漏改的引用，
 须先定性该形状并另立任务修复绑定，然后重新加密并重跑本检查。

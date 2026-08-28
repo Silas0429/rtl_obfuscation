@@ -101,10 +101,16 @@ python rtl_decrypt.py \
 | `hierarchical_prefix_unsupported` | 该对象需要层次引用前缀改写，当前不支持 |
 | `source_binding_incomplete` | 该记录缺少完整的声明与引用绑定证据 |
 | `unelaborated_reference` | 旧名还写在未被 elaborate 的源码里，那里的引用语义不可见 |
+| `incomplete_name_coverage` | 源码里还有拼写该旧名的 token 无法归属给任何引用或声明 |
 
 `unelaborated_reference` 覆盖只在未选中 generate 分支或从未 elaborate 的设计单元里出现的引用。
 那些 token 物理存在但不产生任何语义引用，严格编译也不报错，所以只改声明会把旧名留在加密结果里
 变成隐式 net。工具选择保留该符号：宁可少改，不可改错。
+
+`incomplete_name_coverage` 是改名的通用前置条件：只有当源码里拼写该旧名的每一个 token 都能归属
+给某个语义引用或某个声明时才改名，否则保留所有拼写该名字的记录。它与具体语法形态无关，因此
+同时覆盖已知和未知的漏改面，代价是可改名的对象变少。这是有意的取舍：改得少但可证明正确，
+优于编译通过但功能错误。
 
 ## 常用参数
 

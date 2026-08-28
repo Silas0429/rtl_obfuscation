@@ -1785,7 +1785,10 @@ def _names_in_dead_source(
 
 
 def _apply_unelaborated_references(
-    catalog: SourceCatalog, nodes: list[Any], records: dict[str, _WorkingSymbol]
+    catalog: SourceCatalog,
+    nodes: list[Any],
+    syntax_nodes: list[Any],
+    records: dict[str, _WorkingSymbol],
 ) -> None:
     """Preserve every record whose spelling also exists in dead source.
 
@@ -1810,6 +1813,11 @@ def _apply_unelaborated_references(
     The preserve is per record, in the T111 sense: a record whose spelling is
     absent from dead source stays renameable even when a sibling of the same core
     group is preserved here.
+
+    ``syntax_nodes`` is supplied by the caller only so that one CST walk serves
+    both this rule and the name-completeness rule that follows it.  The judgement
+    below is unchanged: it is still the dead-region detection of T113 applied to
+    the same node list this function used to build for itself.
     """
 
     wanted = frozenset(
@@ -1820,7 +1828,6 @@ def _apply_unelaborated_references(
     if not wanted:
         return
     buffer_files: dict[object, str | None] = {}
-    syntax_nodes = _syntax_nodes(catalog)
     regions = _dead_source_regions(catalog, nodes, syntax_nodes, buffer_files)
     if not regions:
         return
@@ -1831,6 +1838,452 @@ def _apply_unelaborated_references(
         if record.support == "eligible" and record.name in dead:
             record.support = "preserved"
             record.reason = "unelaborated_reference"
+
+
+@dataclass(frozen=True)
+class _NameToken:
+    """One physical identifier token, byte-verified against the source file."""
+
+    file: str
+    start: int
+    end: int
+    name: str
+
+
+@dataclass(frozen=True)
+class _NameReference:
+    """One semantic reference span, keyed later by ``(file, name)``."""
+
+    start: int
+    end: int
+    target: tuple[str, int]
+
+
+def _spelled_name(raw: str) -> str:
+    """Return the semantic name one physical identifier token spells.
+
+    An escaped identifier is written ``\\name`` in source while PySlang reports
+    the symbol name without the leading backslash.  That is a lexical fact of the
+    language, not a name guess, and ``scripts/binding_coverage.py`` normalizes it
+    the same way.  Nothing else is rewritten here.
+    """
+
+    if raw.startswith("\\"):
+        return raw[1:].rstrip()
+    return raw
+
+
+def _tokens_spelling(
+    catalog: SourceCatalog,
+    syntax_nodes: list[Any],
+    wanted: frozenset[str],
+    cache: dict[object, str | None],
+) -> tuple[tuple[_NameToken, ...], frozenset[str]]:
+    """Enumerate every physical identifier token that spells one of ``wanted``.
+
+    The CST is the only complete record of what the source physically contains,
+    so it is the only honest denominator for a completeness proof.  Macro
+    locations are restored by ``SourceManager`` and every token is verified byte
+    for byte against the original file before it counts, exactly as
+    ``scripts/binding_coverage.py`` already does on 61659 tokens with
+    ``byte_mismatch=0``.
+
+    One token class is excluded, and only because the language says it can never
+    be a rename target: ``SystemIdentifier`` (``$clog2``, ``$display``) is a
+    built-in.  A token this module happens to have no binding rule for is
+    deliberately *kept* in the denominator -- that token is precisely the one this
+    criterion exists to catch, so excluding it would buy coverage by giving up the
+    proof.
+
+    A token that spells a wanted name but cannot be pinned to a verified physical
+    position is not silently dropped either: its spelling is returned in the
+    second value, because a name with an unlocatable token cannot be proven
+    complete.
+    """
+
+    if not wanted:
+        return (), frozenset()
+    identifier = pyslang.parsing.TokenKind.Identifier
+    file_bytes: dict[str, bytes] = {}
+    seen: set[tuple[str, int, int]] = set()
+    tokens: list[_NameToken] = []
+    unverified: set[str] = set()
+    for node in syntax_nodes:
+        if type(node).__name__ != "Token":
+            continue
+        try:
+            if node.kind != identifier:
+                continue
+            raw = str(node.rawText)
+        except Exception:
+            continue
+        if not raw:
+            continue
+        name = _spelled_name(raw)
+        if name not in wanted:
+            continue
+        key = _physical_declaration_key(catalog, _safe_attr(node, "location"), cache)
+        if key is None:
+            unverified.add(name)
+            continue
+        file, start = key
+        encoded = raw.encode("utf-8")
+        end = start + len(encoded)
+        physical = (file, start, end)
+        if physical in seen:
+            # One macro body token expanded N times is still one physical token.
+            continue
+        data = file_bytes.get(file)
+        if data is None:
+            try:
+                data = _source_bytes(catalog, file)
+            except RenameIndexError:
+                unverified.add(name)
+                continue
+            file_bytes[file] = data
+        if not 0 <= start < end <= len(data) or data[start:end] != encoded:
+            unverified.add(name)
+            continue
+        seen.add(physical)
+        tokens.append(_NameToken(file, start, end, name))
+    return tuple(tokens), frozenset(unverified)
+
+
+def _aggregate_field_symbols(nodes: list[Any]) -> tuple[Any, ...]:
+    """Return every ``FieldSymbol`` this design declares, nested ones included.
+
+    ``Compilation.getRoot().visit`` does not reach aggregate members at all, and
+    the outer type's own member list does not reach a nested aggregate's members
+    either.  ``struct packed { struct packed { logic a; } a; }`` declares two
+    different members spelled ``a``, and only the outer one belongs to the outer
+    type.  The inner one is still a real declaration, so a token spelling it is
+    attributed and must not be charged against a same-spelled symbol elsewhere.
+    ``_register_structs`` already reaches the first level through
+    ``canonicalType``; this follows the same access to its end, and through
+    ``elementType`` for an array of aggregates.
+
+    A non-aggregate canonical type simply is not iterable in PySlang, which is
+    why no type-name allowlist is needed here: asking is the test.
+    """
+
+    result: list[Any] = []
+    visited: set[int] = set()
+    # `id()` is unique only among objects that are alive at the same moment, and
+    # PySlang hands out a fresh Python wrapper on each attribute access.  Without
+    # a strong reference the wrapper is collected, CPython reuses its address, and
+    # the next unrelated type is mistaken for one already visited -- silently
+    # dropping a whole aggregate's fields, so tokens spelling those fields become
+    # unattributed and their records are preserved for no reason.  Measured: that
+    # made the rename decision depend on allocation history, i.e. on whatever ran
+    # earlier in the process, and the same source produced different preserve sets
+    # across runs.  Holding every visited object for the length of the walk makes
+    # the guard sound; if PySlang does return a fresh wrapper each time, the guard
+    # merely stops matching and the walk repeats work, which costs time and never
+    # correctness.
+    alive: list[Any] = []
+
+    def descend(candidate: object) -> None:
+        if candidate is None:
+            return
+        canonical = _safe_attr(candidate, "canonicalType") or candidate
+        marker = id(canonical)
+        if marker in visited:
+            return
+        visited.add(marker)
+        alive.append(canonical)
+        try:
+            members = tuple(canonical)
+        except Exception:
+            members = ()
+        found = False
+        for member in members:
+            if type(member).__name__ != "FieldSymbol":
+                continue
+            found = True
+            result.append(member)
+            descend(_safe_attr(_safe_attr(member, "declaredType"), "type"))
+        if not found:
+            descend(_safe_attr(canonical, "elementType"))
+
+    for node in nodes:
+        if type(node).__name__ == "TypeAliasType":
+            descend(node)
+        descend(_safe_attr(_safe_attr(node, "declaredType"), "type"))
+    return tuple(result)
+
+
+def _declaration_attributions(
+    catalog: SourceCatalog,
+    nodes: list[Any],
+    by_start: dict[tuple[str, int], _NameToken],
+    wanted: frozenset[str],
+    cache: dict[object, str | None],
+) -> set[tuple[str, int, int]]:
+    """Attribute the declaration token of every named semantic symbol.
+
+    A symbol's own ``location`` is direct semantic evidence of where its
+    declaration token begins.  The attribution counts only when a real identifier
+    token starts exactly there and spells that symbol's name, so this is
+    byte-verified evidence rather than a name lookup.
+
+    Every named symbol is asked, not only the four core groups: a token that
+    declares a parameter, a genvar, a module or a subroutine is attributed to
+    *that* declaration, which is what proves it is not an unexplained occurrence
+    of the name under judgement.
+    """
+
+    found: set[tuple[str, int, int]] = set()
+
+    def attribute(symbol: object) -> None:
+        try:
+            name = str(_safe_attr(symbol, "name", "") or "")
+        except Exception:
+            return
+        if not name or name not in wanted:
+            return
+        key = _physical_declaration_key(catalog, _safe_attr(symbol, "location"), cache)
+        if key is None:
+            return
+        token = by_start.get(key)
+        if token is not None and token.name == name:
+            found.add((token.file, token.start, token.end))
+
+    for node in nodes:
+        attribute(node)
+    for member in _aggregate_field_symbols(nodes):
+        attribute(member)
+    return found
+
+
+def _reference_spans(
+    catalog: SourceCatalog,
+    nodes: list[Any],
+    wanted: frozenset[str],
+    cache: dict[object, str | None],
+) -> dict[tuple[str, str], list[_NameReference]]:
+    """Collect every AST node that references a symbol spelled in ``wanted``.
+
+    Only ``sourceRange`` and the direct target symbol are read, so a node whose
+    ``syntax`` link slang dropped -- a member access followed by a select, for
+    example -- is handled identically to one that kept it.  The target identity is
+    the physical declaration position and never ``id(target)``: elaboration
+    produces one Python object per instance, and object identity reported 1294
+    false ambiguities on a 19-file design (token_first_binding.md section 5.1).
+    """
+
+    buckets: dict[tuple[str, str], list[_NameReference]] = {}
+    for node in nodes:
+        target = None
+        for attribute in ("symbol", "member"):
+            candidate = _safe_attr(node, attribute)
+            if candidate is None:
+                continue
+            try:
+                if hasattr(candidate, "name"):
+                    target = candidate
+                    break
+            except Exception:
+                continue
+        if target is None:
+            continue
+        try:
+            name = str(_safe_attr(target, "name", "") or "")
+        except Exception:
+            continue
+        if not name or name not in wanted:
+            continue
+        span = _resolved_span(catalog, _safe_attr(node, "sourceRange"), cache)
+        if span is None:
+            continue
+        file, start, end = span
+        identity = _physical_declaration_key(
+            catalog, _safe_attr(target, "location"), cache
+        )
+        if identity is None:
+            # The reference exists but its target cannot be pinned to a physical
+            # declaration, so it proves nothing about which symbol the token
+            # means.  An earlier version invented `("$unresolved", id(target))`
+            # here; that is unsound for the same reason section 5.1 of
+            # token_first_binding.md rejects `id()` as an identity: CPython
+            # reuses an address once the wrapper is collected, so two genuinely
+            # different declarations can collide into one identity, the
+            # narrowest-span tie disappears, and the token is attributed to the
+            # wrong owner -- a rename that should not have happened.  Dropping
+            # the reference instead leaves the token unattributed, which
+            # preserves the record.  Fewer renames, never a wrong one.
+            continue
+        buckets.setdefault((file, name), []).append(
+            _NameReference(start, end, identity)
+        )
+    return buckets
+
+
+def _reference_attributions(
+    tokens: tuple[_NameToken, ...],
+    buckets: dict[tuple[str, str], list[_NameReference]],
+    rewritten_starts: frozenset[tuple[str, int]],
+) -> set[tuple[str, int, int]]:
+    """Attribute each token to the smallest enclosing matching reference.
+
+    This is the class-one rule of token_first_binding.md section 3: a token
+    belongs to the narrowest reference that contains it and whose target carries
+    the same name.  Measured on ``a.a.a`` -- a variable and two nested fields all
+    spelled the same -- it yields three distinct symbols and no ambiguity.
+
+    Two cases are deliberately refused rather than resolved:
+
+    * when two different physical declarations tie for the narrowest span, the
+      token is left unattributed.  An ambiguous token is exactly a token whose
+      meaning is not proven;
+    * when the token's target is declared at a position this run *rewrites*, the
+      token is left unattributed even though a reference does claim it.  Knowing
+      what a token means is not the same as leaving it correct: if the spelling of
+      the declaration it points at changes and the token itself is not in the edit
+      set, the reference breaks.  ``rtl_samples/example_fifo`` is the measured
+      case -- ``ctrl.full`` through a ``fifo_if.consumer`` modport port resolves to
+      a ``ModportPortSymbol`` whose own declaration token *is* rewritten as an
+      occurrence of the interface member, while the ``ctrl.full`` token is bound to
+      nothing, so renaming that member used to produce a gate with seven
+      ``CouldNotResolveHierarchicalPath`` errors.
+
+    ``rewritten_starts`` is taken from the records that are still eligible when
+    this runs.  Preserving records afterwards only shrinks the real edit set, so a
+    single pass errs towards preserving too much, never too little.
+    """
+
+    found: set[tuple[str, int, int]] = set()
+    for token in tokens:
+        candidates = buckets.get((token.file, token.name))
+        if not candidates:
+            continue
+        enclosing = [
+            reference
+            for reference in candidates
+            if reference.start <= token.start and token.end <= reference.end
+        ]
+        if not enclosing:
+            continue
+        width = min(reference.end - reference.start for reference in enclosing)
+        owners = {
+            reference.target
+            for reference in enclosing
+            if (reference.end - reference.start) == width
+        }
+        if len(owners) != 1:
+            continue
+        if next(iter(owners)) in rewritten_starts:
+            continue
+        found.add((token.file, token.start, token.end))
+    return found
+
+
+def _apply_name_completeness(
+    catalog: SourceCatalog,
+    nodes: list[Any],
+    syntax_nodes: list[Any],
+    records: dict[str, _WorkingSymbol],
+) -> None:
+    """Rename a name only when every token that spells it is accounted for.
+
+    This is the criterion of token_first_binding.md section 2, and it exists
+    because three consecutive rounds of per-shape compatibility did not converge:
+    T110 fixed three shapes, T113 removed 190 of 1514 bad implicit nets on one
+    production design, and a third, still uncharacterised shape accounted for the
+    remaining 1324.  Every one of those rounds asked "which shapes do we know
+    about"; this rule asks the shape-independent question instead.
+
+        For a symbol whose old name is ``n``: let T be every physical identifier
+        token spelling ``n`` in the source set.  Rename ``n`` only if no token in
+        T is unattributed, attributed meaning bound to a semantic reference or to
+        a declaration.
+
+    One unattributed token spelled ``n`` therefore preserves every record spelled
+    ``n``, and nothing else.  That is provable in a way the semantic direction
+    never was: the token set is closed, so there is no thirteenth reference to
+    miss.  It covers the three known fail-opens -- a dead generate branch actual,
+    the uncharacterised production shape, and a typedef used as another
+    aggregate's member type -- together with every shape nobody has met yet, and
+    it pays for that in coverage: T109 measured only 28.46% of in-scope names
+    fully accounted on that design.
+
+    Three sources of attribution are combined, and all three are needed for the
+    denominator to be honest rather than merely small:
+
+    * this run's own records, whose declaration and occurrence ranges are the
+      product's real binding rules -- named port connection labels, interface port
+      types, aggregate member accesses, type references -- each already verified
+      against the source bytes.  A token in that set is either rewritten together
+      with its record or belongs to a record this run leaves alone; either way it
+      stays correct;
+    * the declaration token of every named symbol in the design, including the
+      parameters, genvars, modules and subroutines that lie outside the four core
+      groups, because a token that declares one of those is accounted for and must
+      not be charged against a signal that happens to share its spelling.  A
+      declaration token needs no further condition: a rename always rewrites the
+      declaration, so a declaration token this run does not rewrite belongs to a
+      symbol whose name does not change;
+    * the generic smallest-enclosing-reference rule, which reaches references to
+      symbols this module keeps no record for at all -- subject to the edited-target
+      condition documented on ``_reference_attributions``.
+
+    The rule runs last, after T113's dead-source preserve, because
+    ``unelaborated_reference`` names the concrete cause and is the more useful
+    diagnostic of the two; a record already preserved keeps its own reason.  The
+    preserve is per record and never escalates to a core group, so the T111
+    boundary is untouched.
+    """
+
+    eligible = tuple(
+        record
+        for record in records.values()
+        if record.support == "eligible" and record.name
+    )
+    wanted = frozenset(record.name for record in eligible)
+    if not wanted:
+        return
+    cache: dict[object, str | None] = {}
+    tokens, unverified = _tokens_spelling(catalog, syntax_nodes, wanted, cache)
+    accounted: set[tuple[str, int, int]] = set()
+    for record in records.values():
+        if record.name not in wanted:
+            continue
+        accounted.add(
+            (
+                record.declaration.file,
+                record.declaration.start,
+                record.declaration.end,
+            )
+        )
+        for occurrence in record.occurrences.values():
+            source_range = occurrence.source_range
+            accounted.add((source_range.file, source_range.start, source_range.end))
+    # Every position whose spelling this run would change.  A reference whose
+    # target is declared at one of these cannot be left alone.
+    rewritten_starts = frozenset(
+        (source_range.file, source_range.start)
+        for record in eligible
+        for source_range in (
+            record.declaration,
+            *[item.source_range for item in record.occurrences.values()],
+        )
+    )
+    by_start = {(token.file, token.start): token for token in tokens}
+    accounted |= _declaration_attributions(catalog, nodes, by_start, wanted, cache)
+    accounted |= _reference_attributions(
+        tokens,
+        _reference_spans(catalog, nodes, wanted, cache),
+        rewritten_starts,
+    )
+    incomplete = set(unverified)
+    for token in tokens:
+        if (token.file, token.start, token.end) not in accounted:
+            incomplete.add(token.name)
+    if not incomplete:
+        return
+    for record in records.values():
+        if record.support == "eligible" and record.name in incomplete:
+            record.support = "preserved"
+            record.reason = "incomplete_name_coverage"
 
 
 def _collect_occurrences(
@@ -2248,11 +2701,15 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
     group_issues = _apply_group_binding_issues(records, binding_issues)
     # Last, and deliberately after every other rule has settled: a record that
     # is still eligible here is one this run would really rename, so it is the
-    # only set the dead-source check has to ask about.  Running it after
-    # `_apply_group_binding_issues` also keeps that function's per-record
-    # transaction boundary untouched; this preserve reports itself through
-    # `_category_outcomes` like any other stated per-record reason.
-    _apply_unelaborated_references(source_catalog, nodes, records)
+    # only set the dead-source and name-completeness checks have to ask about.
+    # Running them after `_apply_group_binding_issues` also keeps that function's
+    # per-record transaction boundary untouched; both preserves report themselves
+    # through `_category_outcomes` like any other stated per-record reason.  The
+    # CST is walked once and shared, and `unelaborated_reference` runs first
+    # because it names the concrete cause and is the better diagnostic.
+    syntax_nodes = _syntax_nodes(source_catalog)
+    _apply_unelaborated_references(source_catalog, nodes, syntax_nodes, records)
+    _apply_name_completeness(source_catalog, nodes, syntax_nodes, records)
     for category, category_issues in binding_issues.items():
         existing = list(range_issues.get(category, ()))
         for issue in category_issues:
