@@ -59,6 +59,10 @@ _VENDOR_COMPATIBILITY_DIRECTIVES = frozenset(
     }
 )
 _HORIZONTAL_WHITESPACE = b" \t\f\v"
+_DIAGNOSTIC_READ_CHUNK_SIZE = 4096
+_MAX_VENDOR_DIRECTIVE_SIZE = max(
+    len(name) + 1 for name in _VENDOR_COMPATIBILITY_DIRECTIVES
+)
 
 @dataclass(frozen=True)
 class _Definition:
@@ -145,6 +149,14 @@ class PySlangCompilationView:
     vendor_compatibility_files: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _PhysicalDiagnosticSource:
+    relative: str
+    path: Path
+    offset: int
+    size: int
+
+
 def _diagnostic_key(diagnostic: Any) -> tuple[str, Any, int]:
     return (
         str(diagnostic.code),
@@ -159,8 +171,8 @@ def _physical_diagnostic_source(
     manager: Any,
     diagnostic: Any,
     physical_files: frozenset[str],
-) -> tuple[str, bytes, int] | None:
-    """Return trusted physical bytes for one diagnostic, or fail closed."""
+) -> _PhysicalDiagnosticSource | None:
+    """Return trusted physical metadata for one diagnostic, or fail closed."""
 
     try:
         location = diagnostic.location
@@ -170,11 +182,16 @@ def _physical_diagnostic_source(
         relative = absolute.relative_to(root.resolve()).as_posix()
         if relative not in physical_files:
             return None
-        data = absolute.read_bytes()
         offset = int(location.offset)
-        if offset < 0 or offset >= len(data):
+        size = absolute.stat().st_size
+        if offset < 0 or offset >= size:
             return None
-        return relative, data, offset
+        return _PhysicalDiagnosticSource(
+            relative=relative,
+            path=absolute,
+            offset=offset,
+            size=size,
+        )
     except (OSError, RuntimeError, TypeError, ValueError):
         return None
 
@@ -217,6 +234,121 @@ def _ifnone_at(data: bytes, offset: int) -> bool:
     return after >= len(data) or data[after] not in identifier
 
 
+def _open_diagnostic_source(source: _PhysicalDiagnosticSource) -> Any | None:
+    try:
+        stream = source.path.open("rb")
+        if os.fstat(stream.fileno()).st_size != source.size:
+            stream.close()
+            return None
+        if source.offset < 0 or source.offset >= source.size:
+            stream.close()
+            return None
+        return stream
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _ifnone_file_at(source: _PhysicalDiagnosticSource) -> bool:
+    stream = _open_diagnostic_source(source)
+    if stream is None:
+        return False
+    try:
+        start = max(0, source.offset - 1)
+        width = source.offset - start + len(b"ifnone") + 1
+        stream.seek(start)
+        data = stream.read(width)
+        if len(data) != min(width, source.size - start):
+            return False
+        return _ifnone_at(data, source.offset - start)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    finally:
+        stream.close()
+
+
+def _directive_has_only_leading_whitespace(
+    stream: Any,
+    offset: int,
+) -> bool:
+    cursor = offset
+    while cursor > 0:
+        size = min(_DIAGNOSTIC_READ_CHUNK_SIZE, cursor)
+        cursor -= size
+        stream.seek(cursor)
+        chunk = stream.read(size)
+        if len(chunk) != size:
+            return False
+        newline = chunk.rfind(b"\n")
+        segment = chunk[newline + 1 :] if newline >= 0 else chunk
+        if any(byte not in _HORIZONTAL_WHITESPACE for byte in segment):
+            return False
+        if newline >= 0:
+            return True
+    return True
+
+
+def _vendor_directive_file_at(source: _PhysicalDiagnosticSource) -> bytes | None:
+    stream = _open_diagnostic_source(source)
+    if stream is None:
+        return None
+    try:
+        if not _directive_has_only_leading_whitespace(stream, source.offset):
+            return None
+        stream.seek(source.offset)
+        prefix_size = min(
+            _MAX_VENDOR_DIRECTIVE_SIZE + 1,
+            source.size - source.offset,
+        )
+        prefix = stream.read(prefix_size)
+        if len(prefix) != prefix_size:
+            return None
+        directive: bytes | None = None
+        for name in _VENDOR_COMPATIBILITY_DIRECTIVES:
+            if prefix.startswith(b"`" + name):
+                directive = name
+                break
+        if directive is None:
+            return None
+
+        position = source.offset + len(directive) + 1
+        stream.seek(position)
+        state = "tail"
+        while position < source.size:
+            size = min(_DIAGNOSTIC_READ_CHUNK_SIZE, source.size - position)
+            chunk = stream.read(size)
+            if len(chunk) != size:
+                return None
+            position += size
+            for byte in chunk:
+                if state == "comment":
+                    if byte == ord("\n"):
+                        return directive
+                    continue
+                if state == "slash":
+                    if byte != ord("/"):
+                        return None
+                    state = "comment"
+                    continue
+                if state == "cr":
+                    return directive if byte == ord("\n") else None
+                if byte in _HORIZONTAL_WHITESPACE:
+                    continue
+                if byte == ord("\n"):
+                    return directive
+                if byte == ord("\r"):
+                    state = "cr"
+                    continue
+                if byte == ord("/"):
+                    state = "slash"
+                    continue
+                return None
+        return directive if state in {"tail", "comment", "cr"} else None
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    finally:
+        stream.close()
+
+
 def _classify_vendor_compatibility_errors(
     *,
     root: Path,
@@ -234,14 +366,13 @@ def _classify_vendor_compatibility_errors(
         )
         if physical is None:
             continue
-        relative, data, offset = physical
         code = str(diagnostic.code)
-        if code == "DiagCode(IfNoneEdgeSensitive)" and _ifnone_at(data, offset):
-            candidates.append((diagnostic, relative, None))
+        if code == "DiagCode(IfNoneEdgeSensitive)" and _ifnone_file_at(physical):
+            candidates.append((diagnostic, physical.relative, None))
         elif code == "DiagCode(UnknownDirective)":
-            directive = _vendor_directive_at(data, offset)
+            directive = _vendor_directive_file_at(physical)
             if directive is not None:
-                candidates.append((diagnostic, relative, directive))
+                candidates.append((diagnostic, physical.relative, directive))
 
     invalid_protect_files: set[str] = set()
     protect_events: dict[str, list[tuple[int, bytes]]] = {}
