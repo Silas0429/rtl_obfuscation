@@ -21,6 +21,7 @@ import pyslang
 from .rtl_files import (
     is_context_file,
     is_header_file,
+    is_include_context_file,
     is_physical_rtl_file,
     is_source_file,
 )
@@ -1028,7 +1029,7 @@ class _ProjectContext:
         bag, _ = self._bags()
         compile_order = self.compile_order(closure)
         context_paths = sorted(
-            path for path in closure if is_context_file(path)
+            path for path in closure if is_include_context_file(path)
         )
         source_paths = [
             str(self.root / path) for path in (*context_paths, *compile_order)
@@ -1288,7 +1289,10 @@ def _discover_sourceset(
 
     if top is None:
         for edge in context.include_edges:
-            if not (is_physical_rtl_file(edge.provider) or is_context_file(edge.provider)):
+            if not (
+                is_physical_rtl_file(edge.provider)
+                or is_include_context_file(edge.provider)
+            ):
                 raise ProjectAnalysisError(
                     "UNSUPPORTED_INCLUDE",
                     f"include dependency is not a supported RTL provider: {edge.provider}",
@@ -1296,7 +1300,7 @@ def _discover_sourceset(
                 )
         included_files = {
             edge.provider for edge in context.include_edges
-            if is_header_file(edge.provider) or is_context_file(edge.provider)
+            if is_header_file(edge.provider) or is_include_context_file(edge.provider)
         }
         included_files.update(explicit_header_files)
         return SourceSetDiscovery(
@@ -1343,7 +1347,10 @@ def _discover_sourceset(
         )
 
     for edge in context.include_edges:
-        if not (is_physical_rtl_file(edge.provider) or is_context_file(edge.provider)):
+        if not (
+            is_physical_rtl_file(edge.provider)
+            or is_include_context_file(edge.provider)
+        ):
             raise ProjectAnalysisError(
                 "UNSUPPORTED_INCLUDE",
                 f"include dependency is not a supported RTL provider: {edge.provider}",
@@ -1351,7 +1358,7 @@ def _discover_sourceset(
             )
     included_files = {
         edge.provider for edge in context.include_edges
-        if is_header_file(edge.provider) or is_context_file(edge.provider)
+        if is_header_file(edge.provider) or is_include_context_file(edge.provider)
     }
     included_files.update(explicit_header_files)
 

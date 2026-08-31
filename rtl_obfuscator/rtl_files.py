@@ -7,7 +7,8 @@ from pathlib import Path
 
 SOURCE_SUFFIXES = frozenset({".sv", ".v"})
 HEADER_SUFFIXES = frozenset({".svh", ".vh"})
-CONTEXT_SUFFIXES = frozenset({".h"})
+CONTEXT_SUFFIXES = frozenset({".h", ".vic"})
+INCLUDE_CONTEXT_SUFFIXES = frozenset({".h"})
 PHYSICAL_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
 
 
@@ -28,9 +29,15 @@ def is_header_file(path: Path | str) -> bool:
 
 
 def is_context_file(path: Path | str) -> bool:
-    """Return whether *path* is an explicit filelist-only context header."""
+    """Return whether *path* is an explicit filelist context file."""
 
     return _suffix(path) in CONTEXT_SUFFIXES
+
+
+def is_include_context_file(path: Path | str) -> bool:
+    """Return whether *path* can be discovered as an include context file."""
+
+    return _suffix(path) in INCLUDE_CONTEXT_SUFFIXES
 
 
 def is_physical_rtl_file(path: Path | str) -> bool:

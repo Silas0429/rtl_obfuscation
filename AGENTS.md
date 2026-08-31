@@ -26,8 +26,9 @@ conda run -n rtl_obfuscation yosys -V
 
 - SystemVerilog semantic mode remains the only target frontend for this project.
 - Source units may use lower-case `.sv` or `.v`; included semantic headers may use `.svh` or `.vh`.
-  Explicit filelists may additionally list lower-case `.h` context-only macro headers; `.h` files are
-  preserved as physical inputs and are not standalone source units or rename targets.
+  Explicit filelists may additionally list lower-case `.h` macro context headers and lower-case `.vic`
+  parameter context files. These context files are preserved as physical inputs and are not standalone
+  source units or rename targets; `.vic` is accepted only as a bare explicit filelist entry.
 - New RTL samples and fixtures should use SystemVerilog-compatible syntax; the `.v/.vh` suffix support does not
   introduce a strict legacy-Verilog parser or a parser branch selected by suffix.
 

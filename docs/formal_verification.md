@@ -34,8 +34,8 @@ Formal 输入必须满足：
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
 - canonical `design.f` 使用加密输出的完整 `compile_order`：显式列出的 `.h/.svh/.vh` header/context
-  前导在 source unit 之前；由 `` `include`` 发现但未显式列出的 header 仍随 gate 保留，不写入
-  `design.f`。
+  以及显式 filelist-only `.vic` 参数 context 前导在 source unit 之前；由 `` `include`` 发现但未
+  显式列出的 header 仍随 gate 保留，不写入 `design.f`。
 
 ## 多文件项目：推荐命令
 

@@ -1,0 +1,4 @@
+/* Arbitration modes */
+parameter SIMPLE_RR = 2'b00;
+parameter ADDR_BITS = 4;
+parameter DATA_BITS = 8;

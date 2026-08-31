@@ -69,7 +69,9 @@ candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `r
 ## 文件后缀
 
 `.sv`、`.v` 使用同一条 PySlang SystemVerilog 语义前端；`.svh`、`.vh` 是 include header；显式 filelist
-还可列出只读 `.h` 宏 context header。`.h` 不进入 source unit，也不是宏 rename target。
+还可列出只读 `.h` 宏 context header，以及用裸路径列出的 `.vic` compilation-unit 参数 context。
+`.h/.vic` 不进入 source unit，也不是 rename target；`.vic` 不支持 `-v`、single-file、project-root
+自动发现或 `` `include`` 引入。
 
 ## 示例
 

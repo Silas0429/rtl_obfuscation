@@ -21,6 +21,7 @@ from .rtl_files import (
     SOURCE_SUFFIXES,
     is_context_file,
     is_header_file,
+    is_include_context_file,
     is_physical_rtl_file,
     is_source_file,
 )
@@ -280,7 +281,7 @@ def _normalize_filelist_entry(
     if absolute.suffix not in SOURCE_SUFFIXES | HEADER_SUFFIXES | CONTEXT_SUFFIXES:
         raise SourceSetError(
             "SOURCESET_UNSUPPORTED_FILE",
-            "filelist entries must use .sv, .v, .svh, .vh, or explicit .h suffixes",
+            "filelist entries must use .sv, .v, .svh, .vh, or explicit filelist-only .h/.vic suffixes",
             relative,
         )
     if not absolute.is_file():
@@ -612,7 +613,18 @@ def _discover_explicit_include_headers(
                 candidate_path = root / candidate
                 if not candidate_path.is_file():
                     continue
-                if not (is_header_file(candidate_path) or is_context_file(candidate_path)):
+                if is_context_file(candidate_path) and not is_include_context_file(
+                    candidate_path
+                ):
+                    raise SourceSetError(
+                        "SOURCESET_UNSUPPORTED_FILE",
+                        ".vic parameter context must be listed explicitly in the filelist",
+                        candidate,
+                    )
+                if not (
+                    is_header_file(candidate_path)
+                    or is_include_context_file(candidate_path)
+                ):
                     continue
                 normalized = _relative_to_root(
                     root, candidate_path, label="include file"
