@@ -46,8 +46,9 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 
 mapping、orchestration、mapping-execution、rate 和 restore 持久化报告使用 schema 2；嵌套 SourceSet
 仍使用 schema 1。`.sv/.v` 是 source unit，`.svh/.vh/.h` 只作为上下文物理文件；显式 filelist 裸路径
-还可列出 `.vic` compilation-unit 参数上下文。上下文文件不进入 rename target，`.vic` 不由
-single-file、project-root 或 `` `include`` 自动发现，也不接受 `-v`。
+还可列出 `.vic` compilation-unit 参数上下文。上下文文件不进入 rename target；source/header 只有在
+同一规范化 `.vic` 路径已作为裸 filelist 条目显式列出时才能 include 它。`.vic` 不由 single-file、
+project-root 或 include-only 输入自动发现，也不接受 `-v`。
 
 ## 验证边界
 

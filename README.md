@@ -74,8 +74,9 @@ python rtl_encrypt.py \
 filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
 unit，当前语义与同位置的裸 `PATH` 相同，不提供仿真器的惰性 library search。被 include 的
 `.svh/.vh` 和显式列出的 `.h` 是只读上下文。显式 filelist 还可用裸路径列出 `.vic`
-compilation-unit 参数上下文；`.vic` 不进入 rename target，也不支持 `-v`、`--input`、project-root
-自动发现或 `` `include`` 引入。`-f` 嵌套 filelist、
+compilation-unit 参数上下文；显式列出后，source/header 可 `` `include`` 同一规范化完整路径，但不能
+仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
+自动发现。`-f` 嵌套 filelist、
 `+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
 `--source-root`；源码根目录由 filelist 和 include 路径自动推导。
 

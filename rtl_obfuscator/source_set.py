@@ -577,7 +577,11 @@ def _map_discovery_error(error: ProjectAnalysisError) -> SourceSetError:
 
 
 def _discover_explicit_include_headers(
-    *, root: Path, seed_files: Iterable[str], include_dirs: Iterable[str]
+    *,
+    root: Path,
+    seed_files: Iterable[str],
+    include_dirs: Iterable[str],
+    explicit_header_files: Iterable[str],
 ) -> tuple[str, ...]:
     """Add only headers named by the bounded filelist/include closure."""
 
@@ -585,6 +589,7 @@ def _discover_explicit_include_headers(
     pending = list(dict.fromkeys(seed_files))
     seen: set[str] = set()
     include_directories = tuple(include_dirs)
+    explicit_headers = frozenset(explicit_header_files)
     while pending:
         relative = pending.pop(0)
         if relative in seen:
@@ -616,11 +621,16 @@ def _discover_explicit_include_headers(
                 if is_context_file(candidate_path) and not is_include_context_file(
                     candidate_path
                 ):
-                    raise SourceSetError(
-                        "SOURCESET_UNSUPPORTED_FILE",
-                        ".vic parameter context must be listed explicitly in the filelist",
-                        candidate,
+                    normalized = _relative_to_root(
+                        root, candidate_path, label="include file"
                     )
+                    if normalized not in explicit_headers:
+                        raise SourceSetError(
+                            "SOURCESET_UNSUPPORTED_FILE",
+                            ".vic parameter context must be listed explicitly in the filelist",
+                            normalized,
+                        )
+                    continue
                 if not (
                     is_header_file(candidate_path)
                     or is_include_context_file(candidate_path)
@@ -764,6 +774,7 @@ def from_filelist(
             root=root,
             seed_files=(*source_files, *explicit_headers),
             include_dirs=normalized_dirs,
+            explicit_header_files=explicit_headers,
         )
     )
     candidates = tuple(

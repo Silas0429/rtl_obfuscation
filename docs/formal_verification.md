@@ -35,7 +35,8 @@ Formal 输入必须满足：
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
 - canonical `design.f` 使用加密输出的完整 `compile_order`：显式列出的 `.h/.svh/.vh` header/context
   以及显式 filelist-only `.vic` 参数 context 前导在 source unit 之前；由 `` `include`` 发现但未
-  显式列出的 header 仍随 gate 保留，不写入 `design.f`。
+  显式列出的 header 仍随 gate 保留，不写入 `design.f`。source/header 可 include 已显式列入
+  `design.f` 的同一规范化 `.vic` 路径；include-only `.vic` 仍不支持。
 
 ## 多文件项目：推荐命令
 
