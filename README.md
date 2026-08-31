@@ -102,6 +102,10 @@ python rtl_encrypt.py --filelist "$PROJ/wrapper.f" --category all --output-dir <
 `$PROJ` 内（例如与原始 filelist 同目录）。放在 `$PROJ` 之外会让推导出的源码根目录上移一层，
 改变输出里的相对路径；确实无法写入 `$PROJ` 时改用 project-root 模式的 `--source-root` 显式指定。
 
+当 filelist 同时引用多个物理根时，源码根可能是 `/`；这只是 gate 中 root-relative 路径的边界。
+此时尚不存在的输出目录和报告路径只会避开 filelist 实际列出的源码、头文件和上下文文件，仍须满足
+父目录存在且目标本身不存在。
+
 ## 四个核心加密组
 
 | 类别 | 内容 |

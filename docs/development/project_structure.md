@@ -53,4 +53,5 @@ single-file、project-root 或 `` `include`` 自动发现，也不接受 `-v`。
 
 gate 发布前必须通过物理 range/manifest 审计、PySlang 严格编译和逐字节 restore。实际 gate Formal 需比较
 公开生成的改名 gate 与 gold；固定功能负例必须以非零退出和 `unproven`/`equiv_status -assert` 证明流程能
-拒绝错误 gate。RISC-V-Vector 不属于常规验收。
+拒绝错误 gate。filelist 的输出边界保护实际物理输入；当多物理根使 `source_root` 为 `/` 时，不把这个
+相对路径边界误当成整个源码目录。RISC-V-Vector 不属于常规验收。

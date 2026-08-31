@@ -145,7 +145,10 @@ def _validate_source_set(source_set: object) -> SourceSet:
 
 def _resolve_output(path: object, *, label: str) -> Path:
     try:
-        resolved = Path(path).expanduser().resolve()
+        candidate = Path(path).expanduser()
+        if candidate.is_symlink():
+            _fail("ORCHESTRATION_INPUT_INVALID", f"{label} must not be a symlink")
+        resolved = candidate.resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _fail("ORCHESTRATION_INPUT_INVALID", f"{label} is invalid: {error}")
     if resolved.exists() or not resolved.parent.is_dir():
@@ -166,11 +169,39 @@ def _paths_overlap(left: Path, right: Path) -> bool:
         return False
 
 
+def _protected_output_paths(source_set: SourceSet) -> tuple[Path, ...]:
+    """Return the source paths protected by the output boundary.
+
+    For an authoritative filelist, ``source_root`` can be ``/`` when inputs
+    come from multiple physical roots.  It remains the canonical relative
+    path boundary, but only the listed physical files are protected from
+    output overlap.  Single-file and project-root retain the full root fence.
+    """
+
+    source_root = Path(source_set.source_root).expanduser().resolve()
+    if source_set.origin != "filelist" or source_root != Path("/"):
+        return (source_root,)
+    protected: list[Path] = []
+    for file in (*source_set.ordered_source_files, *source_set.included_files):
+        try:
+            path = (source_root / file).resolve()
+            path.relative_to(source_root)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            _fail("ORCHESTRATION_INPUT_INVALID", f"physical input path is invalid: {error}")
+        if path not in protected:
+            protected.append(path)
+    return tuple(protected)
+
+
 def _validate_outputs(source_set: SourceSet, gate_dir: object, restore_dir: object) -> tuple[Path, Path]:
     gate_path = _resolve_output(gate_dir, label="gate_dir")
     restore_path = _resolve_output(restore_dir, label="restore_dir")
-    source_root = Path(source_set.source_root).expanduser().resolve()
-    if _paths_overlap(gate_path, restore_path) or _paths_overlap(gate_path, source_root) or _paths_overlap(restore_path, source_root):
+    protected = _protected_output_paths(source_set)
+    if _paths_overlap(gate_path, restore_path) or any(
+        _paths_overlap(path, protected_path)
+        for path in (gate_path, restore_path)
+        for protected_path in protected
+    ):
         _fail("ORCHESTRATION_INPUT_INVALID", "output path overlaps a protected path")
     return gate_path, restore_path
 

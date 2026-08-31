@@ -338,9 +338,56 @@ def _cli_vnext_path_overlap(first: Path, second: Path) -> bool:
         return False
 
 
+def _cli_vnext_filelist_physical_paths(source_set: object) -> tuple[Path, ...]:
+    """Resolve a filelist SourceSet's physical inputs for output protection."""
+
+    if getattr(source_set, "origin", None) != "filelist":
+        return ()
+    try:
+        root = Path(source_set.source_root).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError) as error:
+        _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", f"source_root is invalid: {error}")
+    if root != Path("/"):
+        return ()
+    paths: list[Path] = []
+    for file in (
+        *getattr(source_set, "ordered_source_files", ()),
+        *getattr(source_set, "included_files", ()),
+    ):
+        try:
+            path = (root / file).resolve()
+            path.relative_to(root)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            _cli_vnext_fail("CLI_VNEXT_INPUT_INVALID", f"physical input path is invalid: {error}")
+        if path not in paths:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _cli_vnext_validate_filelist_outputs(
+    source_set: object,
+    *,
+    output_dir: Path,
+    map_file: Path,
+    metrics_file: Path,
+) -> None:
+    protected = _cli_vnext_filelist_physical_paths(source_set)
+    if not protected:
+        return
+    if any(
+        _cli_vnext_path_overlap(target, physical)
+        for target in (output_dir, map_file, metrics_file)
+        for physical in protected
+    ):
+        _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
+
+
 def _cli_vnext_output_path(value: object, option: str) -> Path:
     try:
-        path = Path(value).expanduser().resolve()
+        candidate = Path(value).expanduser()
+        if candidate.is_symlink():
+            _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", option)
+        path = candidate.resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", f"{option}: {error}")
     if path.exists() or path.is_symlink() or not path.parent.is_dir():
@@ -525,7 +572,8 @@ def _cli_vnext_validate_arguments(
         if metrics_default
         else _cli_vnext_output_path(args.metrics_file, "--metrics")
     )
-    if _cli_vnext_path_overlap(output_dir, source_root):
+    filelist_global_root = filelist is not None and source_root == Path("/")
+    if not filelist_global_root and _cli_vnext_path_overlap(output_dir, source_root):
         _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
     explicit_reports = tuple(
         path
@@ -536,7 +584,7 @@ def _cli_vnext_validate_arguments(
         if not is_default
     )
     for path in explicit_reports:
-        if _cli_vnext_path_overlap(path, source_root) or _cli_vnext_path_overlap(
+        if (not filelist_global_root and _cli_vnext_path_overlap(path, source_root)) or _cli_vnext_path_overlap(
             path, output_dir
         ):
             _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
@@ -1035,6 +1083,12 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
     ) = _cli_vnext_validate_arguments(args)
     progress.stage("source_set", "begin")
     source_set = _cli_vnext_source_set(args, source_root)
+    _cli_vnext_validate_filelist_outputs(
+        source_set,
+        output_dir=output_dir,
+        map_file=map_file,
+        metrics_file=metrics_file,
+    )
     progress.stage("source_set", "end")
     try:
         staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-cli-vnext-"))

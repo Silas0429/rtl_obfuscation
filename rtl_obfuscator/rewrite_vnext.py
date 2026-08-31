@@ -450,7 +450,10 @@ def _validate_mapping_execution(
 
 def _validate_mapping_output_path(output_file: Path) -> Path:
     try:
-        path = Path(output_file).expanduser().resolve()
+        candidate = Path(output_file).expanduser()
+        if candidate.is_symlink():
+            _fail("MAPPING_OUTPUT_INVALID", "output_file must not be a symlink")
+        path = candidate.resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _fail("MAPPING_OUTPUT_INVALID", f"output path is invalid: {error}")
     if path.exists() or not path.parent.is_dir():
@@ -459,14 +462,9 @@ def _validate_mapping_output_path(output_file: Path) -> Path:
 
 
 def _validate_mapping_output_protection(output_file: Path, source_set: SourceSet) -> None:
-    try:
-        source_root = Path(source_set.source_root).expanduser().resolve()
-        output_file.relative_to(source_root)
-    except ValueError:
-        return
-    except (OSError, RuntimeError, TypeError) as error:
-        _fail("MAPPING_OUTPUT_INVALID", f"source_root is invalid: {error}")
-    _fail("MAPPING_OUTPUT_INVALID", "output_file overlaps source_root or a physical source file")
+    protected = _protected_output_paths(source_set)
+    if any(_path_overlap(output_file, path) for path in protected):
+        _fail("MAPPING_OUTPUT_INVALID", "output_file overlaps a protected path")
 
 
 def build_mapping_execution_vnext(
@@ -561,6 +559,29 @@ def _source_root(source_set: SourceSet) -> Path:
     if not root.is_dir():
         _fail("REWRITE_MAPPING_INVALID", "source_root is not a directory")
     return root
+
+
+def _protected_output_paths(source_set: SourceSet) -> tuple[Path, ...]:
+    """Return the paths that an output must not overlap.
+
+    A filelist can legitimately have ``/`` as its inferred root.  In that
+    mode the root is only a relative-name boundary, not a directory owned by
+    the input.  Protect the physical files instead.  The other input modes
+    retain their original source-root boundary.
+    """
+
+    root = _source_root(source_set)
+    if source_set.origin != "filelist" or root != Path("/"):
+        return (root,)
+    protected: list[Path] = []
+    for file in _physical_files(source_set):
+        path = (root / file).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            _fail("REWRITE_MAPPING_INVALID", f"physical file escapes source_root: {file}")
+        protected.append(path)
+    return tuple(protected)
 
 
 def _check_regular_source_files(
@@ -803,21 +824,48 @@ def _expected_edits(
     return tuple(edits)
 
 
-def _validate_output_path(output_dir: Path, *, source_root: Path | None = None, gate_dir: Path | None = None, code: str) -> Path:
+def _path_overlap(first: Path, second: Path) -> bool:
     try:
-        path = Path(output_dir).expanduser().resolve()
+        first.relative_to(second)
+        return True
+    except ValueError:
+        pass
+    try:
+        second.relative_to(first)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_output_path(
+    output_dir: Path,
+    *,
+    source_root: Path | None = None,
+    source_set: SourceSet | None = None,
+    gate_dir: Path | None = None,
+    code: str,
+) -> Path:
+    try:
+        candidate = Path(output_dir).expanduser()
+        if candidate.is_symlink():
+            _fail(code, "output path must not be a symlink")
+        path = candidate.resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _fail(code, f"output path is invalid: {error}")
     if path.exists() or not path.parent.is_dir():
         _fail(code, "output path must not exist and its parent must exist")
-    for other in (source_root, gate_dir):
+    protected: list[Path] = []
+    if source_set is not None:
+        protected.extend(_protected_output_paths(source_set))
+    elif source_root is not None:
+        protected.append(Path(source_root).expanduser().resolve())
+    if gate_dir is not None:
+        protected.append(Path(gate_dir).expanduser().resolve())
+    for other in protected:
         if other is None:
             continue
-        try:
-            path.relative_to(other)
-        except ValueError:
-            continue
-        _fail(code, "output path overlaps a protected directory")
+        if _path_overlap(path, other):
+            _fail(code, "output path overlaps a protected path")
     return path
 
 
@@ -838,8 +886,11 @@ def write_gate_vnext(
         mapping_vnext,
         validate_canonical_policy=_validate_canonical_policy,
     )
-    source_root = _source_root(source_set)
-    destination = _validate_output_path(output_dir, source_root=source_root, code="REWRITE_OUTPUT_INVALID")
+    destination = _validate_output_path(
+        output_dir,
+        source_set=source_set,
+        code="REWRITE_OUTPUT_INVALID",
+    )
     edits = _expected_edits(
         mapping_vnext,
         validate_canonical_policy=_validate_canonical_policy,
@@ -962,12 +1013,17 @@ def restore_gate_vnext(
         gate_path = Path(gate_dir).expanduser().resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _fail("RESTORE_GATE_INVALID", f"gate path is invalid: {error}")
-    destination = _validate_output_path(output_dir, gate_dir=gate_path, code="RESTORE_OUTPUT_INVALID")
     if not gate_path.is_dir():
         _fail("RESTORE_GATE_INVALID", "gate directory does not exist")
     source_set, _rename_index, edits = _validate_execution(
         rewrite_execution,
         validate_canonical_policy=_validate_canonical_policy,
+    )
+    destination = _validate_output_path(
+        output_dir,
+        source_set=source_set,
+        gate_dir=gate_path,
+        code="RESTORE_OUTPUT_INVALID",
     )
     files = _physical_files(source_set)
     try:
