@@ -64,6 +64,7 @@ SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、�
 python rtl_encrypt.py \
   --filelist design.f \
   --top <可选的顶层模块名> \
+  --rewrite-root <允许改写的自有 RTL 目录> \
   --category signals \
   --output-dir <尚不存在的输出目录>
 ```
@@ -72,8 +73,12 @@ python rtl_encrypt.py \
 `signals`、`ports`、`interface`、`struct`、`all`。`all` 按固定顺序展开为四个核心组。
 
 filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
-unit，当前语义与同位置的裸 `PATH` 相同，不提供仿真器的惰性 library search。被 include 的
-`.svh/.vh` 和显式列出的 `.h` 是只读上下文。显式 filelist 还可用裸路径列出 `.vic`
+unit，当前语义与同位置的裸 `PATH` 完全相同，不用它判断供应商归属，也不提供仿真器的惰性
+library search。被 include 的 `.svh/.vh` 、显式列出的 `.h` 以及由已列源码直接或递归 include 的
+lower-case `.sv/.v` 都是只读物理依赖：include-only `.sv/.v` 会复制、校验和恢复，但不作为独立 source unit
+进入 `design.f`。同名 source-suffix include 在 local 目录和 `+incdir+` 中同时命中时拒绝猜测。
+
+显式 filelist 还可用裸路径列出 `.vic`
 compilation-unit 参数上下文；显式列出后，source/header 可 `` `include`` 同一规范化完整路径，但不能
 仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
 自动发现。`-f` 嵌套 filelist、
@@ -107,6 +112,31 @@ python rtl_encrypt.py --filelist "$PROJ/wrapper.f" --category all --output-dir <
 此时尚不存在的输出目录和报告路径只会避开 filelist 实际列出的源码、头文件和上下文文件，仍须满足
 父目录存在且目标本身不存在。
 
+### 混合工程用 `--rewrite-root` 限定改写目录
+
+真实 filelist 同时带有自有 RTL 和外部模型时，推荐可重复提供 `--rewrite-root DIR`。只有位于至少一个目录内的
+显式 source unit 才可以改写；目录外文件仍参与 PySlang 编译和绑定，但对应记录以
+`outside_rewrite_root` 保留。多个目录取并集，相对路径按当前调用目录解析；目录必须存在、位于推导后的
+SourceSet root 中，并命中至少一个 filelist 显式 source。该参数仅属于 filelist 加密模式。
+
+```sh
+python rtl_encrypt.py \
+  --filelist design.f \
+  --top TOP \
+  --rewrite-root "$PROJ/rtl" \
+  --rewrite-root "$PROJ/owned_ip" \
+  --category all \
+  --output-dir <输出目录>
+```
+
+未提供时保持原有的全 filelist source 改写候选语义。`--rewrite-root` 是用户授权白名单，不会按目录名、版权头或
+`-v` 自动识别供应商代码；请指向真正拥有且允许改写的最小目录。
+
+PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/
+`endprotect` 和四个 fault directive）会报可恢复诊断。工具只在诊断能精确回到预期物理字节、
+`protect/endprotect` 正确配对时允许继续，并把产生诊断的整个文件以 `readonly_vendor_model` 保留。普通未知宏、
+带参数 directive、未配对 protect 或其他解析/语义错误仍会停止；这不是完整的供应商语法兼容层。
+
 ## 四个核心加密组
 
 | 类别 | 内容 |
@@ -124,11 +154,11 @@ python rtl_encrypt.py --filelist "$PROJ/wrapper.f" --category all --output-dir <
 | 模式 | 参数 |
 | --- | --- |
 | 单文件 | 仅 `--input FILE` |
-| filelist | `--filelist FILE`，`--top` 可选 |
+| filelist | `--filelist FILE`，`--top` 可选；`--rewrite-root DIR` 可重复 |
 | project-root | `--source-root DIR --top TOP` |
 
-三种模式严格互斥：单文件不能附带 `--source-root` 或 `--top`；filelist 不能附带
-`--source-root`；project-root 不能附带 `--input` 或 `--filelist`。输入模式错误会在输出创建前报告
+三种模式严格互斥：单文件不能附带 `--source-root`、`--top` 或 `--rewrite-root`；filelist 不能附带
+`--source-root`；project-root 和 decrypt 不接受 `--rewrite-root`。输入模式错误会在输出创建前报告
 稳定错误码和具体 detail/message。
 
 project-root 是辅助入口，会从源码根目录发现依赖；单文件用于快速试用。两者不改变四组识别规则。
@@ -164,6 +194,9 @@ python rtl_decrypt.py \
 | `source_binding_incomplete` | 该记录缺少完整的声明与引用绑定证据 |
 | `unelaborated_reference` | 旧名还写在未被 elaborate 的源码里，那里的引用语义不可见 |
 | `incomplete_name_coverage` | 源码里还有拼写该旧名的 token 无法归属给任何引用或声明 |
+| `readonly_vendor_model` | 该记录跨入产生精确供应商兼容诊断的只读文件 |
+| `outside_rewrite_root` | 该记录的声明或引用不在任一授权改写目录中 |
+| `readonly_include_file` | 该记录跨入只作为 include 物理依赖的文件 |
 
 `unelaborated_reference` 覆盖只在未选中 generate 分支或从未 elaborate 的设计单元里出现的引用。
 那些 token 物理存在但不产生任何语义引用，严格编译也不报错，所以只改声明会把旧名留在加密结果里
@@ -179,6 +212,7 @@ python rtl_decrypt.py \
 | 选项 | 说明 |
 | --- | --- |
 | `--include-dir PATH` | include 目录，可重复 |
+| `--rewrite-root DIR` | 仅 filelist 加密模式；允许改写的目录，可重复 |
 | `--define NAME[=VALUE]` | 预处理宏，可重复 |
 | `--category NAME` | 四组之一或 `all`，可重复且必填 |
 | `--name-length N` | 新名称长度，最小 4，默认 20 |

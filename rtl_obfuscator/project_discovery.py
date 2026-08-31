@@ -48,6 +48,17 @@ _DIRECTIVES = frozenset(
         "undef",
     }
 )
+_VENDOR_COMPATIBILITY_DIRECTIVES = frozenset(
+    {
+        b"protect",
+        b"endprotect",
+        b"suppress_faults",
+        b"enable_portfaults",
+        b"disable_portfaults",
+        b"nosuppress_faults",
+    }
+)
+_HORIZONTAL_WHITESPACE = b" \t\f\v"
 
 @dataclass(frozen=True)
 class _Definition:
@@ -130,6 +141,141 @@ class PySlangCompilationView:
     parse_errors: tuple[Any, ...]
     semantic_errors: tuple[Any, ...]
     nonblocking_errors: tuple[Any, ...]
+    vendor_compatibility_errors: tuple[Any, ...]
+    vendor_compatibility_files: tuple[str, ...]
+
+
+def _diagnostic_key(diagnostic: Any) -> tuple[str, Any, int]:
+    return (
+        str(diagnostic.code),
+        diagnostic.location.buffer,
+        int(diagnostic.location.offset),
+    )
+
+
+def _physical_diagnostic_source(
+    *,
+    root: Path,
+    manager: Any,
+    diagnostic: Any,
+    physical_files: frozenset[str],
+) -> tuple[str, bytes, int] | None:
+    """Return trusted physical bytes for one diagnostic, or fail closed."""
+
+    try:
+        location = diagnostic.location
+        if not manager.isFileLoc(location) or manager.isMacroLoc(location):
+            return None
+        absolute = Path(manager.getFullPath(location.buffer)).resolve()
+        relative = absolute.relative_to(root.resolve()).as_posix()
+        if relative not in physical_files:
+            return None
+        data = absolute.read_bytes()
+        offset = int(location.offset)
+        if offset < 0 or offset >= len(data):
+            return None
+        return relative, data, offset
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _vendor_directive_at(data: bytes, offset: int) -> bytes | None:
+    begin = data.rfind(b"\n", 0, offset) + 1
+    end = data.find(b"\n", offset)
+    if end < 0:
+        end = len(data)
+    line = data[begin:end]
+    if line.endswith(b"\r"):
+        line = line[:-1]
+    stripped = line.strip(_HORIZONTAL_WHITESPACE)
+    directive, marker, _comment = stripped.partition(b"//")
+    if marker:
+        directive = directive.rstrip(_HORIZONTAL_WHITESPACE)
+    if directive != stripped and not marker:
+        return None
+    if not directive.startswith(b"`"):
+        return None
+    name = directive[1:]
+    if name not in _VENDOR_COMPATIBILITY_DIRECTIVES:
+        return None
+    if begin + len(line) < offset or offset < begin:
+        return None
+    expected = begin + len(line) - len(line.lstrip(_HORIZONTAL_WHITESPACE))
+    if offset != expected:
+        return None
+    return name
+
+
+def _ifnone_at(data: bytes, offset: int) -> bool:
+    token = b"ifnone"
+    if data[offset : offset + len(token)] != token:
+        return False
+    identifier = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_$"
+    if offset > 0 and data[offset - 1] in identifier:
+        return False
+    after = offset + len(token)
+    return after >= len(data) or data[after] not in identifier
+
+
+def _classify_vendor_compatibility_errors(
+    *,
+    root: Path,
+    manager: Any,
+    diagnostics: tuple[Any, ...],
+    physical_files: frozenset[str],
+) -> tuple[tuple[Any, ...], tuple[str, ...]]:
+    candidates: list[tuple[Any, str, bytes | None]] = []
+    for diagnostic in diagnostics:
+        physical = _physical_diagnostic_source(
+            root=root,
+            manager=manager,
+            diagnostic=diagnostic,
+            physical_files=physical_files,
+        )
+        if physical is None:
+            continue
+        relative, data, offset = physical
+        code = str(diagnostic.code)
+        if code == "DiagCode(IfNoneEdgeSensitive)" and _ifnone_at(data, offset):
+            candidates.append((diagnostic, relative, None))
+        elif code == "DiagCode(UnknownDirective)":
+            directive = _vendor_directive_at(data, offset)
+            if directive is not None:
+                candidates.append((diagnostic, relative, directive))
+
+    invalid_protect_files: set[str] = set()
+    protect_events: dict[str, list[tuple[int, bytes]]] = {}
+    for diagnostic, relative, directive in candidates:
+        if directive in {b"protect", b"endprotect"}:
+            protect_events.setdefault(relative, []).append(
+                (int(diagnostic.location.offset), directive)
+            )
+    for relative, events in protect_events.items():
+        open_protect = False
+        valid = True
+        for _offset, directive in sorted(events):
+            if directive == b"protect":
+                if open_protect:
+                    valid = False
+                    break
+                open_protect = True
+            elif not open_protect:
+                valid = False
+                break
+            else:
+                open_protect = False
+        if open_protect or not valid:
+            invalid_protect_files.add(relative)
+
+    accepted: list[Any] = []
+    files: list[str] = []
+    for diagnostic, relative, directive in candidates:
+        if directive in {b"protect", b"endprotect"} and relative in invalid_protect_files:
+            continue
+        accepted.append(diagnostic)
+        if relative not in files:
+            files.append(relative)
+    return tuple(accepted), tuple(files)
 
 
 def _pyslang_source_manager(
@@ -191,10 +337,26 @@ def compile_pyslang_source_set(
     compilation = pyslang.ast.Compilation(bag)
     compilation.addSyntaxTree(syntax_tree)
     root_symbol = compilation.getRoot()
-    parse_errors = tuple(
+    syntax_errors = tuple(
         diagnostic
         for diagnostic in syntax_tree.diagnostics
         if diagnostic.isError()
+    )
+    vendor_compatibility_errors, vendor_compatibility_files = (
+        _classify_vendor_compatibility_errors(
+            root=root,
+            manager=manager,
+            diagnostics=syntax_errors,
+            physical_files=frozenset((*ordered_files, *ordered_includes)),
+        )
+    )
+    vendor_keys = {
+        _diagnostic_key(diagnostic) for diagnostic in vendor_compatibility_errors
+    }
+    parse_errors = tuple(
+        diagnostic
+        for diagnostic in syntax_errors
+        if _diagnostic_key(diagnostic) not in vendor_keys
     )
     raw_errors = tuple(
         diagnostic
@@ -202,21 +364,22 @@ def compile_pyslang_source_set(
         if diagnostic.isError()
     )
     parse_keys = {
-        (str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset)
-        for diagnostic in parse_errors
+        _diagnostic_key(diagnostic)
+        for diagnostic in syntax_errors
     }
     semantic_candidates = tuple(
         diagnostic
         for diagnostic in raw_errors
         if (
-            str(diagnostic.code), diagnostic.location.buffer, diagnostic.location.offset
+            _diagnostic_key(diagnostic)
         ) not in parse_keys
     )
-    nonblocking_errors = tuple(
+    missing_timescale_errors = tuple(
         diagnostic
         for diagnostic in semantic_candidates
         if str(diagnostic.code) == "DiagCode(MissingTimeScale)"
     )
+    nonblocking_errors = (*vendor_compatibility_errors, *missing_timescale_errors)
     semantic_errors = tuple(
         diagnostic
         for diagnostic in semantic_candidates
@@ -231,6 +394,8 @@ def compile_pyslang_source_set(
         parse_errors=parse_errors,
         semantic_errors=semantic_errors,
         nonblocking_errors=nonblocking_errors,
+        vendor_compatibility_errors=vendor_compatibility_errors,
+        vendor_compatibility_files=vendor_compatibility_files,
     )
 
 
@@ -1209,7 +1374,11 @@ def _discover_sourceset(
             include_files=tuple(
                 path
                 for path in candidate_order
-                if is_header_file(path) or is_context_file(path)
+                if (
+                    is_header_file(path)
+                    or is_context_file(path)
+                    or (is_source_file(path) and path not in source_order)
+                )
             ),
             include_dirs=tuple(include_dirs),
             defines=dict(defines or {}),
@@ -1264,7 +1433,11 @@ def _discover_sourceset(
         included_files = {
             path
             for path in candidate_order
-            if is_header_file(path) or is_context_file(path)
+            if (
+                is_header_file(path)
+                or is_context_file(path)
+                or (is_source_file(path) and path not in source_order)
+            )
         }
         return SourceSetDiscovery(
             included_files=tuple(path for path in candidate_order if path in included_files),

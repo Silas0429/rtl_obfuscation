@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import posixpath
 import re
@@ -64,6 +64,7 @@ class SourceSet:
     top: str | None
     top_closure_files: tuple[str, ...]
     compile_order: tuple[str, ...]
+    rewrite_roots: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -196,6 +197,52 @@ def _normalize_top(top: str | None, *, required: bool) -> str | None:
             "SOURCESET_INVALID_ARGUMENT", "top must be a SystemVerilog identifier"
         )
     return top
+
+
+def _normalize_rewrite_roots(
+    *,
+    root: Path,
+    rewrite_roots: Iterable[Path | str],
+    source_files: tuple[str, ...],
+) -> tuple[str, ...]:
+    normalized: list[str] = []
+    source_paths = tuple((root / file).resolve() for file in source_files)
+    for item in rewrite_roots:
+        try:
+            absolute = Path(item).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            raise SourceSetError(
+                "SOURCESET_REWRITE_ROOT_INVALID",
+                "rewrite root is invalid",
+                str(item),
+            ) from error
+        if not absolute.is_dir():
+            raise SourceSetError(
+                "SOURCESET_REWRITE_ROOT_INVALID",
+                "rewrite root does not exist or is not a directory",
+                str(absolute),
+            )
+        relative = _relative_to_root(root, absolute, label="rewrite root")
+        if not any(
+            _path_is_within(source_path, absolute) for source_path in source_paths
+        ):
+            raise SourceSetError(
+                "SOURCESET_REWRITE_ROOT_INVALID",
+                "rewrite root contains no explicit filelist source unit",
+                relative,
+            )
+        relative = relative or "."
+        if relative not in normalized:
+            normalized.append(relative)
+    return tuple(normalized)
+
+
+def _path_is_within(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+        return True
+    except ValueError:
+        return False
 
 
 def _normalize_source_file(*, root: Path, source_file: Path) -> str:
@@ -582,14 +629,16 @@ def _discover_explicit_include_headers(
     seed_files: Iterable[str],
     include_dirs: Iterable[str],
     explicit_header_files: Iterable[str],
+    explicit_source_files: Iterable[str],
 ) -> tuple[str, ...]:
-    """Add only headers named by the bounded filelist/include closure."""
+    """Add bounded header/context and include-only source dependencies."""
 
     discovered: list[str] = []
     pending = list(dict.fromkeys(seed_files))
     seen: set[str] = set()
     include_directories = tuple(include_dirs)
     explicit_headers = frozenset(explicit_header_files)
+    explicit_sources = frozenset(explicit_source_files)
     while pending:
         relative = pending.pop(0)
         if relative in seen:
@@ -614,9 +663,17 @@ def _discover_explicit_include_headers(
                     str(PurePosixPath(directory) / include_path)
                     for directory in include_directories
                 )
-            for candidate in candidates:
+            source_candidates: list[str] = []
+            for candidate in dict.fromkeys(candidates):
                 candidate_path = root / candidate
                 if not candidate_path.is_file():
+                    continue
+                if is_source_file(candidate_path):
+                    normalized = _relative_to_root(
+                        root, candidate_path, label="include file"
+                    )
+                    if normalized not in source_candidates:
+                        source_candidates.append(normalized)
                     continue
                 if is_context_file(candidate_path) and not is_include_context_file(
                     candidate_path
@@ -643,6 +700,25 @@ def _discover_explicit_include_headers(
                     discovered.append(normalized)
                 if normalized not in seen:
                     pending.append(normalized)
+            if is_source_file(include_name):
+                if not source_candidates:
+                    raise SourceSetError(
+                        "SOURCESET_FILE_NOT_FOUND",
+                        "included source file does not exist",
+                        include_name,
+                    )
+                if len(source_candidates) != 1:
+                    raise SourceSetError(
+                        "SOURCESET_INCLUDE_AMBIGUOUS",
+                        "included source file resolves to multiple physical files",
+                        include_name,
+                        details=[{"path": path} for path in source_candidates],
+                    )
+                normalized = source_candidates[0]
+                if normalized not in explicit_sources and normalized not in discovered:
+                    discovered.append(normalized)
+                if normalized not in seen:
+                    pending.append(normalized)
     return tuple(discovered)
 
 
@@ -660,6 +736,7 @@ def _discover(
     discovery_source_files: tuple[str, ...] | None = None,
     include_all_sources: bool = True,
     authoritative_filelist: bool = False,
+    rewrite_roots: tuple[str, ...] = (),
 ) -> SourceSet:
     try:
         result = _discover_sourceset(
@@ -700,6 +777,7 @@ def _discover(
         top=top,
         top_closure_files=result.top_closure_files,
         compile_order=compile_order,
+        rewrite_roots=rewrite_roots,
     )
 
 
@@ -740,6 +818,7 @@ def from_filelist(
     include_dirs: Iterable[Path | str] = (),
     defines: Iterable[str] = (),
     top: str | None = None,
+    rewrite_roots: Iterable[Path | str] = (),
 ) -> SourceSet:
     filelist_path = Path(filelist).expanduser().resolve()
     include_dir_values = tuple(include_dirs)
@@ -775,7 +854,13 @@ def from_filelist(
             seed_files=(*source_files, *explicit_headers),
             include_dirs=normalized_dirs,
             explicit_header_files=explicit_headers,
+            explicit_source_files=source_files,
         )
+    )
+    normalized_rewrite_roots = _normalize_rewrite_roots(
+        root=root,
+        rewrite_roots=rewrite_roots,
+        source_files=source_files,
     )
     candidates = tuple(
         dict.fromkeys((*source_files, *explicit_headers, *include_headers))
@@ -791,6 +876,7 @@ def from_filelist(
         candidate_files=candidates,
         preserve_top_file_order=True,
         authoritative_filelist=True,
+        rewrite_roots=normalized_rewrite_roots,
     )
 
 

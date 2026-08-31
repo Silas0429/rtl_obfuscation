@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import bisect
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import pyslang
@@ -1509,6 +1509,50 @@ def _apply_group_binding_issues(
     return issues
 
 
+def _file_is_within_rewrite_roots(file: str, roots: tuple[str, ...]) -> bool:
+    path = PurePosixPath(file)
+    for root in roots:
+        if root == ".":
+            return True
+        try:
+            path.relative_to(PurePosixPath(root))
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _apply_readonly_firewall(
+    catalog: SourceCatalog,
+    records: dict[str, _WorkingSymbol],
+) -> None:
+    vendor_files = frozenset(catalog.readonly_vendor_files)
+    include_files = frozenset(catalog.readonly_include_files)
+    rewrite_roots = tuple(catalog.source_set.rewrite_roots)
+    for record in records.values():
+        if record.support != "eligible":
+            continue
+        files = {
+            record.declaration.file,
+            *(
+                occurrence.source_range.file
+                for occurrence in record.occurrences.values()
+            ),
+        }
+        if files & vendor_files:
+            record.support = "preserved"
+            record.reason = "readonly_vendor_model"
+        elif rewrite_roots and any(
+            not _file_is_within_rewrite_roots(file, rewrite_roots)
+            for file in files
+        ):
+            record.support = "preserved"
+            record.reason = "outside_rewrite_root"
+        elif files & include_files:
+            record.support = "preserved"
+            record.reason = "readonly_include_file"
+
+
 # The four CST declaration shapes that can form a physical design unit.  A unit
 # that never elaborates has no semantic body at all, so its span is dead source.
 _DESIGN_UNIT_SYNTAX_KINDS = frozenset(
@@ -2699,6 +2743,7 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         source_catalog, nodes, target_map, alias_map, records, binding_issues
     )
     group_issues = _apply_group_binding_issues(records, binding_issues)
+    _apply_readonly_firewall(source_catalog, records)
     # Last, and deliberately after every other rule has settled: a record that
     # is still eligible here is one this run would really rename, so it is the
     # only set the dead-source and name-completeness checks have to ask about.

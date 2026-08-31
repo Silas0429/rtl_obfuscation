@@ -18,16 +18,16 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 
 | 路径 | 职责 |
 | --- | --- |
-| `rtl_obfuscator/source_set.py` | 归一化单文件、显式 filelist 和 project-root 输入；保留编译顺序与物理清单 |
-| `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译、elaboration 和 project-root 的输入发现 |
-| `rtl_obfuscator/source_catalog.py` | 保存 PySlang compilation、top overlay、模块物理 declaration 和 SourceSet |
-| `rtl_obfuscator/rename_index.py` | 从 PySlang semantic nodes 建立四核心组 source-backed declaration/occurrence 索引 |
+| `rtl_obfuscator/source_set.py` | 归一化三种输入；保留 filelist 编译顺序、include-only 物理依赖和 root-relative rewrite allowlist |
+| `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；按诊断码和物理字节精确分类已验证供应商诊断 |
+| `rtl_obfuscator/source_catalog.py` | 保存 compilation、top overlay、模块物理 declaration，并给出诊断文件与 include-only 只读清单 |
+| `rtl_obfuscator/rename_index.py` | 建立四核心组物理索引；对跨入供应商诊断文件、rewrite root 之外或 include-only 文件的整条记录应用只读 firewall |
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
 | `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate |
 | `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
-| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查和公共错误输出 |
+| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root` 和公共错误输出 |
 
 ## 四核心组边界
 
@@ -41,14 +41,22 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 
 ## 报告与输入
 
-公共 CLI 的 `--category` 必须显式提供，只允许四组或 `all`。filelist 模式只接受 `--filelist`（top 可选），
-禁止 `--source-root`；project-root 才接受 `--source-root --top`；单文件只接受 `--input`。
+公共 CLI 的 `--category` 必须显式提供，只允许四组或 `all`。filelist 模式可接受可重复的
+`--rewrite-root`（top 可选），禁止 `--source-root`；project-root 才接受 `--source-root --top`；单文件只接受
+`--input`。rewrite root 在 SourceSet 内以可重定位的 root-relative 路径保存，使 actual gate 在 staging root 上重新编译时
+仍应用同一边界；它不进入当前 SourceSet schema 1 或 mapping schema 2。
 
 mapping、orchestration、mapping-execution、rate 和 restore 持久化报告使用 schema 2；嵌套 SourceSet
-仍使用 schema 1。`.sv/.v` 是 source unit，`.svh/.vh/.h` 只作为上下文物理文件；显式 filelist 裸路径
+仍使用 schema 1。`.sv/.v` 是 source unit；由 include closure 唯一发现、且未显式列为 standalone source 的 `.sv/.v`
+是只读物理依赖，不进入 compile order。`.svh/.vh/.h` 作为上下文物理文件；显式 filelist 裸路径
 还可列出 `.vic` compilation-unit 参数上下文。上下文文件不进入 rename target；source/header 只有在
 同一规范化 `.vic` 路径已作为裸 filelist 条目显式列出时才能 include 它。`.vic` 不由 single-file、
 project-root 或 include-only 输入自动发现，也不接受 `-v`。
+
+`compile_pyslang_source_set()` 保留全部原始 syntax error key 做 parse/semantic 去重；只有物理位置可验证的
+`IfNoneEdgeSensitive` 和六个固定 legacy directive 进入独立 vendor compatibility 分类。`MissingTimeScale`
+仍是另一种 nonblocking 原因；其他 parse/semantic error 不放宽。诊断文件参与 definition、hierarchy、port/type
+绑定，但任一 declaration/occurrence 跨入它时整条记录不改写。
 
 ## 验证边界
 

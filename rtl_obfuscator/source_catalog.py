@@ -42,6 +42,8 @@ class SourceCatalog:
     top_root: object | None = field(repr=False, compare=False)
     top_source_manager: object | None = field(repr=False, compare=False)
     semantic_owner_ids: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    readonly_vendor_files: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    readonly_include_files: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -100,6 +102,8 @@ class _CompiledView:
     parse_errors: tuple[Any, ...]
     semantic_errors: tuple[Any, ...]
     nonblocking_errors: tuple[Any, ...]
+    vendor_compatibility_errors: tuple[Any, ...]
+    vendor_compatibility_files: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -133,6 +137,8 @@ def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
         view.parse_errors,
         view.semantic_errors,
         view.nonblocking_errors,
+        view.vendor_compatibility_errors,
+        view.vendor_compatibility_files,
     )
 
 
@@ -510,6 +516,11 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
     top_closure_owner_ids = tuple(
         module.owner_id for module in modules if module.in_top_closure
     )
+    readonly_vendor_files = list(catalog_view.vendor_compatibility_files)
+    if top_view is not None:
+        for file in top_view.vendor_compatibility_files:
+            if file not in readonly_vendor_files:
+                readonly_vendor_files.append(file)
     return SourceCatalog(
         schema_version=1,
         source_set=source_set,
@@ -522,4 +533,6 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         top_root=None if top_view is None else top_view.root,
         top_source_manager=None if top_view is None else top_view.source_manager,
         semantic_owner_ids=_semantic_owner_ids(source_set, catalog_view, tuple(modules)),
+        readonly_vendor_files=tuple(readonly_vendor_files),
+        readonly_include_files=tuple(source_set.included_files),
     )

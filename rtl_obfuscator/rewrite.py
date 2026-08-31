@@ -424,6 +424,7 @@ def _cli_vnext_validate_arguments(
     project_root_arg = getattr(args, "project_root", None)
     public_cli = bool(getattr(args, "public_cli", False))
     source_root_value = getattr(args, "source_root", None)
+    rewrite_roots = tuple(getattr(args, "rewrite_roots", ()) or ())
     if public_cli:
         if project_root_arg is not None:
             _cli_vnext_fail(
@@ -443,6 +444,8 @@ def _cli_vnext_validate_arguments(
                 illegal.append("--source-root")
             if args.top is not None:
                 illegal.append("--top")
+            if rewrite_roots:
+                illegal.append("--rewrite-root")
             if illegal:
                 _cli_vnext_fail(
                     "CLI_VNEXT_INPUT_INVALID",
@@ -478,6 +481,12 @@ def _cli_vnext_validate_arguments(
                     "CLI_VNEXT_INPUT_INVALID",
                     "project-root mode requires both --source-root and --top",
                     detail="CLI_VNEXT_INPUT_MODE_INCOMPLETE",
+                )
+            if rewrite_roots:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_INPUT_INVALID",
+                    "--rewrite-root is accepted only with --filelist",
+                    detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
                 )
             try:
                 source_root = Path(source_root_value).expanduser().resolve()
@@ -641,6 +650,7 @@ def _cli_vnext_source_set(args: argparse.Namespace, source_root: Path):
                 include_dirs=args.include_dirs,
                 defines=args.defines,
                 top=args.top,
+                rewrite_roots=getattr(args, "rewrite_roots", ()) or (),
             )
         return from_filelist(
             filelist=_cli_vnext_input_path(args.filelist, source_root),
@@ -1166,6 +1176,12 @@ def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
     """Restore one persisted T053 orchestration envelope in a new process."""
 
     public_cli = bool(getattr(args, "public_cli", False))
+    if getattr(args, "rewrite_roots", None):
+        _cli_vnext_fail(
+            "CLI_VNEXT_INPUT_INVALID",
+            "--rewrite-root is accepted only by filelist encryption mode",
+            detail="CLI_VNEXT_INPUT_MODE_CONFLICT",
+        )
     if public_cli:
         map_path, gate_path, output_path, report_path = (
             restore_vnext.validate_direct_restore_paths_vnext(
@@ -1235,6 +1251,7 @@ def _register_encrypt_arguments(
         "input": "单文件模式：只提供要加密的 .sv 或 .v 文件路径",
         "filelist": "filelist 模式：按编译顺序列出源码的 .f 文件",
         "source_root": "project-root 模式的源码根目录；不能与 --input 或 --filelist 同用",
+        "rewrite_root": "filelist 模式中允许改写的目录，可重复使用",
         "top": "顶层 module；project-root 模式必填，filelist 模式可选，单文件模式禁止",
         "include_dir": "额外 include 目录，可重复使用",
         "define": "预处理宏 NAME[=VALUE]，可重复使用",
@@ -1264,6 +1281,15 @@ def _register_encrypt_arguments(
         type=Path,
         help=public_help["source_root"] if public_cli else None,
     )
+    if public_cli:
+        parser.add_argument(
+            "--rewrite-root",
+            dest="rewrite_roots",
+            action="append",
+            type=Path,
+            default=[],
+            help=public_help["rewrite_root"],
+        )
     parser.add_argument("--top", help=public_help["top"] if public_cli else None)
     parser.add_argument(
         "--include-dir",
@@ -1359,6 +1385,15 @@ def _register_decrypt_arguments(
         type=Path,
         help=public_help["report"] if public_cli else None,
     )
+    if public_cli:
+        parser.add_argument(
+            "--rewrite-root",
+            dest="rewrite_roots",
+            action="append",
+            type=Path,
+            default=[],
+            help=argparse.SUPPRESS,
+        )
     parser.set_defaults(public_cli=public_cli)
 
 

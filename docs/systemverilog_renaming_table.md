@@ -66,6 +66,17 @@ candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `r
 
 合法的 SystemVerilog 不保证每个 semantic node 都有可编辑的物理 token；稳定性优先于猜测改名。
 
+## 只读文件与目录授权
+
+filelist 模式可重复提供 `--rewrite-root DIR`。它是改写授权白名单，不是 library 搜索或供应商自动识别；
+`-v PATH` 和裸 `PATH` 的编译、报告和改名资格完全相同。提供 root 后，记录的声明或任一 occurrence
+只要位于所有 roots 之外，整条记录就以 `outside_rewrite_root` 保留。
+
+PySlang 11.0.0 中只精确放行经验证的 edge-sensitive `ifnone` 与六个 legacy directive 诊断。诊断必须位于
+普通物理文件的预期字节，`protect/endprotect` 必须有序、不嵌套且一一配对。产生这些诊断的整个文件
+只读；任一记录跨入该文件就以 `readonly_vendor_model` 保留。其他未知 directive、macro/virtual 诊断位置和
+其他 parse/semantic error 仍 fail closed。
+
 ## 文件后缀
 
 `.sv`、`.v` 使用同一条 PySlang SystemVerilog 语义前端；`.svh`、`.vh` 是 include header；显式 filelist
@@ -74,12 +85,17 @@ candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `r
 source/header include，但 include-only `.vic` 不支持。`.vic` 也不支持 `-v`、single-file 或
 project-root 自动发现。
 
+已列 source/header/context 通过 local 目录或 `+incdir+` 唯一解析到的 lower-case `.sv/.v` 可作为 include-only
+物理依赖。它会进入 manifest、gate 和 restore，但不进入 `ordered_source_files`、`compile_order`、canonical
+`design.f` 或 rename target；多个候选命中时拒绝猜测。
+
 ## 示例
 
 ```sh
 python rtl_encrypt.py \
   --filelist design.f \
   --top <可选顶层> \
+  --rewrite-root <自有 RTL 目录> \
   --category signals \
   --category interface \
   --output-dir <尚不存在的目录>
