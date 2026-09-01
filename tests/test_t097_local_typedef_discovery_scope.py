@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from rtl_obfuscator.project_discovery import _ProjectContext
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import SourceSetError, from_filelist
 
 
@@ -32,16 +33,7 @@ class T097LocalTypedefDiscoveryScopeTests(unittest.TestCase):
             ),
         )
         self.assertEqual(result.compile_order, result.ordered_source_files)
-        self.assertEqual(
-            result.top_closure_files,
-            (
-                "rtl/top.sv",
-                "rtl/local_one.sv",
-                "rtl/local_two.sv",
-                "rtl/local_bus_if.sv",
-                "rtl/parameter_type.sv",
-            ),
-        )
+        self.assertEqual(result.top_closure_files, ())
         context = _ProjectContext(
             FIXTURE_ROOT,
             "t097_top",
@@ -57,29 +49,19 @@ class T097LocalTypedefDiscoveryScopeTests(unittest.TestCase):
             filelist=FIXTURE_ROOT / "global_design.f",
             top="t097_global_top",
         )
-        self.assertEqual(
-            result.top_closure_files,
-            (
-                "rtl/global_top.sv",
-                "rtl/global_consumer.sv",
-                "rtl/global_provider.sv",
-            ),
-        )
-        self.assertIn("rtl/global_provider.sv", result.top_closure_files)
+        self.assertEqual(result.top_closure_files, ())
+        catalog = build_source_catalog(result)
+        self.assertIn("type:rtl/global_provider.sv:20:33", catalog.semantic_owner_ids)
 
     def test_compilation_unit_typedef_ambiguity_is_fail_closed_with_details(self):
         result = from_filelist(
             filelist=FIXTURE_ROOT / "ambiguous.f",
             top="t097_ambiguous_top",
         )
-        self.assertEqual(
-            result.top_closure_files,
-            (
-                "rtl/ambiguous_top.sv",
-                "rtl/ambiguous_consumer.sv",
-                "rtl/ambiguous_one.sv",
-            ),
-        )
+        self.assertEqual(result.top_closure_files, ())
+        catalog = build_source_catalog(result)
+        self.assertIn("type:rtl/ambiguous_one.sv:20:36", catalog.semantic_owner_ids)
+        self.assertIn("type:rtl/ambiguous_two.sv:20:36", catalog.semantic_owner_ids)
         self.assertEqual(
             result.compile_order,
             result.ordered_source_files,

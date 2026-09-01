@@ -27,6 +27,7 @@ class SourceCatalogTests(unittest.TestCase):
         result = dict(report)
         source_set = dict(result["source_set"])
         source_set.pop("origin")
+        source_set.pop("top_closure_files")
         result["source_set"] = source_set
         return result
 

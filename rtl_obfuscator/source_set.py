@@ -53,6 +53,21 @@ _INCLUDE_DIRECTIVE = re.compile(r'^\s*`include\s+"([^"]+)"')
 
 
 @dataclass(frozen=True)
+class FilelistEntry:
+    """One accepted physical entry from an authoritative filelist.
+
+    This inventory is intentionally live-only.  It records parser provenance
+    for downstream provider selection without changing the portable SourceSet
+    report or mapping schemas.
+    """
+
+    kind: str
+    value: str
+    filelist: str
+    line: int
+
+
+@dataclass(frozen=True)
 class SourceSet:
     schema_version: int
     origin: str
@@ -65,6 +80,9 @@ class SourceSet:
     top_closure_files: tuple[str, ...]
     compile_order: tuple[str, ...]
     rewrite_roots: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    filelist_entries: tuple[FilelistEntry, ...] = field(
+        default=(), repr=False, compare=False
+    )
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -368,8 +386,7 @@ def _parse_filelist_context_directive(
                     "include directory does not exist or is not a directory",
                     relative,
                 )
-            if relative not in directories:
-                directories.append(relative)
+            directories.append(relative)
         return tuple(directories), ()
 
     if text.startswith("+define+"):
@@ -419,7 +436,7 @@ def infer_filelist_root(
 
     environment_snapshot = dict(os.environ if environment is None else environment)
     path = Path(filelist).expanduser().resolve()
-    _, _, filelist_dirs, _, physical_paths = _read_filelist(
+    _, _, filelist_dirs, _, physical_paths, _ = _read_filelist(
         filelist=path,
         root=None,
         environment=environment_snapshot,
@@ -458,7 +475,12 @@ def _read_filelist(
     environment: dict[str, str] | None = None,
     relative_entries_to_filelist: bool = False,
 ) -> tuple[
-    tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[FilelistEntry, ...],
 ]:
     path = Path(filelist).expanduser().resolve()
     if not path.is_file():
@@ -472,6 +494,7 @@ def _read_filelist(
     defines: list[str] = []
     physical_paths: list[str] = []
     context_directives: list[str] = []
+    filelist_entries: list[FilelistEntry] = []
     seen: set[str] = set()
 
     def visit(current: Path, active: tuple[Path, ...]) -> None:
@@ -488,7 +511,9 @@ def _read_filelist(
             )
 
         next_active = (*active, canonical)
-        for line in canonical.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(
+            canonical.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             text = line.strip()
             if not text or text.startswith("#") or text.startswith("//"):
                 continue
@@ -541,7 +566,24 @@ def _read_filelist(
                 for directory in directive_dirs:
                     if directory not in include_dirs:
                         include_dirs.append(directory)
+                    filelist_entries.append(
+                        FilelistEntry(
+                            kind="include_dir",
+                            value=directory,
+                            filelist=canonical.as_posix(),
+                            line=line_number,
+                        )
+                    )
                 defines.extend(directive_defines)
+                for define in directive_defines:
+                    filelist_entries.append(
+                        FilelistEntry(
+                            kind="define",
+                            value=define,
+                            filelist=canonical.as_posix(),
+                            line=line_number,
+                        )
+                    )
                 continue
 
             if not library_source and (
@@ -576,6 +618,16 @@ def _read_filelist(
                 base=canonical.parent if relative_entries_to_filelist else None,
             )
             physical_paths.append(absolute.as_posix())
+            filelist_entries.append(
+                FilelistEntry(
+                    kind="library_source" if library_source else (
+                        "source" if is_source_file(relative) else "context_file"
+                    ),
+                    value=relative,
+                    filelist=canonical.as_posix(),
+                    line=line_number,
+                )
+            )
             if is_source_file(relative):
                 source_files.append(relative)
             else:
@@ -592,6 +644,7 @@ def _read_filelist(
         tuple(include_dirs),
         tuple(defines),
         tuple(physical_paths),
+        tuple(filelist_entries),
     )
 
 
@@ -737,6 +790,7 @@ def _discover(
     include_all_sources: bool = True,
     authoritative_filelist: bool = False,
     rewrite_roots: tuple[str, ...] = (),
+    filelist_entries: tuple[FilelistEntry, ...] = (),
 ) -> SourceSet:
     try:
         result = _discover_sourceset(
@@ -778,6 +832,7 @@ def _discover(
         top_closure_files=result.top_closure_files,
         compile_order=compile_order,
         rewrite_roots=rewrite_roots,
+        filelist_entries=filelist_entries,
     )
 
 
@@ -837,7 +892,14 @@ def from_filelist(
         if auto_root
         else include_dir_values
     )
-    source_files, explicit_headers, filelist_dirs, filelist_defines, _ = _read_filelist(
+    (
+        source_files,
+        explicit_headers,
+        filelist_dirs,
+        filelist_defines,
+        _,
+        filelist_entries,
+    ) = _read_filelist(
         filelist=filelist_path,
         root=root,
         environment=dict(os.environ),
@@ -877,6 +939,7 @@ def from_filelist(
         preserve_top_file_order=True,
         authoritative_filelist=True,
         rewrite_roots=normalized_rewrite_roots,
+        filelist_entries=filelist_entries,
     )
 
 

@@ -43,7 +43,7 @@ class T090FilelistContextTests(unittest.TestCase):
                 ("FEATURE", "cli"),
             ),
         )
-        self.assertEqual(result.top_closure_files, ("rtl/top.v", "rtl/child.sv"))
+        self.assertEqual(result.top_closure_files, ())
 
         report_text = json.dumps(result.to_report(), sort_keys=True)
         self.assertNotIn("$T090_PROJ", report_text)

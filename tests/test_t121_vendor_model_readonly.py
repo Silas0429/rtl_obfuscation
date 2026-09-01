@@ -14,7 +14,7 @@ from rtl_obfuscator.project_discovery import (
     compile_pyslang_source_set,
 )
 from rtl_obfuscator.rename_index import build_rename_index
-from rtl_obfuscator.source_catalog import build_source_catalog
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import (
     SourceSetError,
     from_filelist,
@@ -130,9 +130,16 @@ class T121VendorModelReadonlyTests(unittest.TestCase):
                 root.mkdir()
                 filelist = self._write_case(root, contents)
                 with self.subTest(name=name):
-                    with self.assertRaises(SourceSetError) as raised:
-                        from_filelist(filelist=filelist, source_root=root)
-                    self.assertEqual(raised.exception.code, "SOURCESET_DISCOVERY_FAILED")
+                    source_set = from_filelist(filelist=filelist, source_root=root)
+                    self.assertEqual(source_set.top_closure_files, ())
+                    with self.assertRaises(SourceCatalogError) as raised:
+                        build_source_catalog(source_set)
+                    expected_code = (
+                        "CATALOG_SEMANTIC_FAILED"
+                        if name == "semantic"
+                        else "CATALOG_PARSE_FAILED"
+                    )
+                    self.assertEqual(raised.exception.code, expected_code)
 
             output = base / "must-not-publish"
             result = self._run(
@@ -142,7 +149,8 @@ class T121VendorModelReadonlyTests(unittest.TestCase):
                 "--output-dir", str(output),
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("CLI_VNEXT_INPUT_INVALID", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("CLI_VNEXT_ORCHESTRATION_INVALID", result.stderr)
             self.assertFalse(output.exists())
 
         self.assertTrue(_ifnone_at(b"ifnone (posedge A)", 0))

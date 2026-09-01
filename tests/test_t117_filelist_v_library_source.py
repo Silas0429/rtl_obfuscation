@@ -39,6 +39,13 @@ class T117FilelistVLibrarySourceTests(unittest.TestCase):
         self.assertEqual(relative.ordered_source_files, ORDER)
         self.assertEqual(relative.compile_order, ORDER)
         self.assertEqual(relative.to_report(), bare.to_report())
+        self.assertEqual(
+            [(entry.kind, entry.value, entry.line) for entry in relative.filelist_entries],
+            [
+                ("library_source", "rtl/library_cell.v", 1),
+                ("source", "rtl/top.sv", 2),
+            ],
+        )
 
         with tempfile.TemporaryDirectory(prefix="t117-paths-") as temporary:
             root = Path(temporary)

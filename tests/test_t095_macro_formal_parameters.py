@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from rtl_obfuscator.project_discovery import _ProjectContext
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import SourceSetError, from_filelist
 
 
@@ -22,7 +23,7 @@ class MacroFormalParameterTests(unittest.TestCase):
             result.included_files,
             ("rtl/asserts.h", "rtl/defaults.h"),
         )
-        self.assertEqual(result.top_closure_files, ("rtl/top.sv",))
+        self.assertEqual(result.top_closure_files, ())
         self.assertEqual(
             result.compile_order,
             ("rtl/asserts.h", "rtl/defaults.h", "rtl/top.sv"),
@@ -62,33 +63,14 @@ class MacroFormalParameterTests(unittest.TestCase):
         self.assertNotIn("KnownEnable", context.global_macro_providers)
 
     def test_outside_formal_parameter_reference_fails_closed(self):
-        with self.assertRaises(SourceSetError) as raised:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "unknown.f",
-                top="t095_unknown",
-            )
-        error = raised.exception
-        self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(error.path, "rtl/unknown.sv")
-        self.assertEqual(
-            error.message,
-            "filelist PySlang compilation contains parse errors",
+        source_set = from_filelist(
+            filelist=FIXTURE_ROOT / "unknown.f",
+            top="t095_unknown",
         )
-        self.assertEqual(
-            error.details,
-            [
-                {
-                    "code": "DiagCode(UnknownDirective)",
-                    "path": "rtl/unknown.sv",
-                    "start": 85,
-                },
-                {
-                    "code": "DiagCode(ExpectedExpression)",
-                    "path": "rtl/unknown.sv",
-                    "start": 92,
-                },
-            ],
-        )
+        self.assertEqual(source_set.top_closure_files, ())
+        with self.assertRaises(SourceCatalogError) as raised:
+            build_source_catalog(source_set)
+        self.assertEqual(raised.exception.code, "CATALOG_PARSE_FAILED")
 
 
 if __name__ == "__main__":

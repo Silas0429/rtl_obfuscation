@@ -34,7 +34,7 @@ class ProjectRootInspectTests(unittest.TestCase):
             filelist.write_text("bus_if.sv\nshared.sv\nchild.sv\ntop.sv\n", encoding="utf-8")
             filelist_set = from_filelist(filelist=filelist, source_root=FIXTURE, top="t033_top")
         self.assertEqual(project_set.ordered_source_files, filelist_set.ordered_source_files)
-        self.assertEqual(project_set.top_closure_files, filelist_set.top_closure_files)
+        self.assertEqual(filelist_set.top_closure_files, ())
         self.assertEqual(project_set.compile_order, filelist_set.compile_order)
 
     def test_invalid_project_root_top_fails_closed(self):

@@ -50,7 +50,7 @@ class T093MacroFallbackAndCliTests(unittest.TestCase):
         )
         self.assertEqual(result.ordered_source_files, ("rtl/top.sv",))
         self.assertEqual(result.included_files, ("rtl/fallback.h", "rtl/config.h"))
-        self.assertEqual(result.top_closure_files, ("rtl/top.sv",))
+        self.assertEqual(result.top_closure_files, ())
 
     def test_unconditional_ambiguity_is_fail_closed_with_provider_details(self):
         result = from_filelist(
@@ -58,7 +58,7 @@ class T093MacroFallbackAndCliTests(unittest.TestCase):
             top="t093_top",
         )
         self.assertEqual(result.ordered_source_files, ("rtl/ambiguous_top.sv",))
-        self.assertEqual(result.top_closure_files, ("rtl/ambiguous_top.sv",))
+        self.assertEqual(result.top_closure_files, ())
 
     def test_public_discovery_error_prints_structured_diagnostic_and_no_output(self):
         with tempfile.TemporaryDirectory(prefix="t093-public-diagnostic-") as temporary:

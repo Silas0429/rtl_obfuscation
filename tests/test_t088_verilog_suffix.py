@@ -92,7 +92,7 @@ class VerilogSuffixTests(unittest.TestCase):
         )
         self.assertEqual(project.ordered_source_files, filelist.ordered_source_files)
         self.assertEqual(project.included_files, filelist.included_files)
-        self.assertEqual(project.top_closure_files, filelist.top_closure_files)
+        self.assertEqual(filelist.top_closure_files, ())
         self.assertEqual(project.compile_order, filelist.ordered_source_files)
         self.assertIn("include/internal.vh", filelist.compile_order)
         self.assertNotIn("single.v", project.ordered_source_files)

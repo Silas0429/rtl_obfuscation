@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from rtl_obfuscator.project_discovery import compile_pyslang_source_set
-from rtl_obfuscator.source_catalog import build_source_catalog
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import SourceSetError, from_filelist
 
 
@@ -54,16 +54,12 @@ class T099FilelistCompileContextTests(unittest.TestCase):
         self.assertEqual(selected.ordered_source_files, self.SOURCES)
         self.assertEqual(selected.included_files, self.HEADERS)
         self.assertEqual(selected.compile_order, self.COMPILE_ORDER)
+        self.assertEqual(selected.top_closure_files, ())
+        catalog = build_source_catalog(selected)
         self.assertEqual(
-            selected.top_closure_files,
-            (
-                "rtl/t099_top.sv",
-                "rtl/t099_child.v",
-                "rtl/t099_pkg.sv",
-                "rtl/t099_if.sv",
-            ),
+            {module.name for module in catalog.modules if module.in_top_closure},
+            {"t099_top", "t099_child"},
         )
-        self.assertNotIn("rtl/t099_unused.v", selected.top_closure_files)
 
     def test_missing_time_scale_is_nonblocking_for_sourceset_and_catalog(self):
         source_set = from_filelist(
@@ -94,30 +90,19 @@ class T099FilelistCompileContextTests(unittest.TestCase):
         )
 
     def test_blocking_parse_and_semantic_errors_are_separate(self):
-        with self.assertRaises(SourceSetError) as missing_header:
-            from_filelist(filelist=FIXTURE_ROOT / "missing_header.f", top="t099_top")
-        parse_error = missing_header.exception
-        self.assertEqual(parse_error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(
-            parse_error.message, "filelist PySlang compilation contains parse errors"
+        missing_header_set = from_filelist(
+            filelist=FIXTURE_ROOT / "missing_header.f", top="t099_top"
         )
-        self.assertTrue(parse_error.details)
-        self.assertTrue(
-            all(item["code"] != "DiagCode(MissingTimeScale)" for item in parse_error.details)
-        )
+        with self.assertRaises(SourceCatalogError) as missing_header:
+            build_source_catalog(missing_header_set)
+        self.assertEqual(missing_header.exception.code, "CATALOG_PARSE_FAILED")
 
-        with self.assertRaises(SourceSetError) as missing_child:
-            from_filelist(filelist=FIXTURE_ROOT / "missing_child.f", top="t099_top")
-        semantic_error = missing_child.exception
-        self.assertEqual(semantic_error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(
-            semantic_error.message,
-            "filelist PySlang compilation contains semantic errors",
+        missing_child_set = from_filelist(
+            filelist=FIXTURE_ROOT / "missing_child.f", top="t099_top"
         )
-        self.assertTrue(semantic_error.details)
-        self.assertTrue(
-            all(item["code"] != "DiagCode(MissingTimeScale)" for item in semantic_error.details)
-        )
+        with self.assertRaises(SourceCatalogError) as missing_child:
+            build_source_catalog(missing_child_set)
+        self.assertEqual(missing_child.exception.code, "CATALOG_SEMANTIC_FAILED")
 
         with tempfile.TemporaryDirectory(prefix="t099-public-failure-") as temporary:
             output = Path(temporary) / "gate"
@@ -134,9 +119,7 @@ class T099FilelistCompileContextTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
-            self.assertIn(
-                "filelist PySlang compilation contains parse errors", result.stderr
-            )
+            self.assertIn("ORCHESTRATION_MAPPING_INVALID", result.stderr)
             self.assertFalse(output.exists())
 
             semantic_output = Path(temporary) / "semantic-gate"
@@ -153,12 +136,7 @@ class T099FilelistCompileContextTests(unittest.TestCase):
             )
             self.assertNotEqual(semantic_result.returncode, 0)
             self.assertEqual(semantic_result.stdout, "")
-            self.assertIn("detail: SOURCESET_DISCOVERY_FAILED", semantic_result.stderr)
-            self.assertIn(
-                "message: filelist PySlang compilation contains semantic errors",
-                semantic_result.stderr,
-            )
-            self.assertIn("details:", semantic_result.stderr)
+            self.assertIn("ORCHESTRATION_MAPPING_INVALID", semantic_result.stderr)
             self.assertFalse(semantic_output.exists())
 
     def _canonical_gold(self, root: Path) -> Path:

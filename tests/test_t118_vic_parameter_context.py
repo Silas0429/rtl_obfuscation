@@ -51,7 +51,7 @@ class T118VicParameterContextTests(unittest.TestCase):
         self.assertEqual(source_set.ordered_source_files, (TOP,))
         self.assertEqual(source_set.included_files, (VIC,))
         self.assertEqual(source_set.compile_order, (VIC, TOP))
-        self.assertEqual(source_set.top_closure_files, (TOP,))
+        self.assertEqual(source_set.top_closure_files, ())
 
         with tempfile.TemporaryDirectory(prefix="t118-order-") as temporary:
             reverse = Path(temporary) / "reverse.f"

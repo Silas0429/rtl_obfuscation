@@ -1493,74 +1493,15 @@ def _discover_sourceset(
     candidate_order = tuple(candidate_files)
 
     if authoritative_filelist:
+        # An authoritative filelist already supplies the complete source and
+        # context order.  Keep this stage structural: semantic compilation,
+        # top validation, and diagnostics belong to SourceCatalog.
         context_files = tuple(
             path
             for path in explicit_header_files
             if is_header_file(path) or is_context_file(path)
         )
         compilation_order = context_files + source_order
-        compiled = compile_pyslang_source_set(
-            root=root,
-            compilation_files=compilation_order,
-            include_files=tuple(
-                path
-                for path in candidate_order
-                if (
-                    is_header_file(path)
-                    or is_context_file(path)
-                    or (is_source_file(path) and path not in source_order)
-                )
-            ),
-            include_dirs=tuple(include_dirs),
-            defines=dict(defines or {}),
-            top=top,
-        )
-        top_closure_files: tuple[str, ...] = ()
-        if top is not None:
-            top_definitions = _pyslang_top_module_definitions(
-                compiled.compilation, top
-            )
-            if not top_definitions:
-                raise ProjectAnalysisError(
-                    "TOP_NOT_FOUND", f"top definition not found: {top}"
-                )
-            if len(top_definitions) > 1:
-                raise ProjectAnalysisError(
-                    "AMBIGUOUS_TOP", f"top definition is ambiguous: {top}"
-                )
-        if compiled.parse_errors:
-            details = _pyslang_diagnostic_details(
-                root, compiled.source_manager, compiled.parse_errors
-            )
-            first = details[0] if details else {"path": None, "start": None}
-            raise ProjectAnalysisError(
-                "PARSE_ERROR",
-                "filelist PySlang compilation contains parse errors",
-                file=first["path"],
-                start=first["start"],
-                details=details,
-            )
-        if compiled.semantic_errors:
-            details = _pyslang_diagnostic_details(
-                root, compiled.source_manager, compiled.semantic_errors
-            )
-            first = details[0] if details else {"path": None, "start": None}
-            raise ProjectAnalysisError(
-                "SEMANTIC_ERROR",
-                "filelist PySlang compilation contains semantic errors",
-                file=first["path"],
-                start=first["start"],
-                details=details,
-            )
-
-        if top is not None:
-            top_closure_files = _pyslang_top_closure_files(
-                root=root,
-                manager=compiled.source_manager,
-                semantic_root=compiled.root,
-                top=top,
-                source_order=source_order,
-            )
         included_files = {
             path
             for path in candidate_order
@@ -1572,7 +1513,7 @@ def _discover_sourceset(
         }
         return SourceSetDiscovery(
             included_files=tuple(path for path in candidate_order if path in included_files),
-            top_closure_files=top_closure_files,
+            top_closure_files=(),
             compile_order=compilation_order,
         )
 

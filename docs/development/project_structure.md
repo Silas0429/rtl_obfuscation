@@ -18,7 +18,7 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 
 | 路径 | 职责 |
 | --- | --- |
-| `rtl_obfuscator/source_set.py` | 归一化三种输入；保留 filelist 编译顺序、include-only 物理依赖和 root-relative rewrite allowlist |
+| `rtl_obfuscator/source_set.py` | 归一化三种输入；filelist 模式轻量保留编译顺序、entry 来源记录、include-only 物理依赖和 root-relative rewrite allowlist |
 | `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；按诊断码和物理字节精确分类已验证供应商诊断 |
 | `rtl_obfuscator/source_catalog.py` | 保存 compilation、top overlay、模块物理 declaration，并给出诊断文件与 include-only 只读清单 |
 | `rtl_obfuscator/rename_index.py` | 建立四核心组物理索引；对跨入供应商诊断文件、rewrite root 之外或 include-only 文件的整条记录应用只读 firewall |
@@ -52,6 +52,12 @@ mapping、orchestration、mapping-execution、rate 和 restore 持久化报告�
 还可列出 `.vic` compilation-unit 参数上下文。上下文文件不进入 rename target；source/header 只有在
 同一规范化 `.vic` 路径已作为裸 filelist 条目显式列出时才能 include 它。`.vic` 不由 single-file、
 project-root 或 include-only 输入自动发现，也不接受 `-v`。
+
+authoritative filelist 的 SourceSet 阶段只做结构归一化：保留每个有效 source、library source、context、
+include-dir 和 define 的 live-only `FilelistEntry`（含 canonical value、物理 filelist 和行号），并按展开顺序
+生成 `compile_order`；`-f` 本身不生成 entry。该阶段不建立 PySlang compilation，`top_closure_files` 固定为空；
+top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelist entry 不进入 SourceSet report、mapping
+或 restore 持久化 schema。
 
 `compile_pyslang_source_set()` 保留全部原始 syntax error key 做 parse/semantic 去重；只有物理位置可验证的
 `IfNoneEdgeSensitive` 和六个固定 legacy directive 进入独立 vendor compatibility 分类。`MissingTimeScale`

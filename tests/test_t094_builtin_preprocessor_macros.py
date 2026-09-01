@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from rtl_obfuscator.project_discovery import _ProjectContext
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import SourceSetError, from_filelist
 
 
@@ -18,7 +19,7 @@ class BuiltinPreprocessorMacroTests(unittest.TestCase):
             top="t094_top",
         )
         self.assertEqual(result.ordered_source_files, ("rtl/top.sv",))
-        self.assertEqual(result.top_closure_files, ("rtl/top.sv",))
+        self.assertEqual(result.top_closure_files, ())
         self.assertEqual(result.compile_order, ("rtl/top.sv",))
         self.assertEqual(result.included_files, ())
         report = result.to_report()
@@ -44,28 +45,14 @@ class BuiltinPreprocessorMacroTests(unittest.TestCase):
         self.assertEqual(context.macro_edges, set())
 
     def test_unknown_macro_still_fails_closed(self):
-        with self.assertRaises(SourceSetError) as raised:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "unknown.f",
-                top="t094_unknown",
-            )
-        error = raised.exception
-        self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(error.path, "rtl/unknown.sv")
-        self.assertEqual(
-            error.message,
-            "filelist PySlang compilation contains parse errors",
+        source_set = from_filelist(
+            filelist=FIXTURE_ROOT / "unknown.f",
+            top="t094_unknown",
         )
-        self.assertEqual(
-            error.details,
-            [
-                {
-                    "code": "DiagCode(UnknownDirective)",
-                    "path": "rtl/unknown.sv",
-                    "start": 39,
-                }
-            ],
-        )
+        self.assertEqual(source_set.top_closure_files, ())
+        with self.assertRaises(SourceCatalogError) as raised:
+            build_source_catalog(source_set)
+        self.assertEqual(raised.exception.code, "CATALOG_PARSE_FAILED")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 from rtl_obfuscator.project_discovery import _ProjectContext
-from rtl_obfuscator.source_catalog import build_source_catalog
+from rtl_obfuscator.source_catalog import SourceCatalogError, build_source_catalog
 from rtl_obfuscator.source_set import SourceSetError, from_filelist
 
 
@@ -18,7 +18,7 @@ PUBLIC_ENCRYPT = ROOT / "rtl_encrypt.py"
 
 
 class T098AuthoritativeFilelistTests(unittest.TestCase):
-    def test_filelist_preserves_all_sources_and_semantic_top_closure(self):
+    def test_filelist_preserves_all_sources_and_defers_semantic_top_closure(self):
         all_sources = from_filelist(filelist=FIXTURE_ROOT / "design.f")
         expected_sources = (
             "rtl/t098_top.sv",
@@ -43,16 +43,12 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
             selected.compile_order,
             ("include/t098_macros.h",) + expected_sources,
         )
+        self.assertEqual(selected.top_closure_files, ())
+        catalog = build_source_catalog(selected)
         self.assertEqual(
-            selected.top_closure_files,
-            (
-                "rtl/t098_top.sv",
-                "rtl/t098_child.sv",
-                "rtl/t098_pkg.sv",
-                "rtl/t098_if.sv",
-            ),
+            {module.name for module in catalog.modules if module.in_top_closure},
+            {"t098_top", "t098_child"},
         )
-        self.assertNotIn("rtl/t098_unused.sv", selected.top_closure_files)
 
     def test_h_context_is_shared_by_sourceset_and_catalog(self):
         source_set = from_filelist(
@@ -73,41 +69,32 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
         self.assertEqual(report["compile"]["catalog"], {"parse_errors": 0, "semantic_errors": 0})
         self.assertEqual(report["compile"]["top_overlay"], {"parse_errors": 0, "semantic_errors": 0})
 
-    def test_missing_top_keeps_sourceset_top_not_found_mapping(self):
-        with self.assertRaises(SourceSetError) as raised:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "design.f",
-                top="DefinitelyMissingTop",
-            )
-        error = raised.exception
-        self.assertEqual(error.code, "SOURCESET_TOP_NOT_FOUND")
-        self.assertIsNone(error.path)
-        self.assertEqual(error.message, "top definition not found: DefinitelyMissingTop")
+    def test_missing_top_is_rejected_by_catalog_after_structural_sourceset(self):
+        source_set = from_filelist(
+            filelist=FIXTURE_ROOT / "design.f",
+            top="DefinitelyMissingTop",
+        )
+        self.assertEqual(source_set.top_closure_files, ())
+        with self.assertRaises(SourceCatalogError) as raised:
+            build_source_catalog(source_set)
+        self.assertEqual(raised.exception.code, "CATALOG_TOP_MISMATCH")
 
     def test_native_top_definition_cardinality_keeps_top_errors(self):
-        with self.assertRaises(SourceSetError) as ambiguous:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "duplicate_top.f",
-                top="t098_duplicate_top",
-            )
-        self.assertEqual(ambiguous.exception.code, "SOURCESET_TOP_AMBIGUOUS")
-        self.assertIsNone(ambiguous.exception.path)
-        self.assertEqual(
-            ambiguous.exception.message,
-            "top definition is ambiguous: t098_duplicate_top",
+        ambiguous_set = from_filelist(
+            filelist=FIXTURE_ROOT / "duplicate_top.f",
+            top="t098_duplicate_top",
         )
+        with self.assertRaises(SourceCatalogError) as ambiguous:
+            build_source_catalog(ambiguous_set)
+        self.assertEqual(ambiguous.exception.code, "CATALOG_DUPLICATE_MODULE")
 
-        with self.assertRaises(SourceSetError) as interface_only:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "interface_only.f",
-                top="t098_interface_only",
-            )
-        self.assertEqual(interface_only.exception.code, "SOURCESET_TOP_NOT_FOUND")
-        self.assertIsNone(interface_only.exception.path)
-        self.assertEqual(
-            interface_only.exception.message,
-            "top definition not found: t098_interface_only",
+        interface_set = from_filelist(
+            filelist=FIXTURE_ROOT / "interface_only.f",
+            top="t098_interface_only",
         )
+        with self.assertRaises(SourceCatalogError) as interface_only:
+            build_source_catalog(interface_set)
+        self.assertEqual(interface_only.exception.code, "CATALOG_TOP_MISMATCH")
 
     def test_filelist_does_not_call_project_provider_discovery(self):
         def fail(*_args, **_kwargs):
@@ -121,19 +108,13 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
                 self.assertEqual(len(result.ordered_source_files), 5)
 
     def test_missing_listed_dependency_is_pyslang_semantic_failure(self):
-        with self.assertRaises(SourceSetError) as raised:
-            from_filelist(
-                filelist=FIXTURE_ROOT / "missing.f", top="t098_missing_top"
-            )
+        source_set = from_filelist(
+            filelist=FIXTURE_ROOT / "missing.f", top="t098_missing_top"
+        )
+        with self.assertRaises(SourceCatalogError) as raised:
+            build_source_catalog(source_set)
         error = raised.exception
-        self.assertEqual(error.code, "SOURCESET_DISCOVERY_FAILED")
-        self.assertEqual(error.message, "filelist PySlang compilation contains semantic errors")
-        self.assertEqual(error.path, "rtl/t098_missing_top.sv")
-        self.assertTrue(error.details)
-        self.assertTrue(all({"code", "path", "start"} <= set(item) for item in error.details))
-        self.assertNotIn("reachable definition not found", error.message)
-        self.assertNotIn("macro has", error.message)
-        self.assertNotIn("type has", error.message)
+        self.assertEqual(error.code, "CATALOG_SEMANTIC_FAILED")
 
         with tempfile.TemporaryDirectory(prefix="t098-public-") as temporary:
             output = Path(temporary) / "gate"
@@ -158,8 +139,7 @@ class T098AuthoritativeFilelistTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
-            self.assertIn("filelist PySlang compilation contains semantic errors", result.stderr)
-            self.assertNotIn("reachable definition not found", result.stderr)
+            self.assertIn("ORCHESTRATION_MAPPING_INVALID", result.stderr)
             self.assertFalse(output.exists())
 
 

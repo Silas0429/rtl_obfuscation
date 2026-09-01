@@ -68,11 +68,7 @@ class SourceSetTests(unittest.TestCase):
             **options,
         )
         self.assertIn("rtl/unused.sv", selected.ordered_source_files)
-        self.assertNotIn("rtl/unused.sv", selected.top_closure_files)
-        self.assertEqual(
-            selected.top_closure_files,
-            ("rtl/z_defs.sv", "rtl/a_child.sv", "rtl/top.sv"),
-        )
+        self.assertEqual(selected.top_closure_files, ())
 
     def test_project_root_keeps_only_top_closure(self):
         result = from_project_root(
@@ -106,10 +102,10 @@ class SourceSetTests(unittest.TestCase):
             "include_dirs",
             "defines",
             "top",
-            "top_closure_files",
             "compile_order",
         ):
             self.assertEqual(getattr(project_root, field), getattr(filelist, field))
+        self.assertEqual(filelist.top_closure_files, ())
 
     def test_header_is_only_an_included_file(self):
         result = from_filelist(
