@@ -213,13 +213,72 @@ def _diagnostic_counts(view: _CompiledView) -> tuple[int, int]:
     return len(view.parse_errors), len(view.semantic_errors)
 
 
+_SOURCE_BACKED_BUFFER_KINDS = frozenset(
+    {
+        pyslang.BufferKind.DesignFile,
+        pyslang.BufferKind.LibraryFile,
+        pyslang.BufferKind.IncludeFile,
+    }
+)
+
+
+def _known_physical_files(source_set: SourceSet) -> frozenset[str]:
+    """Return the physical files this SourceSet makes available to PySlang."""
+
+    return frozenset(
+        (*source_set.compile_order, *source_set.included_files)
+    )
+
+
 def _relative_file(source_set: SourceSet, manager: Any, buffer: Any) -> str:
     try:
+        buffer_kind = manager.getBufferKind(buffer)
+    except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic location has no physical buffer kind",
+        ) from error
+    if buffer_kind not in _SOURCE_BACKED_BUFFER_KINDS:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic location is not a source-backed physical buffer",
+        )
+    try:
+        root = Path(source_set.source_root).resolve()
         absolute = Path(manager.getFullPath(buffer)).resolve()
-        return absolute.relative_to(source_set.source_root).as_posix()
-    except (OSError, ValueError, RuntimeError) as error:
+        relative = absolute.relative_to(root).as_posix()
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
         raise SourceCatalogError(
             "CATALOG_RANGE_INVALID", "declaration is outside the SourceSet root"
+        ) from error
+    if relative not in _known_physical_files(source_set):
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic location is not a SourceSet physical file",
+            file=relative,
+        )
+    if not absolute.is_file():
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "semantic location is not a regular physical file",
+            file=relative,
+        )
+    return relative
+
+
+def _has_source_backed_semantic_location(
+    manager: Any, node: Any, location: Any
+) -> bool:
+    """Distinguish source-less semantic wrappers from physical declarations."""
+
+    if getattr(node, "syntax", None) is None or location is None:
+        return False
+    try:
+        return manager.getBufferKind(location.buffer) in _SOURCE_BACKED_BUFFER_KINDS
+    except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+        raise SourceCatalogError(
+            "CATALOG_OWNER_INVALID",
+            "semantic owner has no physical buffer kind",
         ) from error
 
 
@@ -389,6 +448,10 @@ def _semantic_owner_ids(
             syntax = getattr(node, "syntax", None)
             if definition is None or syntax is None:
                 return
+            if not _has_source_backed_semantic_location(
+                view.source_manager, node, getattr(definition, "location", None)
+            ):
+                return
             declaration = _definition_range(source_set, view.source_manager, definition)
             syntax_kind = str(getattr(syntax, "kind", ""))
             if "ModuleDeclaration" in syntax_kind:
@@ -402,36 +465,12 @@ def _semantic_owner_ids(
                     f"interface:{declaration.file}:{declaration.start}:{declaration.end}"
                 )
         elif node_type == "TypeAliasType":
+            if not _has_source_backed_semantic_location(
+                view.source_manager, node, getattr(node, "location", None)
+            ):
+                return
             declaration = _semantic_name_range(source_set, view.source_manager, node)
             owners.add(f"type:{declaration.file}:{declaration.start}:{declaration.end}")
-        elif node_type == "SubroutineSymbol":
-            declaration = _semantic_name_range(source_set, view.source_manager, node)
-            owners.add(
-                f"subroutine:{declaration.file}:{declaration.start}:{declaration.end}"
-            )
-        elif node_type == "GenerateBlockArraySymbol":
-            syntax = getattr(node, "syntax", None)
-            source_range = getattr(syntax, "sourceRange", None)
-            start = getattr(source_range, "start", None)
-            end = getattr(source_range, "end", None)
-            if start is None or end is None:
-                raise SourceCatalogError(
-                    "CATALOG_OWNER_INVALID",
-                    "generate block owner has no semantic source range",
-                )
-            file = _relative_file(source_set, view.source_manager, start.buffer)
-            end_file = _relative_file(source_set, view.source_manager, end.buffer)
-            end_offset = int(end.offset)
-            if file != end_file or int(start.offset) >= end_offset:
-                raise SourceCatalogError(
-                    "CATALOG_RANGE_INVALID",
-                    "generate block source range is invalid",
-                    file=file,
-                    start=int(start.offset),
-                )
-            owners.add(
-                f"generate:{file}:{int(start.offset)}:{end_offset}"
-            )
 
     view.root.visit(collect)
     return tuple(sorted(owners))
