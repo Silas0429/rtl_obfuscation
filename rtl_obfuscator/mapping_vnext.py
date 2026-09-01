@@ -6,10 +6,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import hashlib
 from pathlib import Path
+from pathlib import PurePosixPath
 from stat import S_ISREG
 from typing import Any
 
-from .source_catalog import SourceCatalog, SourceRange
+from .source_catalog import ReadonlyDuplicate, SourceCatalog, SourceRange
 from .source_set import SourceSet
 from .rename_index import (
     RenameIndex,
@@ -226,15 +227,138 @@ def _physical_files(source_set: SourceSet) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _file_is_within_rewrite_root(file: str, roots: tuple[str, ...]) -> bool:
+    path = PurePosixPath(file)
+    for root in roots:
+        if root == ".":
+            return True
+        try:
+            path.relative_to(PurePosixPath(root))
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _readonly_duplicate_owners(
+    catalog: SourceCatalog,
+    modules_by_name: dict[str, list[Any]],
+    physical_files: tuple[str, ...],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Validate T125's live-only duplicate inventory and return its owners."""
+
+    source_set = catalog.source_set
+    inventory = getattr(catalog, "readonly_duplicate_inventory", ())
+    if not isinstance(inventory, tuple):
+        _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory is not canonical")
+    if not (
+        source_set.origin == "filelist"
+        and isinstance(source_set.top, str)
+        and source_set.top
+        and source_set.rewrite_roots
+    ) and inventory:
+        _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory is not allowed for this SourceSet")
+
+    inventory_by_name: dict[str, tuple[tuple[str, int, int], ...]] = {}
+    for item in inventory:
+        if not isinstance(item, ReadonlyDuplicate):
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory item is invalid")
+        if not isinstance(item.name, str) or not item.name:
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory name is invalid")
+        if item.name in inventory_by_name:
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory name is repeated")
+        declarations = item.declarations
+        if not isinstance(declarations, tuple) or len(declarations) < 2:
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory ranges are invalid")
+        keys: list[tuple[str, int, int]] = []
+        for declaration in declarations:
+            if type(declaration) is not SourceRange:
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory range is invalid")
+            if (
+                not isinstance(declaration.file, str)
+                or not declaration.file
+                or declaration.file not in physical_files
+                or type(declaration.start) is not int
+                or type(declaration.end) is not int
+                or declaration.start < 0
+                or declaration.start >= declaration.end
+            ):
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory range is invalid")
+            keys.append((declaration.file, declaration.start, declaration.end))
+        canonical = tuple(sorted(keys))
+        if tuple(keys) != canonical or len(set(keys)) != len(keys):
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory ranges are not canonical")
+        inventory_by_name[item.name] = canonical
+
+    if tuple(inventory) != tuple(
+        sorted(inventory, key=lambda item: (item.name, item.declarations))
+    ):
+        _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory is not canonical")
+
+    readonly_names: set[str] = set()
+    readonly_owner_ids: set[str] = set()
+    for name, modules in modules_by_name.items():
+        if len(modules) < 2:
+            continue
+        expected = inventory_by_name.get(name)
+        if expected is None:
+            _raise("MAPPING_SOURCE_INVALID", "duplicate module has no certified readonly inventory")
+        module_keys: list[tuple[str, int, int]] = []
+        for module in modules:
+            if (
+                type(getattr(module, "in_top_closure", None)) is not bool
+                or type(getattr(module, "is_selected_top", None)) is not bool
+                or module.in_top_closure
+                or module.is_selected_top
+            ):
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate owner is reachable or selected")
+            declaration = getattr(module, "declaration", None)
+            if type(declaration) is not SourceRange:
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate owner range is invalid")
+            if (
+                declaration.file not in physical_files
+                or _file_is_within_rewrite_root(declaration.file, source_set.rewrite_roots)
+                or type(declaration.start) is not int
+                or type(declaration.end) is not int
+                or declaration.start < 0
+                or declaration.start >= declaration.end
+            ):
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate owner range is invalid")
+            module_keys.append((declaration.file, declaration.start, declaration.end))
+        if tuple(sorted(module_keys)) != expected or len(set(module_keys)) != len(module_keys):
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory does not match module owners")
+        readonly_names.add(name)
+        readonly_owner_ids.update(module.owner_id for module in modules)
+
+    if set(inventory_by_name) != readonly_names:
+        _raise("MAPPING_SOURCE_INVALID", "readonly duplicate inventory has extra entries")
+    return frozenset(readonly_names), frozenset(readonly_owner_ids)
+
+
+def _validate_readonly_duplicate_bytes(
+    catalog: SourceCatalog,
+    names: frozenset[str],
+    sources: dict[str, bytes],
+) -> None:
+    for item in getattr(catalog, "readonly_duplicate_inventory", ()):
+        if item.name not in names:
+            continue
+        expected = item.name.encode("utf-8")
+        for declaration in item.declarations:
+            data = sources.get(declaration.file)
+            if data is None or data[declaration.start : declaration.end] != expected:
+                _raise("MAPPING_SOURCE_INVALID", "readonly duplicate range does not match source bytes")
+
+
 def _validate_owners(
     catalog: SourceCatalog,
     rename_index: RenameIndex,
     physical_files: tuple[str, ...],
-) -> dict[str, Any]:
+) -> frozenset[str]:
     if not isinstance(catalog.modules, tuple):
         _raise("MAPPING_SOURCE_INVALID", "catalog modules are not canonical")
     owners: dict[str, Any] = {}
-    names: set[str] = set()
+    modules_by_name: dict[str, list[Any]] = {}
     for module in catalog.modules:
         owner_id = getattr(module, "owner_id", None)
         name = getattr(module, "name", None)
@@ -242,10 +366,14 @@ def _validate_owners(
             _raise("MAPPING_SOURCE_INVALID", "catalog module owner_id is invalid")
         if not isinstance(name, str) or not name:
             _raise("MAPPING_SOURCE_INVALID", "catalog module name is invalid")
-        if owner_id in owners or name in names:
+        if owner_id in owners:
             _raise("MAPPING_SOURCE_INVALID", "catalog module owner is not unique")
         owners[owner_id] = module
-        names.add(name)
+        modules_by_name.setdefault(name, []).append(module)
+
+    readonly_names, readonly_owner_ids = _readonly_duplicate_owners(
+        catalog, modules_by_name, physical_files
+    )
 
     semantic_owner_ids = getattr(catalog, "semantic_owner_ids", ())
     if not isinstance(semantic_owner_ids, tuple) or not all(
@@ -257,10 +385,10 @@ def _validate_owners(
         _raise("MAPPING_SOURCE_INVALID", "SourceCatalog semantic owner registry is incomplete")
     if any(owner_id not in registered for owner_id in owners):
         _raise("MAPPING_SOURCE_INVALID", "module owner is absent from semantic owner registry")
-    module_names = {getattr(module, "name", "") for module in catalog.modules}
+    module_names = set(modules_by_name)
 
     physical = set(physical_files)
-    for symbol in rename_index.symbols:
+    for symbol, decision in zip(rename_index.symbols, rename_index.decisions):
         if not isinstance(symbol, SourceSymbol):
             _raise("MAPPING_SOURCE_INVALID", "RenameIndex contains a non-source symbol")
         if symbol.owner_module not in module_names and not symbol.owner_module.startswith("interface:") and symbol.owner_module != "$unit":
@@ -275,7 +403,14 @@ def _validate_owners(
                 _raise("MAPPING_SOURCE_INVALID", "symbol range is not a SourceRange")
             if not isinstance(source_range.file, str) or source_range.file not in physical:
                 _raise("MAPPING_SOURCE_INVALID", "symbol range is not a physical file")
-    return owners
+        if (
+            symbol.owner_module in readonly_names
+            or symbol.semantic_owner in readonly_owner_ids
+        ) and (
+            symbol.support == "eligible" or decision.action != "preserve"
+        ):
+            _raise("MAPPING_SOURCE_INVALID", "readonly duplicate has a landed mapping decision")
+    return frozenset(readonly_names)
 
 
 def _read_sources(
@@ -376,8 +511,13 @@ def build_mapping_vnext(
 
     rename_index, catalog, source_set = _validate_index(rename_index)
     physical_files = _physical_files(source_set)
-    _validate_owners(catalog, rename_index, physical_files)
+    readonly_duplicate_names = _validate_owners(
+        catalog, rename_index, physical_files
+    )
     sources, manifest = _read_sources(source_set, physical_files)
+    _validate_readonly_duplicate_bytes(
+        catalog, readonly_duplicate_names, sources
+    )
     _validate_ranges(rename_index, physical_files, sources)
 
     records = tuple(

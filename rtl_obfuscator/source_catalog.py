@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pyslang
@@ -30,6 +30,14 @@ class ModuleOwner:
 
 
 @dataclass(frozen=True)
+class ReadonlyDuplicate:
+    """A duplicate module retained only as readonly library inventory."""
+
+    name: str
+    declarations: tuple[SourceRange, ...]
+
+
+@dataclass(frozen=True)
 class SourceCatalog:
     schema_version: int
     source_set: SourceSet
@@ -44,6 +52,15 @@ class SourceCatalog:
     semantic_owner_ids: tuple[str, ...] = field(default=(), repr=False, compare=False)
     readonly_vendor_files: tuple[str, ...] = field(default=(), repr=False, compare=False)
     readonly_include_files: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    readonly_duplicate_inventory: tuple[ReadonlyDuplicate, ...] = field(
+        default=(), repr=False, compare=False
+    )
+
+    @property
+    def readonly_duplicates(self) -> tuple[ReadonlyDuplicate, ...]:
+        """Compatibility alias for the live readonly duplicate inventory."""
+
+        return self.readonly_duplicate_inventory
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -112,6 +129,56 @@ class _DefinitionRecord:
     declaration: SourceRange
 
 
+@dataclass(frozen=True)
+class _PhysicalModuleDeclaration:
+    name: str
+    declaration: SourceRange
+
+
+def _read_physical_token(
+    source_set: SourceSet, file: str, start: int, length: int
+) -> bytes:
+    """Read only one source token while validating its physical bounds."""
+
+    path = source_set.source_root / file
+    try:
+        size = path.stat().st_size
+    except OSError as error:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "cannot stat module declaration source",
+            file=file,
+            start=start,
+        ) from error
+    end = start + length
+    if start < 0 or length <= 0 or end > size:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "module declaration range is outside source bytes",
+            file=file,
+            start=start,
+        )
+    try:
+        with path.open("rb") as source:
+            source.seek(start)
+            data = source.read(length)
+    except OSError as error:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "cannot read module declaration source",
+            file=file,
+            start=start,
+        ) from error
+    if len(data) != length:
+        raise SourceCatalogError(
+            "CATALOG_RANGE_INVALID",
+            "module declaration range is outside source bytes",
+            file=file,
+            start=start,
+        )
+    return data
+
+
 def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
     if not any(is_source_file(path) for path in source_set.compile_order):
         raise SourceCatalogError(
@@ -162,16 +229,10 @@ def _definition_range(
     name = str(definition.name)
     start = int(definition.location.offset)
     file = _relative_file(source_set, manager, definition.location.buffer)
-    source = (source_set.source_root / file).read_bytes()
-    end = start + len(name.encode("utf-8"))
-    if start < 0 or start >= end or end > len(source):
-        raise SourceCatalogError(
-            "CATALOG_RANGE_INVALID",
-            "module declaration range is outside source bytes",
-            file=file,
-            start=start,
-        )
-    if source[start:end] != name.encode("utf-8"):
+    expected = name.encode("utf-8")
+    end = start + len(expected)
+    source = _read_physical_token(source_set, file, start, len(expected))
+    if source != expected:
         raise SourceCatalogError(
             "CATALOG_RANGE_INVALID",
             "module declaration range does not match source bytes",
@@ -209,6 +270,63 @@ def _module_definitions_for(
     )
 
 
+def _physical_module_declarations(
+    source_set: SourceSet, view: _CompiledView
+) -> tuple[_PhysicalModuleDeclaration, ...]:
+    """Inventory every module declaration in the supplied syntax tree.
+
+    An explicit-top semantic root may omit unelaborated definitions.  The CST
+    remains the physical source of truth for the module inventory, while the
+    semantic root is consulted separately for top reachability.
+    """
+
+    source_files = frozenset(
+        path for path in source_set.compile_order if is_source_file(path)
+    )
+    declarations: list[_PhysicalModuleDeclaration] = []
+
+    def collect(node: Any) -> None:
+        if getattr(node, "kind", None) != pyslang.syntax.SyntaxKind.ModuleDeclaration:
+            return
+        token = getattr(getattr(node, "header", None), "name", None)
+        if token is None or not token.rawText:
+            return
+        file = _relative_file(source_set, view.source_manager, token.location.buffer)
+        if file not in source_files:
+            return
+        name = str(token.rawText)
+        start = int(token.location.offset)
+        expected = name.encode("utf-8")
+        end = start + len(expected)
+        source = _read_physical_token(source_set, file, start, len(expected))
+        if source != expected:
+            raise SourceCatalogError(
+                "CATALOG_RANGE_INVALID",
+                "module declaration range does not match source bytes",
+                file=file,
+                start=start,
+            )
+        declarations.append(
+            _PhysicalModuleDeclaration(
+                name=name,
+                declaration=SourceRange(file=file, start=start, end=end),
+            )
+        )
+
+    view.syntax_tree.root.visit(collect)
+    return tuple(
+        sorted(
+            declarations,
+            key=lambda item: (
+                item.declaration.file,
+                item.declaration.start,
+                item.declaration.end,
+                item.name,
+            ),
+        )
+    )
+
+
 def _semantic_name_range(
     source_set: SourceSet,
     manager: Any,
@@ -228,16 +346,10 @@ def _semantic_name_range(
         )
     file = _relative_file(source_set, manager, location.buffer)
     start = int(location.offset)
-    end = start + len(value.encode("utf-8"))
-    source = (source_set.source_root / file).read_bytes()
-    if start < 0 or start >= end or end > len(source):
-        raise SourceCatalogError(
-            "CATALOG_RANGE_INVALID",
-            "semantic owner range is outside source bytes",
-            file=file,
-            start=start,
-        )
-    if source[start:end] != value.encode("utf-8"):
+    expected = value.encode("utf-8")
+    end = start + len(expected)
+    source = _read_physical_token(source_set, file, start, len(expected))
+    if source != expected:
         raise SourceCatalogError(
             "CATALOG_RANGE_INVALID",
             "semantic owner range does not match source bytes",
@@ -261,8 +373,6 @@ def _semantic_owner_ids(
 
     owners: set[str] = {"$unit"}
     owners.update(module.owner_id for module in modules)
-    nodes: list[Any] = []
-    view.root.visit(nodes.append)
     module_owner_by_range = {
         (
             module.declaration.file,
@@ -271,13 +381,14 @@ def _semantic_owner_ids(
         ): module.owner_id
         for module in modules
     }
-    for node in nodes:
+
+    def collect(node: Any) -> None:
         node_type = type(node).__name__
         if node_type == "InstanceBodySymbol":
             definition = getattr(node, "definition", None)
             syntax = getattr(node, "syntax", None)
             if definition is None or syntax is None:
-                continue
+                return
             declaration = _definition_range(source_set, view.source_manager, definition)
             syntax_kind = str(getattr(syntax, "kind", ""))
             if "ModuleDeclaration" in syntax_kind:
@@ -321,6 +432,8 @@ def _semantic_owner_ids(
             owners.add(
                 f"generate:{file}:{int(start.offset)}:{end_offset}"
             )
+
+    view.root.visit(collect)
     return tuple(sorted(owners))
 
 
@@ -339,16 +452,10 @@ def _check_duplicate_syntax_modules(
         file = _relative_file(source_set, view.source_manager, token.location.buffer)
         name = token.rawText
         start = int(token.location.offset)
-        end = start + len(name.encode("utf-8"))
-        source = (source_set.source_root / file).read_bytes()
-        if start < 0 or start >= end or end > len(source):
-            raise SourceCatalogError(
-                "CATALOG_RANGE_INVALID",
-                "module declaration range is outside source bytes",
-                file=file,
-                start=start,
-            )
-        if source[start:end] != name.encode("utf-8"):
+        expected = name.encode("utf-8")
+        end = start + len(expected)
+        source = _read_physical_token(source_set, file, start, len(expected))
+        if source != expected:
             raise SourceCatalogError(
                 "CATALOG_RANGE_INVALID",
                 "module declaration range does not match source bytes",
@@ -369,6 +476,117 @@ def _check_duplicate_syntax_modules(
             )
 
 
+def _file_is_within_rewrite_roots(file: str, roots: tuple[str, ...]) -> bool:
+    path = PurePosixPath(file)
+    for root in roots:
+        if root == ".":
+            return True
+        try:
+            path.relative_to(PurePosixPath(root))
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _duplicate_declarations(
+    declarations: tuple[_PhysicalModuleDeclaration, ...],
+) -> tuple[tuple[str, tuple[SourceRange, ...]], ...]:
+    grouped: dict[str, list[SourceRange]] = {}
+    for item in declarations:
+        grouped.setdefault(item.name, []).append(item.declaration)
+    return tuple(
+        (name, tuple(sorted(ranges, key=lambda item: (item.file, item.start, item.end))))
+        for name, ranges in sorted(grouped.items())
+        if len(ranges) > 1
+    )
+
+
+def _duplicate_error(name: str, declaration: SourceRange, reason: str) -> SourceCatalogError:
+    return SourceCatalogError(
+        "CATALOG_DUPLICATE_MODULE",
+        f"module has multiple physical declarations: {name} ({reason})",
+        file=declaration.file,
+        start=declaration.start,
+    )
+
+
+def _readonly_duplicate_inventory(
+    source_set: SourceSet,
+    declarations: tuple[_PhysicalModuleDeclaration, ...],
+    *,
+    top_closure_names: frozenset[str],
+) -> tuple[ReadonlyDuplicate, ...]:
+    """Validate duplicate providers and retain only allowed readonly entries."""
+
+    if source_set.origin != "filelist" or not source_set.rewrite_roots:
+        _check_duplicate_syntax_modules_from_inventory(declarations)
+        return ()
+
+    entries_by_value: dict[str, list[Any]] = {}
+    for entry in getattr(source_set, "filelist_entries", ()):
+        entries_by_value.setdefault(entry.value, []).append(entry)
+
+    inventory: list[ReadonlyDuplicate] = []
+    for name, ranges in _duplicate_declarations(declarations):
+        first = ranges[0]
+        if name == source_set.top:
+            raise _duplicate_error(name, first, "selected top is duplicated")
+        if any(
+            _file_is_within_rewrite_roots(item.file, source_set.rewrite_roots)
+            for item in ranges
+        ):
+            raise _duplicate_error(name, first, "declaration is inside rewrite root")
+        if name in top_closure_names:
+            raise _duplicate_error(name, first, "module is reachable from selected top")
+        if len({item.file for item in ranges}) != len(ranges):
+            raise _duplicate_error(name, first, "same physical file declares module twice")
+
+        providers: list[Any] = []
+        for declaration in ranges:
+            candidates = entries_by_value.get(declaration.file, [])
+            if len(candidates) != 1:
+                raise _duplicate_error(
+                    name,
+                    declaration,
+                    "module declaration has no unique filelist provenance",
+                )
+            entry = candidates[0]
+            if entry.kind not in {"source", "library_source"}:
+                raise _duplicate_error(
+                    name,
+                    declaration,
+                    "module declaration provenance is not a source entry",
+                )
+            providers.append(entry)
+
+        source_count = sum(entry.kind == "source" for entry in providers)
+        if source_count > 1 or (
+            source_count == 0
+            and not all(entry.kind == "library_source" for entry in providers)
+        ):
+            raise _duplicate_error(
+                name,
+                first,
+                "duplicate providers are not readonly library entries",
+            )
+        if source_count == 1 and not all(
+            entry.kind in {"source", "library_source"} for entry in providers
+        ):
+            raise _duplicate_error(name, first, "duplicate provider kind is invalid")
+        inventory.append(ReadonlyDuplicate(name=name, declarations=ranges))
+
+    return tuple(sorted(inventory, key=lambda item: (item.name, item.declarations)))
+
+
+def _check_duplicate_syntax_modules_from_inventory(
+    declarations: tuple[_PhysicalModuleDeclaration, ...],
+) -> None:
+    for name, ranges in _duplicate_declarations(declarations):
+        first = ranges[0]
+        raise _duplicate_error(name, first, "duplicate providers are not allowed")
+
+
 def _walk_reachable_modules(root: Any, top: str) -> tuple[Any, ...]:
     tops = [
         instance
@@ -382,11 +600,10 @@ def _walk_reachable_modules(root: Any, top: str) -> tuple[Any, ...]:
         )
 
     reachable: dict[tuple[Any, int, str], Any] = {}
-    semantic_nodes: list[Any] = []
-    tops[0].visit(semantic_nodes.append)
-    for node in semantic_nodes:
+
+    def collect(node: Any) -> None:
         if not getattr(node, "isModule", False):
-            continue
+            return
         definition = getattr(node, "definition", None)
         if definition is None:
             raise SourceCatalogError(
@@ -399,11 +616,149 @@ def _walk_reachable_modules(root: Any, top: str) -> tuple[Any, ...]:
             str(definition.name),
         )
         reachable[key] = definition
+
+    tops[0].visit(collect)
     return tuple(reachable.values())
+
+
+def _module_owners_from_inventory(
+    declarations: tuple[_PhysicalModuleDeclaration, ...],
+    *,
+    reachable_ranges: set[tuple[str, int, int]],
+    selected_range: tuple[str, int, int] | None,
+) -> tuple[ModuleOwner, ...]:
+    modules: list[ModuleOwner] = []
+    for item in declarations:
+        declaration = item.declaration
+        key = (declaration.file, declaration.start, declaration.end)
+        modules.append(
+            ModuleOwner(
+                owner_id=f"module:{declaration.file}:{declaration.start}:{declaration.end}",
+                name=item.name,
+                declaration=declaration,
+                in_top_closure=key in reachable_ranges,
+                is_selected_top=key == selected_range,
+            )
+        )
+    return tuple(modules)
+
+
+def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
+    """Build a rewrite-root filelist catalog from one explicit-top view."""
+
+    assert source_set.top is not None
+    view = _compile_view(source_set, top=source_set.top)
+    parse_errors, _ = _diagnostic_counts(view)
+    declarations = _physical_module_declarations(source_set, view)
+    # Apply all duplicate checks that do not require top reachability first.
+    _readonly_duplicate_inventory(
+        source_set,
+        declarations,
+        top_closure_names=frozenset(),
+    )
+
+    # A duplicate library module that is instantiated by the selected top may
+    # make PySlang report a parse/semantic diagnostic before exposing the
+    # reachable definition.  Walk the root before surfacing that diagnostic so
+    # the finite duplicate policy remains fail-closed for reachable providers.
+    try:
+        reachable = _walk_reachable_modules(view.root, source_set.top)
+    except SourceCatalogError:
+        if parse_errors:
+            raise SourceCatalogError(
+                "CATALOG_PARSE_FAILED", "explicit-top view contains parse errors"
+            )
+        raise
+    reachable_ranges: set[tuple[str, int, int]] = set()
+    reachable_names = frozenset(str(definition.name) for definition in reachable)
+    for definition in reachable:
+        declaration = _definition_range(source_set, view.source_manager, definition)
+        key = (declaration.file, declaration.start, declaration.end)
+        if not any(item.declaration == declaration for item in declarations):
+            raise SourceCatalogError(
+                "CATALOG_TOP_MISMATCH",
+                "top view definition cannot map to physical module inventory",
+                file=declaration.file,
+                start=declaration.start,
+            )
+        reachable_ranges.add(key)
+
+    tops = [
+        instance
+        for instance in view.root.topInstances
+        if instance.name == source_set.top
+        and getattr(instance, "isModule", False)
+    ]
+    if len(tops) != 1:
+        raise SourceCatalogError(
+            "CATALOG_TOP_MISMATCH", "selected top is not unique"
+        )
+    selected_declaration = _definition_range(
+        source_set, view.source_manager, tops[0].definition
+    )
+    selected_range = (
+        selected_declaration.file,
+        selected_declaration.start,
+        selected_declaration.end,
+    )
+    if not any(item.declaration == selected_declaration for item in declarations):
+        raise SourceCatalogError(
+            "CATALOG_TOP_MISMATCH",
+            "selected top cannot map to physical module inventory",
+            file=selected_declaration.file,
+            start=selected_declaration.start,
+        )
+
+    readonly_duplicates = _readonly_duplicate_inventory(
+        source_set,
+        declarations,
+        top_closure_names=reachable_names,
+    )
+    if parse_errors:
+        raise SourceCatalogError(
+            "CATALOG_PARSE_FAILED", "explicit-top view contains parse errors"
+        )
+    _, semantic_errors = _diagnostic_counts(view)
+    if semantic_errors:
+        raise SourceCatalogError(
+            "CATALOG_SEMANTIC_FAILED", "explicit-top view contains semantic errors"
+        )
+
+    modules = _module_owners_from_inventory(
+        declarations,
+        reachable_ranges=reachable_ranges,
+        selected_range=selected_range,
+    )
+    top_closure_owner_ids = tuple(
+        module.owner_id for module in modules if module.in_top_closure
+    )
+    return SourceCatalog(
+        schema_version=1,
+        source_set=source_set,
+        modules=modules,
+        top_closure_owner_ids=top_closure_owner_ids,
+        catalog_compilation=view.compilation,
+        catalog_root=view.root,
+        catalog_source_manager=view.source_manager,
+        top_compilation=view.compilation,
+        top_root=view.root,
+        top_source_manager=view.source_manager,
+        semantic_owner_ids=_semantic_owner_ids(source_set, view, modules),
+        readonly_vendor_files=tuple(view.vendor_compatibility_files),
+        readonly_include_files=tuple(source_set.included_files),
+        readonly_duplicate_inventory=readonly_duplicates,
+    )
 
 
 def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
     """Build the catalog view and optional selected-top overlay."""
+
+    if (
+        source_set.origin == "filelist"
+        and source_set.top
+        and source_set.rewrite_roots
+    ):
+        return _build_single_explicit_top_catalog(source_set)
 
     catalog_view = _compile_view(source_set, top=None)
     catalog_parse_errors, _ = _diagnostic_counts(catalog_view)
@@ -535,4 +890,5 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         semantic_owner_ids=_semantic_owner_ids(source_set, catalog_view, tuple(modules)),
         readonly_vendor_files=tuple(readonly_vendor_files),
         readonly_include_files=tuple(source_set.included_files),
+        readonly_duplicate_inventory=(),
     )
