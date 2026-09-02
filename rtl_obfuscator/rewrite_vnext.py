@@ -11,7 +11,7 @@ import re
 import shutil
 import stat
 import tempfile
-from typing import Any
+from typing import Any, Callable
 
 from .mapping_vnext import (
     InputFileDigest,
@@ -879,6 +879,7 @@ def write_gate_vnext(
     *,
     output_dir: Path,
     _validate_canonical_policy: bool = True,
+    _compile_gate: Callable[[SourceSet], CompileEvidence] | None = None,
 ) -> RewriteExecution:
     """Apply all mapping edits once, compile the gate, and publish atomically."""
 
@@ -924,19 +925,25 @@ def write_gate_vnext(
         gate_manifest = _manifest(gate_data, _physical_files(source_set))
 
         gate_source_set = replace(source_set, source_root=staging.resolve())
-        try:
-            gate_catalog = build_source_catalog(gate_source_set)
-        except Exception as error:
-            _fail("REWRITE_GATE_COMPILE_FAILED", f"strict gate compilation failed: {error}")
-        compile_report = gate_catalog.to_report()["compile"]
-        catalog_compile = compile_report["catalog"]
-        top_compile = compile_report["top_overlay"]
-        evidence = CompileEvidence(
-            catalog_parse_errors=int(catalog_compile["parse_errors"]),
-            catalog_semantic_errors=int(catalog_compile["semantic_errors"]),
-            top_overlay_parse_errors=None if top_compile is None else int(top_compile["parse_errors"]),
-            top_overlay_semantic_errors=None if top_compile is None else int(top_compile["semantic_errors"]),
-        )
+        if _compile_gate is None:
+            try:
+                gate_catalog = build_source_catalog(gate_source_set)
+            except Exception as error:
+                _fail("REWRITE_GATE_COMPILE_FAILED", f"strict gate compilation failed: {error}")
+            compile_report = gate_catalog.to_report()["compile"]
+            catalog_compile = compile_report["catalog"]
+            top_compile = compile_report["top_overlay"]
+            evidence = CompileEvidence(
+                catalog_parse_errors=int(catalog_compile["parse_errors"]),
+                catalog_semantic_errors=int(catalog_compile["semantic_errors"]),
+                top_overlay_parse_errors=None if top_compile is None else int(top_compile["parse_errors"]),
+                top_overlay_semantic_errors=None if top_compile is None else int(top_compile["semantic_errors"]),
+            )
+        else:
+            try:
+                evidence = _compile_gate(gate_source_set)
+            except Exception as error:
+                _fail("REWRITE_GATE_COMPILE_FAILED", f"strict gate compilation failed: {error}")
         if (
             evidence.catalog_parse_errors != 0
             or evidence.catalog_semantic_errors != 0

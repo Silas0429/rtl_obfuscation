@@ -62,6 +62,9 @@ class SourceCatalog:
     readonly_duplicate_inventory: tuple[ReadonlyDuplicate, ...] = field(
         default=(), repr=False, compare=False
     )
+    # Fast adapters may retain a private semantic-name fence without walking
+    # the complete root.  It is intentionally absent from the portable report.
+    fast_unavailable_names: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def readonly_duplicates(self) -> tuple[ReadonlyDuplicate, ...]:

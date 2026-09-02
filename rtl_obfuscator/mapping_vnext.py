@@ -491,7 +491,11 @@ def _unavailable_names(
     rename_index: RenameIndex,
 ) -> set[str]:
     unavailable: set[str] = set()
-    unavailable.update(_semantic_names(catalog))
+    private_names = getattr(catalog, "fast_unavailable_names", ())
+    if private_names:
+        unavailable.update(private_names)
+    else:
+        unavailable.update(_semantic_names(catalog))
     unavailable.update(symbol.name for symbol in rename_index.symbols)
     return unavailable
 

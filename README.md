@@ -137,6 +137,15 @@ python rtl_encrypt.py \
 未提供时保持原有的全 filelist source 改写候选语义。`--rewrite-root` 是用户授权白名单，不会按目录名、版权头或
 `-v` 自动识别供应商代码；请指向真正拥有且允许改写的最小目录。
 
+#### filelist 的 signals 快速路径边界
+
+当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
+`signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
+快速路径。它只改写 rewrite-root 内显式 source unit 的 module 直接
+`VariableSymbol`/`NetSymbol`；ports、function/task locals、package/global、interface、struct
+以及 rewrite-root 外文件保持不改。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
+绑定或编译问题会原子失败，绝不静默回退慢路径。
+
 PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/
 `endprotect` 和四个 fault directive）会报可恢复诊断。工具只在诊断能精确回到预期物理字节、
 `protect/endprotect` 正确配对时允许继续，并把产生诊断的整个文件以 `readonly_vendor_model` 保留。普通未知宏、

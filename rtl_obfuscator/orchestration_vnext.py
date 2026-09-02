@@ -22,6 +22,11 @@ from .rate_metrics_vnext import (
 )
 from .rate_vnext import RateSelectionVNext, RateVNextError, build_rate_selection_vnext
 from .category_registry_vnext import CategoryRegistryError, normalize_categories
+from .fast_local_signals import (
+    FastLocalSignalsError,
+    build_fast_local_signals_mapping,
+    compile_fast_gate,
+)
 from .performance_probe import StageObserver, _observe
 from .rename_index import RenameIndexError, build_rename_index
 from .rewrite_vnext import (
@@ -385,10 +390,13 @@ def _run_no_rate(
     gate_dir: Path,
     restore_dir: Path,
     stage_observer: StageObserver | None = None,
+    compile_gate: object | None = None,
 ) -> tuple[MappingVNext, MappingExecutionVNext, MetricsVNext, None]:
     try:
         _observe(stage_observer, _STAGE_GATE, "begin")
-        execution = write_gate_vnext(mapping, output_dir=gate_dir)
+        execution = write_gate_vnext(
+            mapping, output_dir=gate_dir, _compile_gate=compile_gate
+        )
         _observe(stage_observer, _STAGE_GATE, "end")
         _observe(stage_observer, _STAGE_RESTORE, "begin")
         restore_result = restore_gate_vnext(
@@ -450,22 +458,46 @@ def run_vnext(
     """Build, execute, restore, and audit one vNext SourceSet pipeline."""
 
     source_set = _validate_source_set(source_set)
+    try:
+        categories = tuple(categories)
+        normalized_categories = normalize_categories(categories, default=False)
+    except (TypeError, CategoryRegistryError) as error:
+        _fail("ORCHESTRATION_MAPPING_INVALID", str(error))
     gate_path, restore_path = _validate_outputs(source_set, gate_dir, restore_dir)
     created_paths: list[Path] = []
     try:
-        mapping = _build_mapping(
-            source_set,
-            categories=categories,
-            name_length=name_length,
-            name_factory=name_factory,
-            stage_observer=stage_observer,
+        fast_local = (
+            source_set.origin == "filelist"
+            and bool(source_set.rewrite_roots)
+            and normalized_categories == ("signals",)
+            and source_set.top is None
+            and encryption_rate is None
         )
+        if fast_local:
+            try:
+                mapping = build_fast_local_signals_mapping(
+                    source_set,
+                    name_length=name_length,
+                    name_factory=name_factory,
+                    stage_observer=stage_observer,
+                )
+            except FastLocalSignalsError as error:
+                _fail("ORCHESTRATION_MAPPING_INVALID", error.message)
+        else:
+            mapping = _build_mapping(
+                source_set,
+                categories=categories,
+                name_length=name_length,
+                name_factory=name_factory,
+                stage_observer=stage_observer,
+            )
         if encryption_rate is None:
             effective_mapping, mapping_execution, metrics, rate_metrics = _run_no_rate(
                 mapping,
                 gate_dir=gate_path,
                 restore_dir=restore_path,
                 stage_observer=stage_observer,
+                compile_gate=compile_fast_gate if fast_local else None,
             )
         elif isinstance(encryption_rate, str):
             effective_mapping, mapping_execution, metrics, rate_metrics = _run_rate(
