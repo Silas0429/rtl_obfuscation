@@ -118,6 +118,7 @@ class _RangePathContext:
     range_requests: int = 0
     range_reads: int = 0
     range_cache_hits: int = 0
+    reference_candidate_checks: int = 0
 
     @classmethod
     def for_catalog(cls, catalog: SourceCatalog) -> _RangePathContext:
@@ -227,6 +228,219 @@ class _WorkingSymbol:
     reason: str | None = None
     targets: set[object] = field(default_factory=set)
     occurrences: dict[tuple[str, int, int], SymbolOccurrence] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _OrderedSemanticNode:
+    """One semantic node together with the ordinal assigned by ``visit``."""
+
+    ordinal: int
+    node: Any
+
+
+@dataclass(frozen=True)
+class _SemanticWorkset:
+    """The ordered semantic projections used by one RenameIndex build.
+
+    PySlang semantic roots are intentionally visited here, once per distinct
+    root.  Keeping the ordinal alongside each node makes it explicit that all
+    later projections consume the compiler's visit order rather than the
+    incidental order of a set or a dictionary.
+    """
+
+    catalog: tuple[_OrderedSemanticNode, ...]
+    top: tuple[_OrderedSemanticNode, ...]
+    instance_body_nodes: tuple[Any, ...] = field(init=False)
+    struct_nodes: tuple[Any, ...] = field(init=False)
+    declaration_nodes: tuple[Any, ...] = field(init=False)
+    occurrence_nodes: tuple[Any, ...] = field(init=False)
+    dead_source_nodes: tuple[Any, ...] = field(init=False)
+    completeness_nodes: tuple[Any, ...] = field(init=False)
+    top_interface_nodes: tuple[Any, ...] = field(init=False)
+    top_type_nodes: tuple[Any, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        catalog = self.catalog
+        declaration_kinds = {
+            "InstanceBodySymbol",
+            "TypeAliasType",
+            "PortSymbol",
+            "VariableSymbol",
+            "NetSymbol",
+            "ModportSymbol",
+            "InstanceSymbol",
+            "InstanceArraySymbol",
+        }
+        occurrence_kinds = {
+            "InstanceSymbol",
+            "PortSymbol",
+            "ModportPortSymbol",
+            "NamedValueExpression",
+            "HierarchicalValueExpression",
+            "ArbitrarySymbolExpression",
+            "MemberAccessExpression",
+            "ConversionExpression",
+            "InterfacePortSymbol",
+            "InstanceArraySymbol",
+        }
+        instance_body: list[Any] = []
+        struct: list[Any] = []
+        declaration: list[Any] = []
+        occurrence: list[Any] = []
+        dead_source: list[Any] = []
+        completeness: list[Any] = []
+        # Build every catalog projection in one in-memory pass.  This pass is
+        # intentionally after the single semantic root visit; it does not
+        # inspect children or otherwise recreate a semantic collector.
+        for ordered in catalog:
+            node = ordered.node
+            node_type = type(node).__name__
+            declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
+            has_alias = type(declared_type).__name__ == "TypeAliasType"
+            if (
+                bool(_safe_attr(node, "name", ""))
+                or _safe_attr(node, "symbol") is not None
+                or _safe_attr(node, "member") is not None
+                or node_type == "TypeAliasType"
+                or declared_type is not None
+            ):
+                # A non-TypeAlias declared type may still carry an inline or
+                # nested aggregate whose FieldSymbols are reached by the
+                # canonical aggregate walk.  Keep it in the generic proof
+                # projection rather than narrowing by known node shape.
+                completeness.append(node)
+            if node_type == "InstanceBodySymbol":
+                instance_body.append(node)
+            if node_type == "TypeAliasType":
+                struct.append(node)
+            if node_type in declaration_kinds:
+                declaration.append(node)
+            if node_type in occurrence_kinds or has_alias:
+                occurrence.append(node)
+            if node_type in {
+                "InstanceBodySymbol",
+                "PackageSymbol",
+                "GenerateBlockSymbol",
+            }:
+                dead_source.append(node)
+
+        top_interface: list[Any] = []
+        top_type: list[Any] = []
+        # The top root is distinct only for the explicit overlay view.  It is
+        # visited at most once by ``collect`` and classified once here.
+        for ordered in self.top:
+            node = ordered.node
+            node_type = type(node).__name__
+            declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
+            if node_type == "InterfacePortSymbol" or (
+                node_type == "InstanceSymbol"
+                and bool(_safe_attr(node, "isInterface", False))
+            ):
+                top_interface.append(node)
+            if type(declared_type).__name__ == "TypeAliasType" or (
+                node_type == "ConversionExpression"
+                and type(_safe_attr(node, "type")).__name__ == "TypeAliasType"
+            ):
+                top_type.append(node)
+
+        object.__setattr__(self, "instance_body_nodes", tuple(instance_body))
+        object.__setattr__(self, "struct_nodes", tuple(struct))
+        object.__setattr__(self, "declaration_nodes", tuple(declaration))
+        object.__setattr__(self, "occurrence_nodes", tuple(occurrence))
+        object.__setattr__(self, "dead_source_nodes", tuple(dead_source))
+        object.__setattr__(self, "completeness_nodes", tuple(completeness))
+        object.__setattr__(self, "top_interface_nodes", tuple(top_interface))
+        object.__setattr__(self, "top_type_nodes", tuple(top_type))
+
+    @classmethod
+    def collect(cls, source_catalog: SourceCatalog) -> _SemanticWorkset:
+        catalog_nodes: list[Any] = []
+        source_catalog.catalog_root.visit(catalog_nodes.append)
+        catalog = tuple(
+            _OrderedSemanticNode(ordinal, node)
+            for ordinal, node in enumerate(catalog_nodes)
+        )
+        if source_catalog.top_root is None:
+            top: tuple[_OrderedSemanticNode, ...] = ()
+        elif source_catalog.top_root is source_catalog.catalog_root:
+            top = catalog
+        else:
+            top_nodes: list[Any] = []
+            source_catalog.top_root.visit(top_nodes.append)
+            top = tuple(
+                _OrderedSemanticNode(ordinal, node)
+                for ordinal, node in enumerate(top_nodes)
+            )
+        return cls(catalog=catalog, top=top)
+
+    @property
+    def nodes(self) -> tuple[Any, ...]:
+        return tuple(item.node for item in self.catalog)
+
+    @property
+    def top_nodes(self) -> tuple[Any, ...]:
+        return tuple(item.node for item in self.top)
+
+
+@dataclass
+class _RecordPhysicalIndex:
+    """Direct declaration-key index built after the ordered declaration pass."""
+
+    by_key: dict[tuple[str, int, int], dict[str, tuple[str, ...]]] = field(
+        default_factory=dict
+    )
+
+    @classmethod
+    def from_records(
+        cls, records: dict[str, _WorkingSymbol]
+    ) -> _RecordPhysicalIndex:
+        by_key: dict[tuple[str, int, int], dict[str, list[str]]] = {}
+        for record in records.values():
+            key = (
+                record.declaration.file,
+                record.declaration.start,
+                record.declaration.end,
+            )
+            by_key.setdefault(key, {}).setdefault(record.category, []).append(
+                record.symbol_id
+            )
+        return cls(
+            by_key={
+                key: {
+                    category: tuple(dict.fromkeys(symbol_ids))
+                    for category, symbol_ids in categories.items()
+                }
+                for key, categories in by_key.items()
+            }
+        )
+
+    def resolve(
+        self,
+        declaration: SourceRange,
+        *,
+        category: str | None = None,
+    ) -> str | None:
+        key = (declaration.file, declaration.start, declaration.end)
+        categories = self.by_key.get(key)
+        if not categories:
+            return None
+        if category is not None:
+            candidates = categories.get(category, ())
+            return candidates[0] if len(candidates) == 1 else None
+        for name in CANONICAL_CATEGORIES:
+            candidates = categories.get(name, ())
+            if len(candidates) > 1:
+                return None
+            if len(candidates) == 1:
+                return candidates[0]
+        return None
+
+
+@dataclass
+class _ReferenceQueryStats:
+    """Observable count of range-index candidate probes for compact evidence."""
+
+    candidate_checks: int = 0
 
 
 def _symbol_report(symbol: SourceSymbol) -> dict[str, object]:
@@ -731,24 +945,46 @@ def _definition_key(
 
 def _module_maps(
     catalog: SourceCatalog,
+    nodes: Iterable[Any] | None = None,
     *,
     context: _RangePathContext | None = None,
-) -> tuple[dict[tuple[str, int, int], ModuleOwner], dict[object, ModuleOwner]]:
-    by_range = {
-        (item.declaration.file, item.declaration.start, item.declaration.end): item
-        for item in catalog.modules
-    }
-    by_definition: dict[object, ModuleOwner] = {}
-    nodes: list[Any] = []
-    catalog.catalog_root.visit(nodes.append)
+) -> tuple[
+    dict[tuple[str, int, int], ModuleOwner | None],
+    dict[object, ModuleOwner | None],
+]:
+    """Build owner indexes from one already collected semantic node sequence."""
+
+    by_range: dict[tuple[str, int, int], ModuleOwner | None] = {}
+    for item in catalog.modules:
+        key = (item.declaration.file, item.declaration.start, item.declaration.end)
+        previous = by_range.get(key)
+        if key in by_range and previous != item:
+            by_range[key] = None
+        elif key not in by_range:
+            by_range[key] = item
+    by_definition: dict[object, ModuleOwner | None] = {}
+    if nodes is None:
+        collected: list[Any] = []
+        catalog.catalog_root.visit(collected.append)
+        nodes = collected
     for node in nodes:
         if type(node).__name__ != "InstanceBodySymbol":
             continue
         definition = getattr(node, "definition", None)
         key = _definition_key(catalog, definition, context=context)
-        owner = by_range.get(key) if key is not None else None
-        if owner is not None:
-            by_definition[definition] = owner
+        if key is None or key not in by_range:
+            continue
+        owner = by_range[key]
+        try:
+            previous = by_definition.get(definition)
+            if definition in by_definition and previous != owner:
+                by_definition[definition] = None
+            else:
+                by_definition[definition] = owner
+        except TypeError:
+            # A semantic wrapper that cannot be hashed is resolved through its
+            # own physical declaration key by ``_owner_info``.
+            continue
     return by_range, by_definition
 
 
@@ -757,8 +993,13 @@ def _interface_ids(
     nodes: Iterable[Any],
     *,
     context: _RangePathContext | None = None,
+    by_range: dict[tuple[str, int, int], str | None] | None = None,
 ) -> dict[object, str]:
+    """Index interface definitions by wrapper and by physical declaration."""
+
     result: dict[object, str] = {}
+    if by_range is None:
+        by_range = {}
     for node in nodes:
         if type(node).__name__ != "InstanceBodySymbol":
             continue
@@ -768,20 +1009,33 @@ def _interface_ids(
         definition = getattr(node, "definition", None)
         value = _definition_range(catalog, definition, context=context)
         if value is not None:
-            result[definition] = f"interface:{value.file}:{value.start}:{value.end}"
+            key = (value.file, value.start, value.end)
+            identifier = f"interface:{value.file}:{value.start}:{value.end}"
+            previous = by_range.get(key)
+            if key in by_range and previous != identifier:
+                by_range[key] = None
+            elif key not in by_range:
+                by_range[key] = identifier
+            try:
+                result[definition] = identifier
+            except TypeError:
+                pass
     return result
 
 
 def _top_active_interfaces(
     catalog: SourceCatalog,
     *,
+    nodes: Iterable[Any] | None = None,
     context: _RangePathContext | None = None,
 ) -> set[tuple[str, int, int]]:
     if catalog.top_root is None:
         return set()
     result: set[tuple[str, int, int]] = set()
-    nodes: list[Any] = []
-    catalog.top_root.visit(nodes.append)
+    if nodes is None:
+        collected: list[Any] = []
+        catalog.top_root.visit(collected.append)
+        nodes = collected
     for node in nodes:
         if type(node).__name__ == "InstanceSymbol" and getattr(node, "isInterface", False):
             key = _definition_key(
@@ -801,13 +1055,16 @@ def _top_active_interfaces(
 def _top_active_types(
     catalog: SourceCatalog,
     *,
+    nodes: Iterable[Any] | None = None,
     context: _RangePathContext | None = None,
 ) -> set[tuple[str, int, int]]:
     if catalog.top_root is None:
         return set()
     result: set[tuple[str, int, int]] = set()
-    nodes: list[Any] = []
-    catalog.top_root.visit(nodes.append)
+    if nodes is None:
+        collected: list[Any] = []
+        catalog.top_root.visit(collected.append)
+        nodes = collected
     for node in nodes:
         declared = getattr(node, "declaredType", None)
         target = getattr(declared, "type", None)
@@ -827,15 +1084,23 @@ def _top_active_types(
 def _owner_info(
     catalog: SourceCatalog,
     definition: object,
-    modules_by_definition: dict[object, ModuleOwner],
-    interfaces_by_definition: dict[object, str],
+    modules_by_definition: dict[object, ModuleOwner | None],
+    interfaces_by_definition: dict[object, str | None],
+    modules_by_range: dict[tuple[str, int, int], ModuleOwner | None] | None = None,
+    interfaces_by_range: dict[tuple[str, int, int], str | None] | None = None,
     *,
     context: _RangePathContext | None = None,
 ) -> tuple[str, str, ModuleOwner | None, str | None]:
-    module = modules_by_definition.get(definition)
+    try:
+        module = modules_by_definition.get(definition)
+    except TypeError:
+        module = None
     if module is not None:
         return module.name, module.owner_id, module, "module"
-    interface = interfaces_by_definition.get(definition)
+    try:
+        interface = interfaces_by_definition.get(definition)
+    except TypeError:
+        interface = None
     if interface is not None:
         return interface, interface, None, "interface"
     # PySlang may expose distinct DefinitionSymbol wrappers for the same
@@ -843,12 +1108,16 @@ def _owner_info(
     # declaration location, never by a textual name search.
     key = _definition_key(catalog, definition, context=context)
     if key is not None:
-        for candidate in catalog.modules:
-            if candidate.declaration == SourceRange(*key):
-                return candidate.name, candidate.owner_id, candidate, "module"
-        interface_key = f"interface:{key[0]}:{key[1]}:{key[2]}"
-        if interface_key in interfaces_by_definition.values():
-            return interface_key, interface_key, None, "interface"
+        if modules_by_range is not None and key in modules_by_range:
+            module = modules_by_range[key]
+            if module is not None:
+                return module.name, module.owner_id, module, "module"
+            return "$unit", "$unit", None, None
+        if interfaces_by_range is not None and key in interfaces_by_range:
+            interface = interfaces_by_range[key]
+            if interface is not None:
+                return interface, interface, None, "interface"
+            return "$unit", "$unit", None, None
     return "$unit", "$unit", None, None
 
 
@@ -896,7 +1165,9 @@ def _add_working(
 
 
 def _record_id_for_declaration(
-    records: dict[str, _WorkingSymbol], declaration: SourceRange
+    records: dict[str, _WorkingSymbol],
+    declaration: SourceRange,
+    record_index: _RecordPhysicalIndex | None = None,
 ) -> str | None:
     """Identify one record by physical declaration position.
 
@@ -908,12 +1179,12 @@ def _record_id_for_declaration(
     that never reports a false competing owner.
     """
 
-    suffix = f"{declaration.file}:{declaration.start}:{declaration.end}"
-    for category in CANONICAL_CATEGORIES:
-        symbol_id = f"{category}:{suffix}"
-        if symbol_id in records:
-            return symbol_id
-    return None
+    if record_index is not None:
+        return record_index.resolve(declaration)
+    # Keep this private helper usable by focused diagnostics.  The production
+    # build always supplies its prebuilt physical index, so this fallback is a
+    # single index construction rather than a per-target linear scan.
+    return _RecordPhysicalIndex.from_records(records).resolve(declaration)
 
 
 def _record_for_semantic_target(
@@ -922,6 +1193,7 @@ def _record_for_semantic_target(
     target_map: dict[object, str],
     target: object,
     *,
+    record_index: _RecordPhysicalIndex | None = None,
     context: _RangePathContext | None = None,
 ) -> str | None:
     """Resolve a PySlang target by its physical declaration position.
@@ -951,7 +1223,7 @@ def _record_for_semantic_target(
         )
     except RenameIndexError:
         return None
-    symbol_id = _record_id_for_declaration(records, target_range)
+    symbol_id = _record_id_for_declaration(records, target_range, record_index)
     if symbol_id is not None:
         target_map[target] = symbol_id
     return symbol_id
@@ -963,12 +1235,14 @@ def _interface_record_for_definition(
     target_map: dict[object, str],
     definition: object,
     *,
+    record_index: _RecordPhysicalIndex | None = None,
     context: _RangePathContext | None = None,
 ) -> str | None:
     """Alias a direct interface DefinitionSymbol to its physical type record."""
 
     symbol_id = _record_for_semantic_target(
-        catalog, records, target_map, definition, context=context
+        catalog, records, target_map, definition,
+        record_index=record_index, context=context
     )
     if symbol_id is not None and records[symbol_id].kind == "interface_type":
         return symbol_id
@@ -976,10 +1250,13 @@ def _interface_record_for_definition(
     if key is None:
         return None
     physical = SourceRange(*key)
-    for candidate in records.values():
-        if candidate.category == "interface" and candidate.kind == "interface_type" and candidate.declaration == physical:
-            target_map[definition] = candidate.symbol_id
-            return candidate.symbol_id
+    if record_index is None:
+        record_index = _RecordPhysicalIndex.from_records(records)
+    symbol_id = record_index.resolve(physical, category="interface")
+    candidate = records.get(symbol_id) if symbol_id is not None else None
+    if candidate is not None and candidate.kind == "interface_type":
+        target_map[definition] = candidate.symbol_id
+        return candidate.symbol_id
     return None
 
 
@@ -1033,6 +1310,8 @@ def _register_structs(
     nodes: list[Any],
     modules_by_definition: dict[object, ModuleOwner],
     interfaces_by_definition: dict[object, str],
+    modules_by_range: dict[tuple[str, int, int], ModuleOwner | None],
+    interfaces_by_range: dict[tuple[str, int, int], str | None],
     active_types: set[tuple[str, int, int]],
     binding_issues: dict[str, list[dict[str, object]]],
     *,
@@ -1060,6 +1339,7 @@ def _register_structs(
         definition = getattr(node, "declaringDefinition", None)
         owner_module, semantic_owner, module, _ = _owner_info(
             catalog, definition, modules_by_definition, interfaces_by_definition,
+            modules_by_range, interfaces_by_range,
             context=context,
         )
         key = (declaration.file, declaration.start, declaration.end)
@@ -1193,6 +1473,8 @@ def _register_core_declarations(
     nodes: list[Any],
     modules_by_definition: dict[object, ModuleOwner],
     interfaces_by_definition: dict[object, str],
+    modules_by_range: dict[tuple[str, int, int], ModuleOwner | None],
+    interfaces_by_range: dict[tuple[str, int, int], str | None],
     active_interfaces: set[tuple[str, int, int]],
     binding_issues: dict[str, list[dict[str, object]]],
     *,
@@ -1228,6 +1510,8 @@ def _register_core_declarations(
                 definition,
                 modules_by_definition,
                 interfaces_by_definition,
+                modules_by_range,
+                interfaces_by_range,
                 context=context,
             )
             category = "interface" if owner_kind == "interface" else "signals"
@@ -1273,6 +1557,8 @@ def _register_core_declarations(
                 definition,
                 modules_by_definition,
                 interfaces_by_definition,
+                modules_by_range,
+                interfaces_by_range,
                 context=context,
             )
             category = "interface" if owner_kind == "interface" else "ports"
@@ -1309,6 +1595,8 @@ def _register_core_declarations(
                 definition,
                 modules_by_definition,
                 interfaces_by_definition,
+                modules_by_range,
+                interfaces_by_range,
                 context=context,
             )
             declaration = _try_declaration_range(
@@ -1337,6 +1625,8 @@ def _register_core_declarations(
                 definition,
                 modules_by_definition,
                 interfaces_by_definition,
+                modules_by_range,
+                interfaces_by_range,
                 context=context,
             )
             declaration = _try_declaration_range(
@@ -1378,6 +1668,8 @@ def _register_core_declarations(
                 definition,
                 modules_by_definition,
                 interfaces_by_definition,
+                modules_by_range,
+                interfaces_by_range,
                 context=context,
             )
             declaration = _try_declaration_range(
@@ -2464,6 +2756,7 @@ def _reference_attributions(
     tokens: tuple[_NameToken, ...],
     buckets: dict[tuple[str, str], list[_NameReference]],
     rewritten_starts: frozenset[tuple[str, int]],
+    stats: _ReferenceQueryStats | None = None,
 ) -> set[tuple[str, int, int]]:
     """Attribute each token to the smallest enclosing matching reference.
 
@@ -2493,29 +2786,85 @@ def _reference_attributions(
     single pass errs towards preserving too much, never too little.
     """
 
+    # A bucket is indexed offline by token ordinal.  Each reference updates a
+    # logarithmic number of segment-tree nodes; a point query then inspects one
+    # root-to-leaf path and reads only each node's minimum-width owners.  Thus a
+    # common name with T tokens and R references performs O((T + R) log T)
+    # probes instead of testing every token against every reference.
     found: set[tuple[str, int, int]] = set()
+    token_buckets: dict[tuple[str, str], list[_NameToken]] = {}
     for token in tokens:
-        candidates = buckets.get((token.file, token.name))
-        if not candidates:
+        token_buckets.setdefault((token.file, token.name), []).append(token)
+
+    for bucket, bucket_tokens in token_buckets.items():
+        references = buckets.get(bucket)
+        if not references:
             continue
-        enclosing = [
-            reference
-            for reference in candidates
-            if reference.start <= token.start and token.end <= reference.end
-        ]
-        if not enclosing:
-            continue
-        width = min(reference.end - reference.start for reference in enclosing)
-        owners = {
-            reference.target
-            for reference in enclosing
-            if (reference.end - reference.start) == width
-        }
-        if len(owners) != 1:
-            continue
-        if next(iter(owners)) in rewritten_starts:
-            continue
-        found.add((token.file, token.start, token.end))
+        ordered_tokens = sorted(
+            bucket_tokens, key=lambda item: (item.start, item.end)
+        )
+        starts = [item.start for item in ordered_tokens]
+        ends = [item.end for item in ordered_tokens]
+        size = 1
+        while size < len(ordered_tokens):
+            size <<= 1
+        minimum: list[int | None] = [None] * (size * 2)
+        owners: list[set[tuple[str, int]]] = [set() for _ in range(size * 2)]
+
+        def update(left: int, right: int, width: int, target: tuple[str, int]) -> None:
+            left += size
+            right += size
+            while left < right:
+                if left & 1:
+                    previous = minimum[left]
+                    if previous is None or width < previous:
+                        minimum[left] = width
+                        owners[left] = {target}
+                    elif width == previous:
+                        owners[left].add(target)
+                    left += 1
+                if right & 1:
+                    right -= 1
+                    previous = minimum[right]
+                    if previous is None or width < previous:
+                        minimum[right] = width
+                        owners[right] = {target}
+                    elif width == previous:
+                        owners[right].add(target)
+                left >>= 1
+                right >>= 1
+
+        for reference in references:
+            left = bisect.bisect_left(starts, reference.start)
+            right = bisect.bisect_right(ends, reference.end)
+            if left < right:
+                update(
+                    left,
+                    right,
+                    reference.end - reference.start,
+                    reference.target,
+                )
+
+        for index, token in enumerate(ordered_tokens):
+            position = size + index
+            width: int | None = None
+            matching_owners: set[tuple[str, int]] = set()
+            while position:
+                if stats is not None:
+                    stats.candidate_checks += 1
+                candidate_width = minimum[position]
+                if candidate_width is not None:
+                    if width is None or candidate_width < width:
+                        width = candidate_width
+                        matching_owners = set(owners[position])
+                    elif candidate_width == width:
+                        matching_owners.update(owners[position])
+                position >>= 1
+            if width is None or len(matching_owners) != 1:
+                continue
+            if next(iter(matching_owners)) in rewritten_starts:
+                continue
+            found.add((token.file, token.start, token.end))
     return found
 
 
@@ -2614,11 +2963,14 @@ def _apply_name_completeness(
     )
     by_start = {(token.file, token.start): token for token in tokens}
     accounted |= _declaration_attributions(catalog, nodes, by_start, wanted, context)
+    reference_stats = _ReferenceQueryStats()
     accounted |= _reference_attributions(
         tokens,
         _reference_spans(catalog, nodes, wanted, context),
         rewritten_starts,
+        reference_stats,
     )
+    context.reference_candidate_checks += reference_stats.candidate_checks
     incomplete = set(unverified)
     for token in tokens:
         if (token.file, token.start, token.end) not in accounted:
@@ -2639,6 +2991,7 @@ def _collect_occurrences(
     records: dict[str, _WorkingSymbol],
     binding_issues: dict[str, list[dict[str, object]]],
     *,
+    record_index: _RecordPhysicalIndex | None = None,
     context: _RangePathContext | None = None,
 ) -> dict[str, tuple[dict[str, object], ...]]:
     range_claims: dict[tuple[str, int, int], dict[str, set[str]]] = {}
@@ -2652,7 +3005,8 @@ def _collect_occurrences(
             continue
         if node_type == "PortSymbol":
             symbol_id = _record_for_semantic_target(
-                catalog, records, target_map, node, context=context
+                catalog, records, target_map, node,
+                record_index=record_index, context=context
             )
             if symbol_id is None:
                 symbol_id = _record_for_semantic_target(
@@ -2660,6 +3014,7 @@ def _collect_occurrences(
                     records,
                     target_map,
                     _safe_attr(node, "internalSymbol"),
+                    record_index=record_index,
                     context=context,
                 )
             if symbol_id is not None and records[symbol_id].category == "ports":
@@ -2689,6 +3044,7 @@ def _collect_occurrences(
                 records,
                 target_map,
                 getattr(node, "internalSymbol", None),
+                record_index=record_index,
                 context=context,
             )
             if symbol_id is not None:
@@ -2716,7 +3072,8 @@ def _collect_occurrences(
         if node_type in {"NamedValueExpression", "HierarchicalValueExpression", "ArbitrarySymbolExpression"}:
             target = getattr(node, "symbol", None)
             symbol_id = _record_for_semantic_target(
-                catalog, records, target_map, target, context=context
+                catalog, records, target_map, target,
+                record_index=record_index, context=context
             )
             if symbol_id is None:
                 continue
@@ -2748,7 +3105,8 @@ def _collect_occurrences(
         elif node_type == "MemberAccessExpression":
             target = getattr(node, "member", None)
             symbol_id = _record_for_semantic_target(
-                catalog, records, target_map, target, context=context
+                catalog, records, target_map, target,
+                record_index=record_index, context=context
             )
             if symbol_id is None:
                 continue
@@ -2828,6 +3186,7 @@ def _collect_occurrences(
                 records,
                 target_map,
                 getattr(node, "definition", None),
+                record_index=record_index,
                 context=context,
             )
             if interface_id is not None:
@@ -2854,6 +3213,7 @@ def _collect_occurrences(
                 records,
                 target_map,
                 getattr(node, "interfaceDef", None),
+                record_index=record_index,
                 context=context,
             )
             if interface_id is not None:
@@ -2879,6 +3239,7 @@ def _collect_occurrences(
                 records,
                 target_map,
                 _interface_port_modport_symbol(node),
+                record_index=record_index,
                 context=context,
             )
             if modport_id is not None:
@@ -2913,6 +3274,7 @@ def _collect_occurrences(
                 records,
                 target_map,
                 getattr(elements[0], "definition", None),
+                record_index=record_index,
                 context=context,
             )
             if interface_id is not None:
@@ -2948,7 +3310,8 @@ def _collect_occurrences(
                 if port is None:
                     continue
                 symbol_id = _record_for_semantic_target(
-                    catalog, records, target_map, port, context=context
+                    catalog, records, target_map, port,
+                    record_index=record_index, context=context
                 )
                 if symbol_id is None:
                     symbol_id = _record_for_semantic_target(
@@ -2956,6 +3319,7 @@ def _collect_occurrences(
                         records,
                         target_map,
                         _safe_attr(port, "internalSymbol"),
+                        record_index=record_index,
                         context=context,
                     )
                 if symbol_id is None:
@@ -3100,14 +3464,23 @@ def build_rename_index(
         raise RenameIndexError("RENAME_INDEX_CATEGORY_INVALID", error.message) from error
     context = _RangePathContext.for_catalog(source_catalog)
     _observe(stage_observer, RENAME_SEMANTIC_INVENTORY, "begin")
-    nodes: list[Any] = []
-    source_catalog.catalog_root.visit(nodes.append)
+    workset = _SemanticWorkset.collect(source_catalog)
     _module_range_map, modules_by_definition = _module_maps(
-        source_catalog, context=context
+        source_catalog, workset.instance_body_nodes, context=context
     )
-    interfaces_by_definition = _interface_ids(source_catalog, nodes, context=context)
-    active_interfaces = _top_active_interfaces(source_catalog, context=context)
-    active_types = _top_active_types(source_catalog, context=context)
+    interfaces_by_range: dict[tuple[str, int, int], str | None] = {}
+    interfaces_by_definition = _interface_ids(
+        source_catalog,
+        workset.instance_body_nodes,
+        context=context,
+        by_range=interfaces_by_range,
+    )
+    active_interfaces = _top_active_interfaces(
+        source_catalog, nodes=workset.top_interface_nodes, context=context
+    )
+    active_types = _top_active_types(
+        source_catalog, nodes=workset.top_type_nodes, context=context
+    )
     _observe(stage_observer, RENAME_SEMANTIC_INVENTORY, "end")
     records: dict[str, _WorkingSymbol] = {}
     target_map: dict[object, str] = {}
@@ -3115,29 +3488,33 @@ def build_rename_index(
     binding_issues: dict[str, list[dict[str, object]]] = {}
     _observe(stage_observer, RENAME_DECLARATIONS, "begin")
     _register_interface_types(
-        source_catalog, set(selected), records, target_map, nodes,
+        source_catalog, set(selected), records, target_map, workset.instance_body_nodes,
         interfaces_by_definition, active_interfaces, binding_issues,
         context=context,
     )
     _register_structs(
-        source_catalog, set(selected), records, target_map, alias_map, nodes,
-        modules_by_definition, interfaces_by_definition, active_types, binding_issues,
+        source_catalog, set(selected), records, target_map, alias_map, workset.struct_nodes,
+        modules_by_definition, interfaces_by_definition, _module_range_map,
+        interfaces_by_range, active_types, binding_issues,
         context=context,
     )
     _register_core_declarations(
-        source_catalog, set(selected), records, target_map, nodes,
-        modules_by_definition, interfaces_by_definition, active_interfaces, binding_issues,
+        source_catalog, set(selected), records, target_map, workset.declaration_nodes,
+        modules_by_definition, interfaces_by_definition, _module_range_map,
+        interfaces_by_range, active_interfaces, binding_issues,
         context=context,
     )
     _observe(stage_observer, RENAME_DECLARATIONS, "end")
+    record_index = _RecordPhysicalIndex.from_records(records)
     _observe(stage_observer, RENAME_OCCURRENCES, "begin")
     range_issues = _collect_occurrences(
         source_catalog,
-        nodes,
+        workset.occurrence_nodes,
         target_map,
         alias_map,
         records,
         binding_issues,
+        record_index=record_index,
         context=context,
     )
     group_issues = _apply_group_binding_issues(records, binding_issues)
@@ -3156,12 +3533,20 @@ def build_rename_index(
     _observe(stage_observer, RENAME_SYNTAX_INVENTORY, "end")
     _observe(stage_observer, RENAME_UNELABORATED, "begin")
     _apply_unelaborated_references(
-        source_catalog, nodes, syntax_nodes, records, context=context
+        source_catalog,
+        workset.dead_source_nodes,
+        syntax_nodes,
+        records,
+        context=context,
     )
     _observe(stage_observer, RENAME_UNELABORATED, "end")
     _observe(stage_observer, RENAME_NAME_COMPLETENESS, "begin")
     _apply_name_completeness(
-        source_catalog, nodes, syntax_nodes, records, context=context
+        source_catalog,
+        workset.completeness_nodes,
+        syntax_nodes,
+        records,
+        context=context,
     )
     _observe(stage_observer, RENAME_NAME_COMPLETENESS, "end")
     _observe(stage_observer, RENAME_FINALIZE, "begin")
