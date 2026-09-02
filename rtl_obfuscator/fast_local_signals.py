@@ -589,6 +589,8 @@ def _direct_signal_declarations(
             continue
         semantic_kind = "NetSymbol" if member_kind == "NetDeclaration" else "VariableSymbol"
         for declarator in tuple(getattr(member, "declarators", ())):
+            if _kind(getattr(declarator, "kind", None)) != _DECLARATOR_KIND:
+                continue
             token = getattr(declarator, "name", None)
             if token is None:
                 raise FastLocalSignalsError(
