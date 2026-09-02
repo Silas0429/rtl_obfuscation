@@ -19,7 +19,7 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | 路径 | 职责 |
 | --- | --- |
 | `rtl_obfuscator/source_set.py` | 归一化三种输入；filelist 模式轻量保留编译顺序、entry 来源记录、include-only 物理依赖和 root-relative rewrite allowlist |
-| `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；按诊断码和物理字节精确分类已验证供应商诊断 |
+| `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；parse 后在 SourceCatalog 前核对真实 source/include buffer；按诊断码和物理字节精确分类已验证供应商诊断 |
 | `rtl_obfuscator/performance_probe.py` | 保存永久粗粒度阶段 ID 与无状态 observer 转发，不参与流水线计算 |
 | `rtl_obfuscator/source_catalog.py` | 保存 compilation、top overlay、模块物理 declaration，并给出诊断文件与 include-only 只读清单 |
 | `rtl_obfuscator/rename_index.py` | 建立四核心组物理索引；对跨入供应商诊断文件、rewrite root 之外或 include-only 文件的整条记录应用只读 firewall |
@@ -48,8 +48,9 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 仍应用同一边界；它不进入当前 SourceSet schema 1 或 mapping schema 2。
 
 mapping、orchestration、mapping-execution、rate 和 restore 持久化报告使用 schema 2；嵌套 SourceSet
-仍使用 schema 1。`.sv/.v` 是 source unit；由 include closure 唯一发现、且未显式列为 standalone source 的 `.sv/.v`
-是只读物理依赖，不进入 compile order。`.svh/.vh/.h` 作为上下文物理文件；显式 filelist 裸路径
+仍使用 schema 1。`.sv/.v` 是 source unit；由 bounded literal include closure 唯一发现、且未显式列为 standalone
+source 的普通文件（包括任意后缀）是只读 include-only 物理依赖，不扩展 standalone suffix，不进入 compile order。
+同一规范化路径递归去重，并保留到 manifest、gate 和 restore。`.svh/.vh/.h` 作为上下文物理文件；显式 filelist 裸路径
 还可列出 `.vic` compilation-unit 参数上下文。上下文文件不进入 rename target；source/header 只有在
 同一规范化 `.vic` 路径已作为裸 filelist 条目显式列出时才能 include 它。`.vic` 不由 single-file、
 project-root 或 include-only 输入自动发现，也不接受 `-v`。
@@ -60,7 +61,9 @@ include-dir 和 define 的 live-only `FilelistEntry`（含 canonical value、物
 top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelist entry 不进入 SourceSet report、mapping
 或 restore 持久化 schema。
 
-`compile_pyslang_source_set()` 保留全部原始 syntax error key 做 parse/semantic 去重；只有物理位置可验证的
+`compile_pyslang_source_set()` 保留全部原始 syntax error key 做 parse/semantic 去重；parse 完成后会核对真实
+`DesignFile`、`LibraryFile`、`IncludeFile` buffer 是否已登记，未登记时在 SourceCatalog 全树遍历前带路径拒绝。
+宏计算出的 include 不自动加入 SourceSet。只有物理位置可验证的
 `IfNoneEdgeSensitive` 和六个固定 legacy directive 进入独立 vendor compatibility 分类。`MissingTimeScale`
 仍是另一种 nonblocking 原因；其他 parse/semantic error 不放宽。诊断文件参与 definition、hierarchy、port/type
 绑定，但任一 declaration/occurrence 跨入它时整条记录不改写。
