@@ -16,6 +16,17 @@ from typing import Any, Iterable
 import pyslang
 
 from .category_registry_vnext import CANONICAL_CATEGORIES, CategoryRegistryError, normalize_categories
+from .performance_probe import (
+    RENAME_DECLARATIONS,
+    RENAME_FINALIZE,
+    RENAME_NAME_COMPLETENESS,
+    RENAME_OCCURRENCES,
+    RENAME_SEMANTIC_INVENTORY,
+    RENAME_SYNTAX_INVENTORY,
+    RENAME_UNELABORATED,
+    StageObserver,
+    _observe,
+)
 from .source_catalog import ModuleOwner, SourceCatalog, SourceRange
 
 
@@ -2708,7 +2719,12 @@ def _category_outcomes(
     return tuple(result)
 
 
-def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[str]) -> RenameIndex:
+def build_rename_index(
+    source_catalog: SourceCatalog,
+    *,
+    categories: Iterable[str],
+    stage_observer: StageObserver | None = None,
+) -> RenameIndex:
     """Build the four-group index from one already compiled PySlang catalog."""
 
     if not isinstance(source_catalog, SourceCatalog):
@@ -2717,16 +2733,19 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         selected = normalize_categories(categories, default=False)
     except CategoryRegistryError as error:
         raise RenameIndexError("RENAME_INDEX_CATEGORY_INVALID", error.message) from error
+    _observe(stage_observer, RENAME_SEMANTIC_INVENTORY, "begin")
     nodes: list[Any] = []
     source_catalog.catalog_root.visit(nodes.append)
     _module_range_map, modules_by_definition = _module_maps(source_catalog)
     interfaces_by_definition = _interface_ids(source_catalog, nodes)
     active_interfaces = _top_active_interfaces(source_catalog)
     active_types = _top_active_types(source_catalog)
+    _observe(stage_observer, RENAME_SEMANTIC_INVENTORY, "end")
     records: dict[str, _WorkingSymbol] = {}
     target_map: dict[object, str] = {}
     alias_map: dict[tuple[str, int, int], str] = {}
     binding_issues: dict[str, list[dict[str, object]]] = {}
+    _observe(stage_observer, RENAME_DECLARATIONS, "begin")
     _register_interface_types(
         source_catalog, set(selected), records, target_map, nodes,
         interfaces_by_definition, active_interfaces, binding_issues,
@@ -2739,11 +2758,14 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         source_catalog, set(selected), records, target_map, nodes,
         modules_by_definition, interfaces_by_definition, active_interfaces, binding_issues,
     )
+    _observe(stage_observer, RENAME_DECLARATIONS, "end")
+    _observe(stage_observer, RENAME_OCCURRENCES, "begin")
     range_issues = _collect_occurrences(
         source_catalog, nodes, target_map, alias_map, records, binding_issues
     )
     group_issues = _apply_group_binding_issues(records, binding_issues)
     _apply_readonly_firewall(source_catalog, records)
+    _observe(stage_observer, RENAME_OCCURRENCES, "end")
     # Last, and deliberately after every other rule has settled: a record that
     # is still eligible here is one this run would really rename, so it is the
     # only set the dead-source and name-completeness checks have to ask about.
@@ -2752,9 +2774,16 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
     # through `_category_outcomes` like any other stated per-record reason.  The
     # CST is walked once and shared, and `unelaborated_reference` runs first
     # because it names the concrete cause and is the better diagnostic.
+    _observe(stage_observer, RENAME_SYNTAX_INVENTORY, "begin")
     syntax_nodes = _syntax_nodes(source_catalog)
+    _observe(stage_observer, RENAME_SYNTAX_INVENTORY, "end")
+    _observe(stage_observer, RENAME_UNELABORATED, "begin")
     _apply_unelaborated_references(source_catalog, nodes, syntax_nodes, records)
+    _observe(stage_observer, RENAME_UNELABORATED, "end")
+    _observe(stage_observer, RENAME_NAME_COMPLETENESS, "begin")
     _apply_name_completeness(source_catalog, nodes, syntax_nodes, records)
+    _observe(stage_observer, RENAME_NAME_COMPLETENESS, "end")
+    _observe(stage_observer, RENAME_FINALIZE, "begin")
     for category, category_issues in binding_issues.items():
         existing = list(range_issues.get(category, ()))
         for issue in category_issues:
@@ -2785,7 +2814,7 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         )
         for symbol in symbols
     )
-    return RenameIndex(
+    result = RenameIndex(
         schema_version=2,
         source_catalog=source_catalog,
         selected_categories=selected,
@@ -2793,6 +2822,8 @@ def build_rename_index(source_catalog: SourceCatalog, *, categories: Iterable[st
         decisions=decisions,
         category_outcomes=_category_outcomes(selected, symbols, range_issues),
     )
+    _observe(stage_observer, RENAME_FINALIZE, "end")
+    return result
 
 
 __all__ = [

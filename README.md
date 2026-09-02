@@ -45,6 +45,11 @@ python rtl_encrypt.py \
 SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验。
 真实工程上编译与索引通常是主要耗时段，所以分阶段计时比只报总时间有用。
 
+编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
+`compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
+成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。时间只用于实时展示，不会写入
+mapping、metrics 或其他产物。
+
 加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
 总文件数 / 加密文件数 / 文件覆盖率，以及
 改名对象数(rename) / 保留对象数(preserve) / 不支持对象数(unsupported) / 实际修改对象数。

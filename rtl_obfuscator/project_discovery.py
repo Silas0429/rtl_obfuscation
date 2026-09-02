@@ -25,6 +25,13 @@ from .rtl_files import (
     is_physical_rtl_file,
     is_source_file,
 )
+from .performance_probe import (
+    COMPILE_DIAGNOSTICS,
+    COMPILE_ELABORATE,
+    COMPILE_PARSE,
+    StageObserver,
+    _observe,
+)
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
@@ -437,6 +444,7 @@ def compile_pyslang_source_set(
     include_dirs: Iterable[str] = (),
     defines: dict[str, str] | None = None,
     top: str | None = None,
+    stage_observer: StageObserver | None = None,
 ) -> PySlangCompilationView:
     """Compile exactly the supplied effective file order with PySlang.
 
@@ -460,14 +468,21 @@ def compile_pyslang_source_set(
     if top is not None:
         options.topModules = {top}
     bag.compilationOptions = options
+    _observe(stage_observer, COMPILE_PARSE, "begin")
     syntax_tree = pyslang.syntax.SyntaxTree.fromFiles(
         [str(root / relative) for relative in ordered_files],
         manager,
         bag,
     )
+    _observe(stage_observer, COMPILE_PARSE, "end")
+
+    _observe(stage_observer, COMPILE_ELABORATE, "begin")
     compilation = pyslang.ast.Compilation(bag)
     compilation.addSyntaxTree(syntax_tree)
     root_symbol = compilation.getRoot()
+    _observe(stage_observer, COMPILE_ELABORATE, "end")
+
+    _observe(stage_observer, COMPILE_DIAGNOSTICS, "begin")
     syntax_errors = tuple(
         diagnostic
         for diagnostic in syntax_tree.diagnostics
@@ -516,6 +531,7 @@ def compile_pyslang_source_set(
         for diagnostic in semantic_candidates
         if str(diagnostic.code) != "DiagCode(MissingTimeScale)"
     )
+    _observe(stage_observer, COMPILE_DIAGNOSTICS, "end")
     return PySlangCompilationView(
         compilation=compilation,
         root=root_symbol,

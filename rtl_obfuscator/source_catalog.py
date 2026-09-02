@@ -8,6 +8,13 @@ from typing import Any
 
 import pyslang
 
+from .performance_probe import (
+    COMPILE_CATALOG_INVENTORY,
+    COMPILE_OWNER_REGISTRY,
+    COMPILE_TOP_CLOSURE,
+    StageObserver,
+    _observe,
+)
 from .project_discovery import compile_pyslang_source_set
 from .source_set import SourceSet
 from .rtl_files import is_source_file
@@ -179,7 +186,12 @@ def _read_physical_token(
     return data
 
 
-def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
+def _compile_view(
+    source_set: SourceSet,
+    *,
+    top: str | None,
+    stage_observer: StageObserver | None = None,
+) -> _CompiledView:
     if not any(is_source_file(path) for path in source_set.compile_order):
         raise SourceCatalogError(
             "CATALOG_EMPTY_SOURCE_SET", "SourceSet has no .sv or .v source unit"
@@ -193,6 +205,7 @@ def _compile_view(source_set: SourceSet, *, top: str | None) -> _CompiledView:
             include_dirs=source_set.include_dirs,
             defines=dict(source_set.defines),
             top=top,
+            stage_observer=stage_observer,
         )
     except (OSError, RuntimeError, ValueError) as error:
         raise SourceCatalogError("CATALOG_PARSE_FAILED", str(error)) from error
@@ -682,12 +695,19 @@ def _module_owners_from_inventory(
     return tuple(modules)
 
 
-def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
+def _build_single_explicit_top_catalog(
+    source_set: SourceSet,
+    *,
+    stage_observer: StageObserver | None = None,
+) -> SourceCatalog:
     """Build a rewrite-root filelist catalog from one explicit-top view."""
 
     assert source_set.top is not None
-    view = _compile_view(source_set, top=source_set.top)
+    view = _compile_view(
+        source_set, top=source_set.top, stage_observer=stage_observer
+    )
     parse_errors, _ = _diagnostic_counts(view)
+    _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "begin")
     declarations = _physical_module_declarations(source_set, view)
     # Apply all duplicate checks that do not require top reachability first.
     _readonly_duplicate_inventory(
@@ -695,11 +715,13 @@ def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
         declarations,
         top_closure_names=frozenset(),
     )
+    _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "end")
 
     # A duplicate library module that is instantiated by the selected top may
     # make PySlang report a parse/semantic diagnostic before exposing the
     # reachable definition.  Walk the root before surfacing that diagnostic so
     # the finite duplicate policy remains fail-closed for reachable providers.
+    _observe(stage_observer, COMPILE_TOP_CLOSURE, "begin")
     try:
         reachable = _walk_reachable_modules(view.root, source_set.top)
     except SourceCatalogError:
@@ -747,7 +769,9 @@ def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
             file=selected_declaration.file,
             start=selected_declaration.start,
         )
+    _observe(stage_observer, COMPILE_TOP_CLOSURE, "end")
 
+    _observe(stage_observer, COMPILE_OWNER_REGISTRY, "begin")
     readonly_duplicates = _readonly_duplicate_inventory(
         source_set,
         declarations,
@@ -771,7 +795,7 @@ def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
     top_closure_owner_ids = tuple(
         module.owner_id for module in modules if module.in_top_closure
     )
-    return SourceCatalog(
+    result = SourceCatalog(
         schema_version=1,
         source_set=source_set,
         modules=modules,
@@ -787,9 +811,15 @@ def _build_single_explicit_top_catalog(source_set: SourceSet) -> SourceCatalog:
         readonly_include_files=tuple(source_set.included_files),
         readonly_duplicate_inventory=readonly_duplicates,
     )
+    _observe(stage_observer, COMPILE_OWNER_REGISTRY, "end")
+    return result
 
 
-def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
+def build_source_catalog(
+    source_set: SourceSet,
+    *,
+    stage_observer: StageObserver | None = None,
+) -> SourceCatalog:
     """Build the catalog view and optional selected-top overlay."""
 
     if (
@@ -797,16 +827,22 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         and source_set.top
         and source_set.rewrite_roots
     ):
-        return _build_single_explicit_top_catalog(source_set)
+        return _build_single_explicit_top_catalog(
+            source_set, stage_observer=stage_observer
+        )
 
-    catalog_view = _compile_view(source_set, top=None)
+    catalog_view = _compile_view(
+        source_set, top=None, stage_observer=stage_observer
+    )
     catalog_parse_errors, _ = _diagnostic_counts(catalog_view)
     if catalog_parse_errors:
         raise SourceCatalogError(
             "CATALOG_PARSE_FAILED", "catalog view contains parse errors"
         )
+    _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "begin")
     catalog_records = _module_definitions_for(source_set, catalog_view)
     _check_duplicate_syntax_modules(source_set, catalog_view)
+    _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "end")
     _, catalog_semantic_errors = _diagnostic_counts(catalog_view)
     if catalog_semantic_errors:
         raise SourceCatalogError(
@@ -829,12 +865,15 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
     reachable_ranges: set[tuple[str, int, int]] = set()
     selected_range: tuple[str, int, int] | None = None
     if source_set.top is not None:
-        top_view = _compile_view(source_set, top=source_set.top)
+        top_view = _compile_view(
+            source_set, top=source_set.top, stage_observer=stage_observer
+        )
         top_parse_errors, _ = _diagnostic_counts(top_view)
         if top_parse_errors:
             raise SourceCatalogError(
                 "CATALOG_PARSE_FAILED", "top overlay contains parse errors"
             )
+        _observe(stage_observer, COMPILE_TOP_CLOSURE, "begin")
         reachable = _walk_reachable_modules(top_view.root, source_set.top)
         _, top_semantic_errors = _diagnostic_counts(top_view)
         if top_semantic_errors:
@@ -881,7 +920,9 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
                 file=selected_declaration.file,
                 start=selected_declaration.start,
             )
+        _observe(stage_observer, COMPILE_TOP_CLOSURE, "end")
 
+    _observe(stage_observer, COMPILE_OWNER_REGISTRY, "begin")
     modules: list[ModuleOwner] = []
     for owner in sorted(
         owner_by_range.values(),
@@ -915,7 +956,7 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         for file in top_view.vendor_compatibility_files:
             if file not in readonly_vendor_files:
                 readonly_vendor_files.append(file)
-    return SourceCatalog(
+    result = SourceCatalog(
         schema_version=1,
         source_set=source_set,
         modules=tuple(modules),
@@ -931,3 +972,5 @@ def build_source_catalog(source_set: SourceSet) -> SourceCatalog:
         readonly_include_files=tuple(source_set.included_files),
         readonly_duplicate_inventory=(),
     )
+    _observe(stage_observer, COMPILE_OWNER_REGISTRY, "end")
+    return result

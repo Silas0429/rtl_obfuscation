@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import re
 from pathlib import Path
 import shutil
-from typing import Callable, Iterable
+from typing import Iterable
 
 from .mapping_vnext import MappingVNext, NameFactory, build_mapping_vnext
 from .metrics_vnext import MetricsVNext, MetricsVNextError, build_metrics_vnext
@@ -22,6 +22,7 @@ from .rate_metrics_vnext import (
 )
 from .rate_vnext import RateSelectionVNext, RateVNextError, build_rate_selection_vnext
 from .category_registry_vnext import CategoryRegistryError, normalize_categories
+from .performance_probe import StageObserver, _observe
 from .rename_index import RenameIndexError, build_rename_index
 from .rewrite_vnext import (
     CompileEvidence,
@@ -57,24 +58,11 @@ def _fail(code: str, message: str) -> None:
     raise OrchestrationVNextError(code, message)
 
 
-#: Observer for the boundaries of the existing pipeline stages.  It is called
-#: with ``(stage, "begin")`` immediately before and ``(stage, "end")``
-#: immediately after a stage that already ran in this order.  It exposes the
-#: boundaries only: it cannot reorder, skip, or influence any stage, and the
-#: pipeline behaves identically when it is ``None``.
-StageObserver = Callable[[str, str], None]
-
 _STAGE_COMPILE = "compile"
 _STAGE_RENAME_INDEX = "rename_index"
 _STAGE_MAPPING = "mapping"
 _STAGE_GATE = "gate"
 _STAGE_RESTORE = "restore"
-
-
-def _observe(observer: StageObserver | None, stage: str, phase: str) -> None:
-    if observer is None:
-        return
-    observer(stage, phase)
 
 
 def _portable_report(value: object) -> object:
@@ -226,12 +214,15 @@ def _build_mapping(
     try:
         selected_categories = normalize_categories(categories, default=False)
         _observe(stage_observer, _STAGE_COMPILE, "begin")
-        catalog = build_source_catalog(source_set)
+        catalog = build_source_catalog(
+            source_set, stage_observer=stage_observer
+        )
         _observe(stage_observer, _STAGE_COMPILE, "end")
         _observe(stage_observer, _STAGE_RENAME_INDEX, "begin")
         rename_index = build_rename_index(
             catalog,
             categories=selected_categories,
+            stage_observer=stage_observer,
         )
         _observe(stage_observer, _STAGE_RENAME_INDEX, "end")
         _observe(stage_observer, _STAGE_MAPPING, "begin")

@@ -20,6 +20,7 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | --- | --- |
 | `rtl_obfuscator/source_set.py` | 归一化三种输入；filelist 模式轻量保留编译顺序、entry 来源记录、include-only 物理依赖和 root-relative rewrite allowlist |
 | `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；按诊断码和物理字节精确分类已验证供应商诊断 |
+| `rtl_obfuscator/performance_probe.py` | 保存永久粗粒度阶段 ID 与无状态 observer 转发，不参与流水线计算 |
 | `rtl_obfuscator/source_catalog.py` | 保存 compilation、top overlay、模块物理 declaration，并给出诊断文件与 include-only 只读清单 |
 | `rtl_obfuscator/rename_index.py` | 建立四核心组物理索引；对跨入供应商诊断文件、rewrite root 之外或 include-only 文件的整条记录应用只读 firewall |
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
@@ -63,6 +64,10 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 `IfNoneEdgeSensitive` 和六个固定 legacy directive 进入独立 vendor compatibility 分类。`MissingTimeScale`
 仍是另一种 nonblocking 原因；其他 parse/semantic error 不放宽。诊断文件参与 definition、hierarchy、port/type
 绑定，但任一 declaration/occurrence 跨入它时整条记录不改写。
+
+公开 CLI 的 compile 与 RenameIndex 外层进度内部提供固定粗粒度子阶段（如
+`compile.parse`、`compile.owner_registry`、`rename_index.name_completeness`）。这些阶段只通过
+同一个 observer 实时写入 stderr，不改变 SourceCatalog、RenameIndex 或任何持久化报告。
 
 ## 验证边界
 

@@ -163,6 +163,11 @@ class T116StdoutContractTests(unittest.TestCase):
             match = ELAPSED.match(line)
             if match is None:
                 continue
+            # T127 adds tagged coarse-grained events inside the two T116
+            # compilation/index stages; this assertion remains about the six
+            # outer presentation stages.
+            if "[compile." in match.group(3) or "[rename_index." in match.group(3):
+                continue
             seconds.append(float(match.group(1)))
             (begun if match.group(2) == "开始" else finished).append(match.group(3))
         self.assertEqual(begun, list(STAGE_LABELS))

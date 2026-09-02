@@ -25,6 +25,21 @@ from rtl_obfuscator.category_registry_vnext import (
     CategoryRegistryError,
     normalize_categories,
 )
+from rtl_obfuscator.performance_probe import (
+    COMPILE_CATALOG_INVENTORY,
+    COMPILE_DIAGNOSTICS,
+    COMPILE_ELABORATE,
+    COMPILE_OWNER_REGISTRY,
+    COMPILE_PARSE,
+    COMPILE_TOP_CLOSURE,
+    RENAME_DECLARATIONS,
+    RENAME_FINALIZE,
+    RENAME_NAME_COMPLETENESS,
+    RENAME_OCCURRENCES,
+    RENAME_SEMANTIC_INVENTORY,
+    RENAME_SYNTAX_INVENTORY,
+    RENAME_UNELABORATED,
+)
 from rtl_obfuscator.source_set import (
     SourceSetError,
     _resolve_filelist_path,
@@ -866,6 +881,19 @@ class _CliVNextProgress:
         orchestration_vnext._STAGE_MAPPING: "生成映射",
         orchestration_vnext._STAGE_GATE: "写出加密结果",
         orchestration_vnext._STAGE_RESTORE: "逐字节回填校验",
+        COMPILE_PARSE: "PySlang 解析与预处理",
+        COMPILE_ELABORATE: "PySlang 构建语义树 / elaborate",
+        COMPILE_DIAGNOSTICS: "PySlang 收集与分类诊断",
+        COMPILE_CATALOG_INVENTORY: "SourceCatalog 建立物理模块清单",
+        COMPILE_TOP_CLOSURE: "SourceCatalog 计算 top 闭包",
+        COMPILE_OWNER_REGISTRY: "SourceCatalog 建立 owner 注册表",
+        RENAME_SEMANTIC_INVENTORY: "改名索引收集语义清单",
+        RENAME_DECLARATIONS: "改名索引登记候选声明",
+        RENAME_OCCURRENCES: "改名索引收集引用范围",
+        RENAME_SYNTAX_INVENTORY: "改名索引收集 CST 清单",
+        RENAME_UNELABORATED: "改名索引检查未展开源码",
+        RENAME_NAME_COMPLETENESS: "改名索引检查名字完整性",
+        RENAME_FINALIZE: "改名索引生成最终记录",
     }
 
     def __init__(self, *, quiet: bool, stream: Any = None) -> None:
@@ -896,11 +924,13 @@ class _CliVNextProgress:
         now = self.elapsed()
         if phase == "begin":
             self._begun[stage] = now
-            self.write(f"[{now:7.3f}s] 开始 {label}\n")
+            suffix = f" [{stage}]" if "." in stage else ""
+            self.write(f"[{now:7.3f}s] 开始 {label}{suffix}\n")
             return
         started = self._begun.get(stage)
         spent = "" if started is None else f"（本阶段 {now - started:.3f}s）"
-        self.write(f"[{now:7.3f}s] 完成 {label}{spent}\n")
+        suffix = f" [{stage}]" if "." in stage else ""
+        self.write(f"[{now:7.3f}s] 完成 {label}{suffix}{spent}\n")
 
 
 _CLI_VNEXT_REPORT_LABEL_WIDTH = 26
