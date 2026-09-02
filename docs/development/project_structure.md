@@ -13,6 +13,9 @@ SourceSet -> SourceCatalog / PySlang compile+elaboration
 
 PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePolicy collector、文本正则语义解析或
 名称查找 fallback。所有改写范围必须能回到 PySlang semantic target 和唯一物理 identifier token。
+filelist + rewrite-root 的 `signals` 快速路径是显式的 CST 例外：它不建立 semantic Compilation，
+只按每个 rewrite-root module definition 的直接 `logic`/`wire` 声明和安全 value-reference 位置建映射，
+歧义对象固定以 `syntax_local_ambiguous` 保留。
 
 ## 模块职责
 

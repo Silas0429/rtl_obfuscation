@@ -141,9 +141,11 @@ python rtl_encrypt.py \
 
 当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
 `signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
-快速路径。它只改写 rewrite-root 内显式 source unit 的 module 直接
-`VariableSymbol`/`NetSymbol`；ports、function/task locals、package/global、interface、struct
-以及 rewrite-root 外文件保持不改。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
+快速路径。完整 filelist 只做一次预处理和语法解析，随后只在 rewrite-root 内显式 source unit
+的 `ModuleDeclaration` 中检查直接 `logic`/`wire` declarator；只有能由 value-expression CST
+位置和唯一物理字节范围证明的同名引用才改写。ports、function/task locals、package/global、
+interface、struct 以及 rewrite-root 外文件保持不改；歧义对象以
+`syntax_local_ambiguous` 保留。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
 绑定或编译问题会原子失败，绝不静默回退慢路径。
 
 PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/

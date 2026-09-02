@@ -157,6 +157,25 @@ class PySlangCompilationView:
 
 
 @dataclass(frozen=True)
+class PySlangSyntaxView:
+    """One syntax-only PySlang parse over one effective file order.
+
+    The fast module-local signals adapter uses this view as its sole mapping
+    input.  In particular, it deliberately has no semantic compilation; the
+    CST and its SourceManager are the only objects retained by that mapping
+    path.
+    """
+
+    source_manager: Any
+    syntax_tree: Any
+    raw_errors: tuple[Any, ...]
+    parse_errors: tuple[Any, ...]
+    nonblocking_errors: tuple[Any, ...]
+    vendor_compatibility_errors: tuple[Any, ...]
+    vendor_compatibility_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _PhysicalDiagnosticSource:
     relative: str
     path: Path
@@ -416,6 +435,44 @@ def _classify_vendor_compatibility_errors(
     return tuple(accepted), tuple(files)
 
 
+def _classify_syntax_diagnostics(
+    *,
+    root: Path,
+    manager: Any,
+    syntax_tree: Any,
+    physical_files: frozenset[str],
+) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[str, ...]]:
+    """Classify syntax and vendor diagnostics for both parse entry points."""
+
+    syntax_errors = tuple(
+        diagnostic
+        for diagnostic in syntax_tree.diagnostics
+        if diagnostic.isError()
+    )
+    vendor_compatibility_errors, vendor_compatibility_files = (
+        _classify_vendor_compatibility_errors(
+            root=root,
+            manager=manager,
+            diagnostics=syntax_errors,
+            physical_files=physical_files,
+        )
+    )
+    vendor_keys = {
+        _diagnostic_key(diagnostic) for diagnostic in vendor_compatibility_errors
+    }
+    parse_errors = tuple(
+        diagnostic
+        for diagnostic in syntax_errors
+        if _diagnostic_key(diagnostic) not in vendor_keys
+    )
+    return (
+        syntax_errors,
+        parse_errors,
+        vendor_compatibility_errors,
+        vendor_compatibility_files,
+    )
+
+
 def _pyslang_source_manager(
     root: Path,
     compilation_files: tuple[str, ...],
@@ -436,22 +493,17 @@ def _pyslang_source_manager(
     return manager
 
 
-def compile_pyslang_source_set(
+def _parse_pyslang_syntax_tree(
     *,
     root: Path,
     compilation_files: Iterable[str],
-    include_files: Iterable[str] = (),
-    include_dirs: Iterable[str] = (),
-    defines: dict[str, str] | None = None,
-    top: str | None = None,
-    stage_observer: StageObserver | None = None,
-) -> PySlangCompilationView:
-    """Compile exactly the supplied effective file order with PySlang.
-
-    This helper is shared by the authoritative filelist adapter and the
-    semantic SourceCatalog.  It deliberately does not inspect providers,
-    discover candidates, or reorder source units.
-    """
+    include_files: Iterable[str],
+    include_dirs: Iterable[str],
+    defines: dict[str, str] | None,
+    top: str | None,
+    stage_observer: StageObserver | None,
+) -> tuple[pyslang.SourceManager, pyslang.Bag, Any]:
+    """Build the one shared SourceManager/Bag/CST parse primitive."""
 
     ordered_files = tuple(compilation_files)
     ordered_includes = tuple(include_files)
@@ -475,6 +527,37 @@ def compile_pyslang_source_set(
         bag,
     )
     _observe(stage_observer, COMPILE_PARSE, "end")
+    return manager, bag, syntax_tree
+
+
+def compile_pyslang_source_set(
+    *,
+    root: Path,
+    compilation_files: Iterable[str],
+    include_files: Iterable[str] = (),
+    include_dirs: Iterable[str] = (),
+    defines: dict[str, str] | None = None,
+    top: str | None = None,
+    stage_observer: StageObserver | None = None,
+) -> PySlangCompilationView:
+    """Compile exactly the supplied effective file order with PySlang.
+
+    This helper is shared by the authoritative filelist adapter and the
+    semantic SourceCatalog.  It deliberately does not inspect providers,
+    discover candidates, or reorder source units.
+    """
+
+    ordered_files = tuple(compilation_files)
+    ordered_includes = tuple(include_files)
+    manager, bag, syntax_tree = _parse_pyslang_syntax_tree(
+        root=root,
+        compilation_files=ordered_files,
+        include_files=ordered_includes,
+        include_dirs=include_dirs,
+        defines=defines,
+        top=top,
+        stage_observer=stage_observer,
+    )
 
     _observe(stage_observer, COMPILE_ELABORATE, "begin")
     compilation = pyslang.ast.Compilation(bag)
@@ -483,26 +566,16 @@ def compile_pyslang_source_set(
     _observe(stage_observer, COMPILE_ELABORATE, "end")
 
     _observe(stage_observer, COMPILE_DIAGNOSTICS, "begin")
-    syntax_errors = tuple(
-        diagnostic
-        for diagnostic in syntax_tree.diagnostics
-        if diagnostic.isError()
-    )
-    vendor_compatibility_errors, vendor_compatibility_files = (
-        _classify_vendor_compatibility_errors(
-            root=root,
-            manager=manager,
-            diagnostics=syntax_errors,
-            physical_files=frozenset((*ordered_files, *ordered_includes)),
-        )
-    )
-    vendor_keys = {
-        _diagnostic_key(diagnostic) for diagnostic in vendor_compatibility_errors
-    }
-    parse_errors = tuple(
-        diagnostic
-        for diagnostic in syntax_errors
-        if _diagnostic_key(diagnostic) not in vendor_keys
+    (
+        syntax_errors,
+        parse_errors,
+        vendor_compatibility_errors,
+        vendor_compatibility_files,
+    ) = _classify_syntax_diagnostics(
+        root=root,
+        manager=manager,
+        syntax_tree=syntax_tree,
+        physical_files=frozenset((*ordered_files, *ordered_includes)),
     )
     raw_errors = tuple(
         diagnostic
@@ -541,6 +614,58 @@ def compile_pyslang_source_set(
         parse_errors=parse_errors,
         semantic_errors=semantic_errors,
         nonblocking_errors=nonblocking_errors,
+        vendor_compatibility_errors=vendor_compatibility_errors,
+        vendor_compatibility_files=vendor_compatibility_files,
+    )
+
+
+def parse_pyslang_source_set(
+    *,
+    root: Path,
+    compilation_files: Iterable[str],
+    include_files: Iterable[str] = (),
+    include_dirs: Iterable[str] = (),
+    defines: dict[str, str] | None = None,
+    stage_observer: StageObserver | None = None,
+) -> PySlangSyntaxView:
+    """Parse exactly one effective file order without building Compilation.
+
+    This is intentionally a separate, narrow entry point for mapping paths
+    whose contract is definition-local CST analysis.  It shares the same
+    SourceManager, preprocessor configuration and vendor-diagnostic
+    classification as :func:`compile_pyslang_source_set`, while never
+    constructing a semantic Compilation or selecting a top.
+    """
+
+    ordered_files = tuple(compilation_files)
+    ordered_includes = tuple(include_files)
+    manager, _bag, syntax_tree = _parse_pyslang_syntax_tree(
+        root=root,
+        compilation_files=ordered_files,
+        include_files=ordered_includes,
+        include_dirs=include_dirs,
+        defines=defines,
+        top=None,
+        stage_observer=stage_observer,
+    )
+
+    (
+        syntax_errors,
+        parse_errors,
+        vendor_compatibility_errors,
+        vendor_compatibility_files,
+    ) = _classify_syntax_diagnostics(
+        root=root,
+        manager=manager,
+        syntax_tree=syntax_tree,
+        physical_files=frozenset((*ordered_files, *ordered_includes)),
+    )
+    return PySlangSyntaxView(
+        source_manager=manager,
+        syntax_tree=syntax_tree,
+        raw_errors=syntax_errors,
+        parse_errors=parse_errors,
+        nonblocking_errors=vendor_compatibility_errors,
         vendor_compatibility_errors=vendor_compatibility_errors,
         vendor_compatibility_files=vendor_compatibility_files,
     )

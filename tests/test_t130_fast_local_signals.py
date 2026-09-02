@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -244,39 +243,27 @@ class T130FastLocalSignalsTests(unittest.TestCase):
         self.assertNotIn("compile.owner_registry", [stage for stage, _phase in stages])
         self.assertNotIn("rename_index.semantic_inventory", [stage for stage, _phase in stages])
 
-    def test_fast_path_never_visits_compilation_root(self):
+    def test_fast_mapping_does_not_construct_compilation(self):
         source_set = from_filelist(
             filelist=FIXTURE / "design.f",
             rewrite_roots=(FIXTURE / "owned",),
         )
-        import rtl_obfuscator.fast_local_signals as fast
+        from rtl_obfuscator.fast_local_signals import build_fast_local_signals_mapping
 
-        real_compile = fast._compile_view
-
-        class RootVisitGuard:
-            def __init__(self, root):
-                self._root = root
-
-            def visit(self, *_args, **_kwargs):
-                raise AssertionError("fast path visited the compilation root")
-
-            def __getattr__(self, name):
-                return getattr(self._root, name)
-
-        def guarded_compile(*args, **kwargs):
-            view = real_compile(*args, **kwargs)
-            return replace(view, root=RootVisitGuard(view.root))
-
-        with tempfile.TemporaryDirectory(prefix="t130-root-guard-") as temporary:
-            with mock.patch.object(fast, "_compile_view", side_effect=guarded_compile):
-                result = run_vnext(
-                    source_set,
-                    categories=("signals",),
-                    name_factory=self._name_factory(),
-                    gate_dir=Path(temporary) / "gate",
-                    restore_dir=Path(temporary) / "restore",
-                )
-        self.assertEqual(result.to_report()["summary"]["rename"], 6)
+        with mock.patch(
+            "pyslang.ast.Compilation",
+            side_effect=AssertionError("mapping constructed a semantic Compilation"),
+        ):
+            mapping = build_fast_local_signals_mapping(
+                source_set,
+                name_length=20,
+                name_factory=self._name_factory(),
+            )
+        # T131 preserves leaf_b.state because a function-local declaration
+        # shadows the same spelling; other direct module signals still map.
+        self.assertEqual(
+            sum(record.action == "rename" for record in mapping.records), 5
+        )
 
     def test_generate_block_instance_reaches_owned_module_without_root_visit(self):
         with tempfile.TemporaryDirectory(prefix="t130-generate-") as temporary:
@@ -312,76 +299,50 @@ endmodule
                 filelist=filelist,
                 rewrite_roots=(owned,),
             )
-            import rtl_obfuscator.fast_local_signals as fast
-
-            real_compile = fast._compile_view
-
-            class RootVisitGuard:
-                def __init__(self, root):
-                    self._root = root
-
-                def visit(self, *_args, **_kwargs):
-                    raise AssertionError("fast path visited the compilation root")
-
-                def __getattr__(self, name):
-                    return getattr(self._root, name)
-
-            def guarded_compile(*args, **kwargs):
-                view = real_compile(*args, **kwargs)
-                return replace(view, root=RootVisitGuard(view.root))
+            from rtl_obfuscator.fast_local_signals import build_fast_local_signals_mapping
 
             with self.subTest("fast dispatch and generated child resolution"):
-                with tempfile.TemporaryDirectory(prefix="t130-generate-out-") as output:
-                    with mock.patch.object(fast, "_compile_view", side_effect=guarded_compile):
-                        result = run_vnext(
-                            source_set,
-                            categories=("signals",),
-                            name_factory=self._name_factory(),
-                            gate_dir=Path(output) / "gate",
-                            restore_dir=Path(output) / "restore",
-                        )
-            records = result.mapping_vnext.records
+                with mock.patch(
+                    "pyslang.ast.Compilation",
+                    side_effect=AssertionError("mapping constructed a semantic Compilation"),
+                ):
+                    result = build_fast_local_signals_mapping(
+                        source_set,
+                        name_length=20,
+                        name_factory=self._name_factory(),
+                    )
+            records = result.records
             self.assertEqual(
                 [(record.owner_module, record.original_name) for record in records],
                 [("gen_child", "state")],
             )
-            self.assertEqual(result.to_report()["summary"]["rename"], 1)
+            self.assertEqual(sum(record.action == "rename" for record in records), 1)
 
-    def test_hierarchy_discovery_uses_direct_scope_members_without_body_visit(self):
-        import rtl_obfuscator.fast_local_signals as fast
+    def test_definition_local_selection_does_not_need_hierarchy(self):
+        from rtl_obfuscator.fast_local_signals import build_fast_local_signals_mapping
 
-        class Scope:
-            def __init__(self, members):
-                self._members = tuple(members)
-
-            def __iter__(self):
-                return iter(self._members)
-
-            def visit(self, *_args, **_kwargs):
-                raise AssertionError("hierarchy discovery called body.visit")
-
-        module = type(
-            "InstanceSymbol",
-            (),
-            {"isModule": True, "body": object()},
-        )()
-        non_module = type(
-            "InstanceSymbol",
-            (),
-            {"isModule": False, "body": object()},
-        )()
-        instance_array = type("InstanceArraySymbol", (Scope,), {})(
-            (non_module, module)
+        source_set = from_filelist(
+            filelist=FIXTURE / "design.f",
+            rewrite_roots=(FIXTURE / "owned",),
         )
-        generate_array = type("GenerateBlockArraySymbol", (Scope,), {})(
-            (instance_array,)
-        )
-        generate_block = type("GenerateBlockSymbol", (Scope,), {})(
-            (generate_array,)
+        mapping = build_fast_local_signals_mapping(
+            source_set,
+            name_length=20,
+            name_factory=self._name_factory(),
         )
         self.assertEqual(
-            fast._direct_module_instances(Scope((generate_block,))),
-            (module,),
+            {
+                (record.owner_module, record.original_name)
+                for record in mapping.records
+            },
+            {
+                ("t130_leaf_a", "state"),
+                ("t130_leaf_a", "next_state"),
+                ("t130_leaf_b", "state"),
+                ("t130_top", "left_value"),
+                ("t130_top", "right_value"),
+                ("t130_top", "combined"),
+            },
         )
 
     def test_generate_for_and_instance_array_reach_owned_modules(self):

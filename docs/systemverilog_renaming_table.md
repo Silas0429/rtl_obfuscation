@@ -5,7 +5,7 @@
 
 | `--category` | 识别对象 | 不建立改名记录的对象 |
 | --- | --- | --- |
-| `signals` | PySlang module-owned `VariableSymbol/NetSymbol` | module 端口、parameter、interface 成员、struct/union 字段 |
+| `signals` | module-owned signal；filelist + rewrite-root 快速路径按 module-definition-local CST 识别直接 `logic`/`wire` | module 端口、parameter、interface 成员、struct/union 字段 |
 | `ports` | source-backed module `PortSymbol` | selected top 的 ABI 端口按边界保留 |
 | `interface` | source-backed interface 类型、标量/数组实例、成员、modport | 匿名 elaboration element、`SystemCallInfo` 等无源码节点 |
 | `struct` | 物理 `typedef struct/union` 类型及 `FieldSymbol` 字段 | parameter type、隐式 conversion、canonical aggregate shape |
@@ -65,6 +65,11 @@ candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `r
 - `REFUSED_ATOMIC`：绑定、range、编译或恢复校验失败，不发布半成品。
 
 合法的 SystemVerilog 不保证每个 semantic node 都有可编辑的物理 token；稳定性优先于猜测改名。
+
+在 filelist + rewrite-root、仅 `signals`、无 `top`/rate 的快速路径中，完整 filelist 只解析一次；
+mapping 不建立 semantic `Compilation`，而按每个 rewrite-root module 的 definition-local CST
+检查直接声明和安全 value-reference。无法证明的同名嵌套声明、层次/成员选择、named label、类型位置、
+宏来源或 escaped identifier 统一以 `syntax_local_ambiguous` 保留。
 
 ## 只读文件与目录授权
 
