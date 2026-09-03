@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from bisect import bisect_left, bisect_right
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -12,6 +14,7 @@ import tempfile
 from typing import Any
 
 from .mapping_vnext import MappingRecord
+from .file_scope_vnext import FileScopeVNext, metric_scope
 from .rewrite_vnext import (
     AppliedEdit,
     MappingExecutionVNext,
@@ -29,60 +32,48 @@ class MetricsVNext:
     symbol_count: int
     occurrence_count: int
     plaintext_leakage_count: int
+    _report: dict[str, object] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def to_report(self) -> dict[str, object]:
+        if self._report is not None:
+            return deepcopy(self._report)
         context = _metrics_context(self.mapping_execution)
-        source_data, input_manifest = _read_source_bytes(context)
+        source_data, _input_manifest = _read_source_bytes(context)
+        line_indexes = {
+            file: _line_index(source_data[file]) for file in context.scope.files
+        }
         effective_by_file, effective_total = _effective_line_metrics(
-            context.files,
+            context.scope.files,
             source_data,
+            line_indexes=line_indexes,
         )
         affected_by_file, affected_total = _affected_line_metrics(
-            context.files,
+            context.scope.files,
             source_data,
             context.execution.edits,
+            line_indexes=line_indexes,
         )
+        coverage_counts = _coverage_counts(context)
         _validate_metrics_equations(
             self,
             context,
             effective_total=effective_total,
             affected_total=affected_total,
+            coverage_counts=coverage_counts,
         )
-        renamed_symbols, eligible_symbols, renamed_occurrences, eligible_occurrences = _coverage_counts(context)
-        symbol_coverage = _coverage(renamed_symbols, eligible_symbols)
-        occurrence_coverage = _coverage(renamed_occurrences, eligible_occurrences)
-        return {
-            "format": "rtl-obfuscation.metrics-vnext",
-            "schema_version": self.schema_version,
-            "state": "verified",
-            "mapping_execution_format": "rtl-obfuscation.mapping-execution-vnext",
-            "filelist": "design.f",
-            "effective_lines": {
-                "total": effective_total,
-                "by_file": effective_by_file,
-            },
-            "affected_lines": {
-                "changed": affected_total,
-                "total": effective_total,
-                "rate": _rate(affected_total, effective_total),
-                "by_file": affected_by_file,
-            },
-            "symbols": {
-                "renamed": renamed_symbols,
-                "eligible": eligible_symbols,
-                "coverage": symbol_coverage,
-            },
-            "occurrences": {
-                "renamed": renamed_occurrences,
-                "eligible": eligible_occurrences,
-                "coverage": occurrence_coverage,
-            },
-            "plaintext_leakage_rate": _rate(
-                self.plaintext_leakage_count,
-                eligible_occurrences,
-            ),
-            "effective_coverage": math.sqrt(symbol_coverage * occurrence_coverage),
-        }
+        report = _metrics_report(
+            self,
+            context.scope,
+            effective_by_file,
+            effective_total,
+            affected_by_file,
+            affected_total,
+            coverage_counts,
+        )
+        object.__setattr__(self, "_report", report)
+        return deepcopy(report)
 
 
 class MetricsVNextError(ValueError):
@@ -100,9 +91,17 @@ class _MetricsContext:
     execution: Any
     mapping: Any
     files: tuple[str, ...]
+    file_set: frozenset[str]
     input_manifest: tuple[dict[str, str], ...]
     gate_manifest: tuple[dict[str, str], ...]
     source_root: Path
+    scope: FileScopeVNext
+
+
+@dataclass(frozen=True)
+class _LineIndex:
+    starts: tuple[int, ...]
+    ends: tuple[int, ...]
 
 
 def _fail(code: str, message: str) -> None:
@@ -159,6 +158,7 @@ def _metrics_context(mapping_execution: object) -> _MetricsContext:
     if len(input_manifest) != len(gate_manifest):
         _fail("METRICS_MANIFEST_INVALID", "input and gate manifest lengths differ")
     files: list[str] = []
+    seen_files: set[str] = set()
     normalized_input: list[dict[str, str]] = []
     normalized_gate: list[dict[str, str]] = []
     for input_item, gate_item in zip(input_manifest, gate_manifest):
@@ -174,8 +174,9 @@ def _metrics_context(mapping_execution: object) -> _MetricsContext:
         ):
             _fail("METRICS_MANIFEST_INVALID", "T047 manifest order, file, or hash is invalid")
         file = input_item["file"]
-        if file in files:
+        if file in seen_files:
             _fail("METRICS_MANIFEST_INVALID", "T047 manifest contains duplicate files")
+        seen_files.add(file)
         files.append(file)
         normalized_input.append({"file": file, "sha256": input_item["sha256"]})
         normalized_gate.append({"file": file, "sha256": gate_item["sha256"]})
@@ -196,9 +197,11 @@ def _metrics_context(mapping_execution: object) -> _MetricsContext:
         execution=execution,
         mapping=mapping,
         files=tuple(files),
+        file_set=frozenset(seen_files),
         input_manifest=tuple(normalized_input),
         gate_manifest=tuple(normalized_gate),
         source_root=source_root,
+        scope=metric_scope(source_set),
     )
 
 
@@ -261,17 +264,76 @@ def _line_spans(content: bytes) -> tuple[tuple[int, int, bytes], ...]:
     return tuple(spans)
 
 
+def _line_index(content: bytes) -> _LineIndex:
+    spans = _line_spans(content)
+    return _LineIndex(
+        starts=tuple(item[0] for item in spans),
+        ends=tuple(item[1] for item in spans),
+    )
+
+
+def _metrics_report(
+    metrics: MetricsVNext,
+    scope: FileScopeVNext,
+    effective_by_file: list[dict[str, object]],
+    effective_total: int,
+    affected_by_file: list[dict[str, object]],
+    affected_total: int,
+    coverage_counts: tuple[int, int, int, int],
+) -> dict[str, object]:
+    renamed_symbols, eligible_symbols, renamed_occurrences, eligible_occurrences = coverage_counts
+    symbol_coverage = _coverage(renamed_symbols, eligible_symbols)
+    occurrence_coverage = _coverage(renamed_occurrences, eligible_occurrences)
+    return {
+        "format": "rtl-obfuscation.metrics-vnext",
+        "schema_version": metrics.schema_version,
+        "state": "verified",
+        "mapping_execution_format": "rtl-obfuscation.mapping-execution-vnext",
+        "filelist": "design.f",
+        "scope": scope.to_report(),
+        "effective_lines": {
+            "total": effective_total,
+            "by_file": effective_by_file,
+        },
+        "affected_lines": {
+            "changed": affected_total,
+            "total": effective_total,
+            "rate": _rate(affected_total, effective_total),
+            "by_file": affected_by_file,
+        },
+        "symbols": {
+            "renamed": renamed_symbols,
+            "eligible": eligible_symbols,
+            "coverage": symbol_coverage,
+        },
+        "occurrences": {
+            "renamed": renamed_occurrences,
+            "eligible": eligible_occurrences,
+            "coverage": occurrence_coverage,
+        },
+        "plaintext_leakage_rate": _rate(
+            metrics.plaintext_leakage_count,
+            eligible_occurrences,
+        ),
+        "effective_coverage": math.sqrt(symbol_coverage * occurrence_coverage),
+    }
+
+
 def _effective_line_metrics(
     files: tuple[str, ...],
     source_data: dict[str, bytes],
+    *,
+    line_indexes: dict[str, _LineIndex] | None = None,
 ) -> tuple[list[dict[str, object]], int]:
     by_file: list[dict[str, object]] = []
     total = 0
     for file in files:
-        effective = sum(
-            line.strip() != b"" and not line.strip().startswith(b"//")
-            for _start, _end, line in _line_spans(source_data[file])
-        )
+        index = line_indexes[file] if line_indexes is not None else _line_index(source_data[file])
+        effective = 0
+        content = source_data[file]
+        for start, end in zip(index.starts, index.ends):
+            line = content[start:end].strip()
+            effective += line != b"" and not line.startswith(b"//")
         by_file.append({"file": file, "lines": effective})
         total += effective
     return by_file, total
@@ -280,6 +342,8 @@ def _effective_line_metrics(
 def _lines_for_range(
     source_range: SourceRange,
     content: bytes,
+    *,
+    line_spans: _LineIndex | tuple[tuple[int, int, bytes], ...] | None = None,
 ) -> set[int]:
     if (
         not isinstance(source_range, SourceRange)
@@ -288,26 +352,42 @@ def _lines_for_range(
         or not 0 <= source_range.start < source_range.end <= len(content)
     ):
         _fail("METRICS_AUDIT_INVALID", "AppliedEdit source range is outside source bytes")
-    lines: set[int] = set()
-    for line_number, (start, end, _line) in enumerate(_line_spans(content), start=1):
-        if source_range.start < end and source_range.end > start:
-            lines.add(line_number)
-    if not lines:
+    if line_spans is None:
+        index = _line_index(content)
+    elif isinstance(line_spans, _LineIndex):
+        index = line_spans
+    else:
+        # Keep the private helper tolerant for existing internal callers while
+        # the production path passes the precomputed direct index above.
+        spans = tuple(line_spans)
+        index = _LineIndex(
+            starts=tuple(item[0] for item in spans),
+            ends=tuple(item[1] for item in spans),
+        )
+    first = bisect_right(index.ends, source_range.start)
+    last = bisect_left(index.starts, source_range.end)
+    if first >= last:
         _fail("METRICS_AUDIT_INVALID", "AppliedEdit source range has no physical line")
-    return lines
+    return set(range(first + 1, last + 1))
 
 
 def _affected_line_metrics(
     files: tuple[str, ...],
     source_data: dict[str, bytes],
     edits: tuple[AppliedEdit, ...],
+    *,
+    line_indexes: dict[str, _LineIndex] | None = None,
 ) -> tuple[list[dict[str, object]], int]:
     changed: dict[str, set[int]] = {file: set() for file in files}
     for edit in edits:
         if not isinstance(edit, AppliedEdit) or edit.source_range.file not in changed:
             _fail("METRICS_AUDIT_INVALID", "AppliedEdit is not a physical source edit")
         changed[edit.source_range.file].update(
-            _lines_for_range(edit.source_range, source_data[edit.source_range.file])
+            _lines_for_range(
+                edit.source_range,
+                source_data[edit.source_range.file],
+                line_spans=None if line_indexes is None else line_indexes[edit.source_range.file],
+            )
         )
     by_file = [
         {"file": file, "lines": len(changed[file])}
@@ -328,7 +408,7 @@ def _coverage_counts(context: _MetricsContext) -> tuple[int, int, int, int]:
     if not isinstance(per_file, list):
         _fail("METRICS_AUDIT_INVALID", "per-file mapping is not a list")
     for file_entry in per_file:
-        if not isinstance(file_entry, dict) or file_entry.get("file") not in context.files:
+        if not isinstance(file_entry, dict) or file_entry.get("file") not in context.file_set:
             _fail("METRICS_AUDIT_INVALID", "per-file mapping does not cover the manifest")
         records_for_file = file_entry.get("records")
         if not isinstance(records_for_file, list):
@@ -373,6 +453,7 @@ def _validate_metrics_equations(
     *,
     effective_total: int,
     affected_total: int,
+    coverage_counts: tuple[int, int, int, int] | None = None,
 ) -> None:
     if not isinstance(metrics, MetricsVNext) or type(metrics.schema_version) is not int or metrics.schema_version != 2:
         _fail("METRICS_EXECUTION_INVALID", "metrics schema is invalid")
@@ -389,7 +470,9 @@ def _validate_metrics_equations(
         _fail("METRICS_EXECUTION_INVALID", "metrics envelope identity differs")
     if metrics.effective_line_total != effective_total or metrics.affected_line_count != affected_total:
         _fail("METRICS_AUDIT_INVALID", "effective or affected line equation differs from source bytes")
-    _renamed_symbols, eligible_symbols, _renamed_occurrences, eligible_occurrences = _coverage_counts(context)
+    if coverage_counts is None:
+        coverage_counts = _coverage_counts(context)
+    _renamed_symbols, eligible_symbols, _renamed_occurrences, eligible_occurrences = coverage_counts
     if metrics.symbol_count != eligible_symbols or metrics.occurrence_count != eligible_occurrences:
         _fail("METRICS_AUDIT_INVALID", "symbol or occurrence denominator differs from mapping")
     if metrics.affected_line_count > metrics.effective_line_total:
@@ -438,13 +521,22 @@ def build_metrics_vnext(
     source_data, _input_manifest = _read_source_bytes(context)
     gate_data = _read_gate_bytes(context, gate_dir)
     leakage = _validate_gate_edits(context, source_data, gate_data)
-    _effective_by_file, effective_total = _effective_line_metrics(context.files, source_data)
-    _affected_by_file, affected_total = _affected_line_metrics(
-        context.files,
+    line_indexes = {
+        file: _line_index(source_data[file]) for file in context.scope.files
+    }
+    effective_by_file, effective_total = _effective_line_metrics(
+        context.scope.files,
+        source_data,
+        line_indexes=line_indexes,
+    )
+    affected_by_file, affected_total = _affected_line_metrics(
+        context.scope.files,
         source_data,
         context.execution.edits,
+        line_indexes=line_indexes,
     )
-    _renamed_symbols, eligible_symbols, _renamed_occurrences, eligible_occurrences = _coverage_counts(context)
+    coverage_counts = _coverage_counts(context)
+    _renamed_symbols, eligible_symbols, _renamed_occurrences, eligible_occurrences = coverage_counts
     metrics = MetricsVNext(
         schema_version=2,
         mapping_execution=mapping_execution,
@@ -459,7 +551,17 @@ def build_metrics_vnext(
         context,
         effective_total=effective_total,
         affected_total=affected_total,
+        coverage_counts=coverage_counts,
     )
+    object.__setattr__(metrics, "_report", _metrics_report(
+        metrics,
+        context.scope,
+        effective_by_file,
+        effective_total,
+        affected_by_file,
+        affected_total,
+        coverage_counts,
+    ))
     return metrics
 
 

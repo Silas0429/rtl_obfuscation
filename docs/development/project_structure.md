@@ -78,6 +78,11 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 `compile.parse`、`compile.owner_registry`、`rename_index.name_completeness`）。这些阶段只通过
 同一个 observer 实时写入 stderr，不改变 SourceCatalog、RenameIndex 或任何持久化报告。
 
+统计范围由 FAST 与 FULL 共用：提供 rewrite root 时取 SourceSet 已登记 physical files 与 rewrite roots 的有序交集；
+未提供时使用全部 physical files。该范围只影响 metrics、覆盖率、代码行数和加密率，完整 physical manifest、gate、
+strict compile 与 decrypt 仍保留全量 filelist 物理文件。restore 后的 execution facts、metrics 和最终 report 在一次
+执行中构建并复用；这项审计/统计优化不改变 RenameIndex 的候选或改名决策，也不声称消除其前端耗时。
+
 ## 验证边界
 
 gate 发布前必须通过物理 range/manifest 审计、PySlang 严格编译和逐字节 restore。实际 gate Formal 需比较

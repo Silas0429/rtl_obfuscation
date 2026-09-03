@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from copy import deepcopy
 import re
 from pathlib import Path
 import shutil
@@ -22,6 +23,7 @@ from .rate_metrics_vnext import (
 )
 from .rate_vnext import RateSelectionVNext, RateVNextError, build_rate_selection_vnext
 from .category_registry_vnext import CategoryRegistryError, normalize_categories
+from .file_scope_vnext import metric_scope
 from .fast_local_signals import (
     FastLocalSignalsError,
     build_fast_local_signals_mapping,
@@ -68,6 +70,9 @@ _STAGE_RENAME_INDEX = "rename_index"
 _STAGE_MAPPING = "mapping"
 _STAGE_GATE = "gate"
 _STAGE_RESTORE = "restore"
+_STAGE_AUDIT_EXECUTION = "audit.execution"
+_STAGE_AUDIT_METRICS = "audit.metrics"
+_STAGE_AUDIT_REPORT = "audit.report"
 
 
 def _portable_report(value: object) -> object:
@@ -301,8 +306,13 @@ class OrchestrationVNext:
     mapping_execution: MappingExecutionVNext = field(repr=False, compare=False)
     metrics: MetricsVNext = field(repr=False, compare=False)
     rate_metrics: RateMetricsVNext | None = field(repr=False, compare=False)
+    _report: dict[str, object] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def to_report(self) -> dict[str, object]:
+        if self._report is not None:
+            return deepcopy(self._report)
         _validate_source_set(self.source_set)
         if type(self.schema_version) is not int or self.schema_version != 2:
             _fail("ORCHESTRATION_AUDIT_INVALID", "orchestration schema is invalid")
@@ -360,7 +370,8 @@ class OrchestrationVNext:
                 "origin": self.source_set.origin,
                 "top": self.source_set.top,
                 "rate_enabled": self.rate_metrics is not None,
-                "files": len(self.mapping_execution.rewrite_execution.gate_manifest),
+                "files": len(metric_scope(self.source_set).files),
+                "physical_files": len(self.mapping_execution.rewrite_execution.gate_manifest),
                 "mapping_records": len(self.mapping_vnext.records),
                 "effective_mapping_records": len(self.effective_mapping_vnext.records),
                 "modified_tokens": len(self.mapping_execution.rewrite_execution.edits),
@@ -381,7 +392,8 @@ class OrchestrationVNext:
         }
         if _contains_absolute_path(report):
             _fail("ORCHESTRATION_AUDIT_INVALID", "report contains an absolute path")
-        return report
+        object.__setattr__(self, "_report", report)
+        return deepcopy(report)
 
 
 def _run_no_rate(
@@ -408,8 +420,12 @@ def _run_no_rate(
     except RewriteVNextError as error:
         _fail("ORCHESTRATION_EXECUTION_INVALID", error.message)
     try:
+        _observe(stage_observer, _STAGE_AUDIT_EXECUTION, "begin")
         mapping_execution = build_mapping_execution_vnext(execution, restore_result)
+        _observe(stage_observer, _STAGE_AUDIT_EXECUTION, "end")
+        _observe(stage_observer, _STAGE_AUDIT_METRICS, "begin")
         metrics = build_metrics_vnext(mapping_execution, gate_dir=gate_dir)
+        _observe(stage_observer, _STAGE_AUDIT_METRICS, "end")
     except (RewriteVNextError, MetricsVNextError) as error:
         _fail("ORCHESTRATION_AUDIT_INVALID", str(error).split(": ", 1)[-1])
     return mapping, mapping_execution, metrics, None
@@ -510,14 +526,6 @@ def run_vnext(
         else:
             _fail("ORCHESTRATION_RATE_INVALID", "encryption_rate must be string or None")
         created_paths.extend((gate_path, restore_path))
-        _validate_pipeline_identity(
-            source_set,
-            mapping,
-            effective_mapping,
-            mapping_execution,
-            metrics,
-            rate_metrics,
-        )
         result = OrchestrationVNext(
             schema_version=2,
             source_set=source_set,
@@ -527,7 +535,10 @@ def run_vnext(
             metrics=metrics,
             rate_metrics=rate_metrics,
         )
-        result.to_report()
+        _observe(stage_observer, _STAGE_AUDIT_REPORT, "begin")
+        report = result.to_report()
+        object.__setattr__(result, "_report", report)
+        _observe(stage_observer, _STAGE_AUDIT_REPORT, "end")
         return result
     except OrchestrationVNextError:
         created_paths.extend(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from bisect import bisect_left
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -106,39 +108,52 @@ class RestoreResult:
 
 
 @dataclass(frozen=True)
+class _MappingExecutionFacts:
+    """Validated, compact projections retained for all later report views."""
+
+    mapping: MappingVNext
+    files: tuple[str, ...]
+    per_file_mapping: tuple[dict[str, object], ...]
+    input_manifest: tuple[InputFileDigest, ...]
+    gate_manifest: tuple[InputFileDigest, ...]
+    restored_manifest: tuple[InputFileDigest, ...]
+    renamed_records: int
+    modified_tokens: int
+
+
+@dataclass(frozen=True)
 class MappingExecutionVNext:
     schema_version: int
     rewrite_execution: RewriteExecution = field(repr=False, compare=False)
     restore_result: RestoreResult = field(repr=False, compare=False)
+    _facts: _MappingExecutionFacts | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def to_report(self) -> dict[str, object]:
-        mapping, files, per_file_mapping = _validate_mapping_execution(self)
-        gate_manifest = self.rewrite_execution.gate_manifest
-        restored_manifest = self.restore_result.restored_manifest
-        input_manifest = mapping.input_manifest
-        renamed_records = sum(record.action == "rename" for record in mapping.records)
-        modified_tokens = len(self.rewrite_execution.edits)
+        facts = _mapping_execution_facts(self)
+        mapping = facts.mapping
         return {
             "format": "rtl-obfuscation.mapping-execution-vnext",
             "schema_version": self.schema_version,
             "state": "restored",
             "mapping": mapping.to_report(),
             "filelist": "design.f",
-            "input_manifest": [_digest_report(item) for item in input_manifest],
-            "gate_manifest": [_digest_report(item) for item in gate_manifest],
-            "restored_manifest": [_digest_report(item) for item in restored_manifest],
-            "per_file_mapping": per_file_mapping,
+            "input_manifest": [_digest_report(item) for item in facts.input_manifest],
+            "gate_manifest": [_digest_report(item) for item in facts.gate_manifest],
+            "restored_manifest": [_digest_report(item) for item in facts.restored_manifest],
+            "per_file_mapping": deepcopy(list(facts.per_file_mapping)),
             "summary": {
-                "files": len(files),
+                "files": len(facts.files),
                 "mapping_records": len(mapping.records),
-                "renamed_records": renamed_records,
-                "modified_tokens": modified_tokens,
+                "renamed_records": facts.renamed_records,
+                "modified_tokens": facts.modified_tokens,
                 "per_file_records": sum(
-                    len(file_entry["records"]) for file_entry in per_file_mapping
+                    len(file_entry["records"]) for file_entry in facts.per_file_mapping
                 ),
-                "input_gate_manifest_equal": input_manifest == gate_manifest,
-                "restored_input_manifest_equal": restored_manifest == input_manifest,
-                "restored_byte_identical": restored_manifest == input_manifest,
+                "input_gate_manifest_equal": facts.input_manifest == facts.gate_manifest,
+                "restored_input_manifest_equal": facts.restored_manifest == facts.input_manifest,
+                "restored_byte_identical": facts.restored_manifest == facts.input_manifest,
             },
         }
 
@@ -216,11 +231,14 @@ def _mapping_execution_context(
     if not isinstance(source_set.ordered_source_files, tuple) or not isinstance(source_set.included_files, tuple):
         _fail("MAPPING_MANIFEST_INVALID", "SourceSet physical file sequence is not canonical")
     files: list[str] = []
+    seen_files: set[str] = set()
     for file in (*source_set.ordered_source_files, *source_set.included_files):
         if not _portable_file(file):
             _fail("MAPPING_MANIFEST_INVALID", "physical file path is not portable")
-        if file not in files:
-            files.append(file)
+        if file in seen_files:
+            continue
+        seen_files.add(file)
+        files.append(file)
     if not files:
         _fail("MAPPING_MANIFEST_INVALID", "SourceSet has no physical files")
     return mapping, source_set, tuple(files)
@@ -245,8 +263,14 @@ def _validate_manifest(
     return manifest
 
 
-def _validate_source_range(value: object, files: tuple[str, ...], *, label: str) -> SourceRange:
-    if not isinstance(value, SourceRange) or value.file not in files or not _portable_file(value.file):
+def _validate_source_range(
+    value: object,
+    files: tuple[str, ...],
+    *,
+    file_set: frozenset[str],
+    label: str,
+) -> SourceRange:
+    if not isinstance(value, SourceRange) or value.file not in file_set or not _portable_file(value.file):
         _fail("MAPPING_PER_FILE_INVALID", f"{label} is not a physical portable range")
     if type(value.start) is not int or type(value.end) is not int or not 0 <= value.start < value.end:
         _fail("MAPPING_PER_FILE_INVALID", f"{label} bounds are invalid")
@@ -256,6 +280,8 @@ def _validate_source_range(value: object, files: tuple[str, ...], *, label: str)
 def _validate_mapping_records(
     mapping: MappingVNext,
     files: tuple[str, ...],
+    *,
+    file_set: frozenset[str],
 ) -> tuple[dict[tuple[str, str, SourceRange], SourceRange], ...]:
     rename_index = mapping.rename_index
     if not isinstance(mapping.records, tuple) or not isinstance(rename_index.symbols, tuple) or not isinstance(rename_index.decisions, tuple):
@@ -297,13 +323,23 @@ def _validate_mapping_records(
             _fail("MAPPING_PER_FILE_INVALID", "mapping record occurrences are not canonical")
 
         record_ranges: dict[tuple[str, str, SourceRange], SourceRange] = {}
-        declaration = _validate_source_range(record.declaration, files, label="declaration")
+        declaration = _validate_source_range(
+            record.declaration,
+            files,
+            file_set=file_set,
+            label="declaration",
+        )
         declaration_key = (record.symbol_id, "declaration", declaration)
         record_ranges[declaration_key] = declaration
         for occurrence in record.occurrences:
             if not isinstance(occurrence, SymbolOccurrence) or not isinstance(occurrence.provenance, str) or not occurrence.provenance:
                 _fail("MAPPING_PER_FILE_INVALID", "mapping occurrence is invalid")
-            source_range = _validate_source_range(occurrence.source_range, files, label="occurrence")
+            source_range = _validate_source_range(
+                occurrence.source_range,
+                files,
+                file_set=file_set,
+                label="occurrence",
+            )
             key = (record.symbol_id, occurrence.provenance, source_range)
             if key in record_ranges:
                 _fail("MAPPING_PER_FILE_INVALID", "mapping occurrence is duplicated")
@@ -338,7 +374,8 @@ def _validate_mapping_execution(
     if restored_manifest != input_manifest:
         _fail("MAPPING_MANIFEST_INVALID", "restored_manifest does not equal input_manifest")
 
-    record_ranges = _validate_mapping_records(mapping, files)
+    file_set = frozenset(files)
+    _validate_mapping_records(mapping, files, file_set=file_set)
     expected_edits: list[tuple[str, str, str, str, SourceRange]] = []
     for record in mapping.records:
         if record.action != "rename":
@@ -359,6 +396,16 @@ def _validate_mapping_execution(
                 len(renamed_name.encode("utf-8")) - len(original_name.encode("utf-8")),
             )
         )
+    prefix_deltas: dict[str, tuple[list[int], list[int]]] = {}
+    for file, file_deltas in deltas.items():
+        ordered = sorted(file_deltas, key=lambda item: (item[0], item[1]))
+        starts: list[int] = []
+        prefix: list[int] = [0]
+        for start, _end, delta in ordered:
+            starts.append(start)
+            prefix.append(prefix[-1] + delta)
+        prefix_deltas[file] = (starts, prefix)
+
     edits_by_key: dict[tuple[str, str, SourceRange], AppliedEdit] = {}
     for edit, expected in zip(execution.edits, expected_edits):
         if not isinstance(edit, AppliedEdit):
@@ -372,14 +419,16 @@ def _validate_mapping_execution(
             or edit.source_range != source_range
         ):
             _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit does not match mapping range order")
-        gate_range = _validate_source_range(edit.gate_range, files, label="gate range")
+        gate_range = _validate_source_range(
+            edit.gate_range,
+            files,
+            file_set=file_set,
+            label="gate range",
+        )
         if gate_range.file != source_range.file:
             _fail("MAPPING_PER_FILE_INVALID", "AppliedEdit gate range file differs from source range")
-        earlier_delta = sum(
-            delta
-            for start, _end, delta in deltas[source_range.file]
-            if start < source_range.start
-        )
+        starts, prefix = prefix_deltas[source_range.file]
+        earlier_delta = prefix[bisect_left(starts, source_range.start)]
         expected_gate_range = SourceRange(
             source_range.file,
             source_range.start + earlier_delta,
@@ -394,18 +443,28 @@ def _validate_mapping_execution(
 
     input_by_file = {item.file: item.sha256 for item in input_manifest}
     gate_by_file = {item.file: item.sha256 for item in gate_manifest}
+    records_by_file: dict[
+        str, list[tuple[MappingRecord, list[tuple[str, SourceRange]]]]
+    ] = {}
+    for record in mapping.records:
+        ordered_ranges = [
+            ("declaration", record.declaration),
+            *[(occurrence.provenance, occurrence.source_range) for occurrence in record.occurrences],
+        ]
+        by_record_file: dict[str, list[tuple[str, SourceRange]]] = {}
+        for provenance, source_range in ordered_ranges:
+            by_record_file.setdefault(source_range.file, []).append(
+                (provenance, source_range)
+            )
+        for file, file_ranges in by_record_file.items():
+            records_by_file.setdefault(file, []).append((record, file_ranges))
+
     per_file: list[dict[str, object]] = []
     for file in files:
         projected_records: list[dict[str, object]] = []
-        for record, ranges in zip(mapping.records, record_ranges):
+        for record, ordered_ranges in records_by_file.get(file, ()):
             projected_ranges: list[dict[str, object]] = []
-            ordered_ranges = [
-                ("declaration", record.declaration),
-                *[(occurrence.provenance, occurrence.source_range) for occurrence in record.occurrences],
-            ]
             for provenance, source_range in ordered_ranges:
-                if source_range.file != file:
-                    continue
                 key = (record.symbol_id, provenance, source_range)
                 if record.action == "rename":
                     edit = edits_by_key.get(key)
@@ -448,6 +507,33 @@ def _validate_mapping_execution(
     return mapping, files, per_file
 
 
+def _mapping_execution_facts(
+    mapping_execution: MappingExecutionVNext,
+) -> _MappingExecutionFacts:
+    """Return the builder's validated facts, validating an external envelope once."""
+
+    if not isinstance(mapping_execution, MappingExecutionVNext):
+        _fail("MAPPING_EXECUTION_INVALID", "mapping execution schema is invalid")
+    facts = mapping_execution._facts
+    if facts is not None:
+        if not isinstance(facts, _MappingExecutionFacts):
+            _fail("MAPPING_EXECUTION_INVALID", "mapping execution facts are invalid")
+        return facts
+    mapping, files, per_file_mapping = _validate_mapping_execution(mapping_execution)
+    facts = _MappingExecutionFacts(
+        mapping=mapping,
+        files=files,
+        per_file_mapping=tuple(per_file_mapping),
+        input_manifest=mapping.input_manifest,
+        gate_manifest=mapping_execution.rewrite_execution.gate_manifest,
+        restored_manifest=mapping_execution.restore_result.restored_manifest,
+        renamed_records=sum(record.action == "rename" for record in mapping.records),
+        modified_tokens=len(mapping_execution.rewrite_execution.edits),
+    )
+    object.__setattr__(mapping_execution, "_facts", facts)
+    return facts
+
+
 def _validate_mapping_output_path(output_file: Path) -> Path:
     try:
         candidate = Path(output_file).expanduser()
@@ -480,7 +566,7 @@ def build_mapping_execution_vnext(
         rewrite_execution=rewrite_execution,
         restore_result=restore_result,
     )
-    _validate_mapping_execution(envelope)
+    _mapping_execution_facts(envelope)
     return envelope
 
 
@@ -492,8 +578,8 @@ def write_mapping_execution_vnext(
     """Write the validated envelope as one canonical, atomic JSON file."""
 
     destination = _validate_mapping_output_path(output_file)
-    mapping, _files, _per_file_mapping = _validate_mapping_execution(mapping_execution)
-    source_set = mapping.rename_index.source_catalog.source_set
+    facts = _mapping_execution_facts(mapping_execution)
+    source_set = facts.mapping.rename_index.source_catalog.source_set
     _validate_mapping_output_protection(destination, source_set)
     try:
         report = mapping_execution.to_report()
@@ -540,11 +626,13 @@ def write_mapping_execution_vnext(
 
 def _physical_files(source_set: SourceSet) -> tuple[str, ...]:
     files: list[str] = []
+    seen_files: set[str] = set()
     for file in (*source_set.ordered_source_files, *source_set.included_files):
-        if not isinstance(file, str) or not file or file in files:
-            if not isinstance(file, str) or not file:
-                _fail("REWRITE_MAPPING_INVALID", "physical file name is invalid")
+        if not isinstance(file, str) or not file:
+            _fail("REWRITE_MAPPING_INVALID", "physical file name is invalid")
+        if file in seen_files:
             continue
+        seen_files.add(file)
         files.append(file)
     if not files:
         _fail("REWRITE_MAPPING_INVALID", "SourceSet has no physical files")

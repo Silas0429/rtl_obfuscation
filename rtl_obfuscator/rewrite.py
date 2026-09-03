@@ -881,6 +881,11 @@ class _CliVNextProgress:
         orchestration_vnext._STAGE_MAPPING: "生成映射",
         orchestration_vnext._STAGE_GATE: "写出加密结果",
         orchestration_vnext._STAGE_RESTORE: "逐字节回填校验",
+        orchestration_vnext._STAGE_AUDIT_EXECUTION: "构建执行索引",
+        orchestration_vnext._STAGE_AUDIT_METRICS: "计算加密指标",
+        orchestration_vnext._STAGE_AUDIT_REPORT: "组装结果报告",
+        "publish": "原子发布输出",
+        "cleanup": "清理临时文件",
         COMPILE_PARSE: "PySlang 解析与预处理",
         COMPILE_ELABORATE: "PySlang 构建语义树 / elaborate",
         COMPILE_DIAGNOSTICS: "PySlang 收集与分类诊断",
@@ -1044,6 +1049,10 @@ def _cli_vnext_terminal_report(report: dict[str, Any], *, elapsed: float) -> str
         ),
         (
             _cli_vnext_report_row("总文件数", _cli_vnext_report_count(files)),
+            _cli_vnext_report_row(
+                "交付物理文件数",
+                _cli_vnext_report_count(summary.get("physical_files")),
+            ),
             _cli_vnext_report_row("加密文件数", str(encrypted_files)),
             _cli_vnext_report_row(
                 "文件覆盖率", _cli_vnext_report_ratio(encrypted_files, files)
@@ -1189,7 +1198,9 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             artifacts.append((staged_map, map_file))
         if not metrics_default:
             artifacts.append((staged_metrics, metrics_file))
+        progress.stage("publish", "begin")
         _cli_vnext_publish(artifacts)
+        progress.stage("publish", "end")
         progress.write(_cli_vnext_terminal_report(report, elapsed=progress.elapsed()))
         return {
             "format": "rtl-obfuscation.cli-vnext",
@@ -1199,7 +1210,9 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             "summary": summary,
         }
     finally:
+        progress.stage("cleanup", "begin")
         shutil.rmtree(staging_root, ignore_errors=True)
+        progress.stage("cleanup", "end")
 
 
 def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:

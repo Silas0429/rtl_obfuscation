@@ -57,6 +57,11 @@ mapping、metrics 或其他产物。
 `实际修改对象数` 是字节确实被改写的记录数，使用 `--encryption-rate` 时前者会大于后者。
 分母为 0 时相应比率显示 `n/a`。
 
+提供 `--rewrite-root` 时，上述统计范围是 SourceSet 已登记的物理文件与 rewrite-root 的有序交集；未登记或目录外
+文件不会进入覆盖率、代码行数或加密率分母。物理 manifest、gate、strict compile 和 decrypt 仍覆盖完整 filelist
+物理文件集合。FAST 与 FULL 共用这一范围定义；恢复后的执行事实、指标和报告只构建一次。该统计范围修正不等于
+优化 FAST 的 RenameIndex 前端耗时。
+
 `--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON，也不会让失败变安静：
 失败仍然打印错误码、`message` 和位置。
 
