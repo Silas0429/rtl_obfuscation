@@ -2,6 +2,14 @@
 
 本文只记录当前 T108 之后尚未承诺的方向，不授权在现有任务中实现。
 
+## 当前 include 物理闭合边界
+
+任意文件后缀不会因此成为 standalone suffix。只有已列 source/header/context 通过当前目录或 `+incdir+` 的
+字面量 include 直接或递归唯一解析到的普通文件，才会作为只读 include-only physical dependency；同一路径去重，
+并保留到 manifest、gate 和 restore。宏或其他预处理计算出的 include 不自动登记；若 PySlang parse 打开未登记的
+真实 source/include buffer，工具会在 SourceCatalog 全树遍历或 FAST 改名索引开始前带路径拒绝。该边界不包含宏 include 自动发现、glob、
+absolute include、`-y`、`+libext+` 或 library map。
+
 ## 当前不属于四核心组的对象
 
 module 名称、parameter、enum、function/task、argument、genvar、class、package 和其他旧细分类不属于当前
@@ -55,7 +63,7 @@ PVT corner 优先级或 duplicate definition 选择。
 
 - 所有 landed `rename` range 均位于指定 rewrite roots；
 - `readonly_vendor_model` 和 `outside_rewrite_root` 文件没有 landed edit，且 input/gate hash 相同；
-- include-only `.v` 存在于 gate 和 manifest、未进入 `design.f`、hash 不变；
+- include-only 物理文件（可为任意后缀）存在于 gate 和 manifest、未进入 `design.f`、hash 不变；
 - direct restore 对所有物理输入逐字节一致，实际 simulator 能完成所需 compile/elaboration。
 
 任何新语法形状必须先冻结独立任务合同。compile/elaborate 通过本身不能替代物理绑定证明，也不能授权

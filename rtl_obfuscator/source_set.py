@@ -22,7 +22,6 @@ from .rtl_files import (
     is_context_file,
     is_header_file,
     is_include_context_file,
-    is_physical_rtl_file,
     is_source_file,
 )
 
@@ -684,7 +683,7 @@ def _discover_explicit_include_headers(
     explicit_header_files: Iterable[str],
     explicit_source_files: Iterable[str],
 ) -> tuple[str, ...]:
-    """Add bounded header/context and include-only source dependencies."""
+    """Add bounded literal-include and include-only physical dependencies."""
 
     discovered: list[str] = []
     pending = list(dict.fromkeys(seed_files))
@@ -698,9 +697,17 @@ def _discover_explicit_include_headers(
             continue
         seen.add(relative)
         absolute = root / relative
-        if not absolute.is_file() or not is_physical_rtl_file(absolute):
+        if not absolute.is_file() or absolute.is_symlink():
             continue
-        for line in absolute.read_text(encoding="utf-8").splitlines():
+        try:
+            lines = absolute.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            raise SourceSetError(
+                "SOURCESET_INCLUDE_READ_FAILED",
+                "cannot read literal include dependency",
+                relative,
+            ) from error
+        for line in lines:
             match = _INCLUDE_DIRECTIVE.match(line)
             if match is None:
                 continue
@@ -716,62 +723,74 @@ def _discover_explicit_include_headers(
                     str(PurePosixPath(directory) / include_path)
                     for directory in include_directories
                 )
-            source_candidates: list[str] = []
+            physical_candidates: list[tuple[str, Path]] = []
+            symlink_candidates = False
             for candidate in dict.fromkeys(candidates):
                 candidate_path = root / candidate
+                if candidate_path.is_symlink():
+                    symlink_candidates = True
+                    continue
                 if not candidate_path.is_file():
                     continue
-                if is_source_file(candidate_path):
-                    normalized = _relative_to_root(
-                        root, candidate_path, label="include file"
-                    )
-                    if normalized not in source_candidates:
-                        source_candidates.append(normalized)
+                canonical = candidate_path.resolve()
+                if any(path == canonical for _normalized, path in physical_candidates):
                     continue
-                if is_context_file(candidate_path) and not is_include_context_file(
-                    candidate_path
-                ):
-                    normalized = _relative_to_root(
-                        root, candidate_path, label="include file"
-                    )
-                    if normalized not in explicit_headers:
-                        raise SourceSetError(
-                            "SOURCESET_UNSUPPORTED_FILE",
-                            ".vic parameter context must be listed explicitly in the filelist",
-                            normalized,
-                        )
-                    continue
-                if not (
-                    is_header_file(candidate_path)
-                    or is_include_context_file(candidate_path)
+                normalized = _relative_to_root(root, canonical, label="include file")
+                physical_candidates.append((normalized, canonical))
+
+            if not physical_candidates:
+                # Preserve the existing boundary for unsupported symlink
+                # includes while rejecting missing source/context providers.
+                if symlink_candidates and not (
+                    is_source_file(include_name) or is_context_file(include_name)
                 ):
                     continue
-                normalized = _relative_to_root(
-                    root, candidate_path, label="include file"
+                if is_header_file(include_name) or is_context_file(include_name):
+                    # These suffixes retain the existing explicit-filelist
+                    # search boundary; an explicitly listed provider may be
+                    # found by PySlang through its registered parent dir.
+                    continue
+                raise SourceSetError(
+                    "SOURCESET_FILE_NOT_FOUND",
+                    "included file does not exist",
+                    include_name,
                 )
-                if normalized not in discovered:
-                    discovered.append(normalized)
-                if normalized not in seen:
-                    pending.append(normalized)
-            if is_source_file(include_name):
-                if not source_candidates:
-                    raise SourceSetError(
-                        "SOURCESET_FILE_NOT_FOUND",
-                        "included source file does not exist",
-                        include_name,
-                    )
-                if len(source_candidates) != 1:
-                    raise SourceSetError(
-                        "SOURCESET_INCLUDE_AMBIGUOUS",
-                        "included source file resolves to multiple physical files",
-                        include_name,
-                        details=[{"path": path} for path in source_candidates],
-                    )
-                normalized = source_candidates[0]
+            if len(physical_candidates) != 1:
+                raise SourceSetError(
+                    "SOURCESET_INCLUDE_AMBIGUOUS",
+                    "literal include resolves to multiple physical files",
+                    include_name,
+                    details=[
+                        {"path": normalized}
+                        for normalized, _canonical in physical_candidates
+                    ],
+                )
+
+            normalized, candidate_path = physical_candidates[0]
+            if is_source_file(candidate_path):
                 if normalized not in explicit_sources and normalized not in discovered:
                     discovered.append(normalized)
                 if normalized not in seen:
                     pending.append(normalized)
+                continue
+            if is_context_file(candidate_path) and not is_include_context_file(
+                candidate_path
+            ):
+                if normalized not in explicit_headers:
+                    raise SourceSetError(
+                        "SOURCESET_UNSUPPORTED_FILE",
+                        ".vic parameter context must be listed explicitly in the filelist",
+                        normalized,
+                    )
+                # Explicit context remains in compile_order, but it may still
+                # contain literal includes that need to be closed over.
+                if normalized not in seen:
+                    pending.append(normalized)
+                continue
+            if normalized not in discovered:
+                discovered.append(normalized)
+            if normalized not in seen:
+                pending.append(normalized)
     return tuple(discovered)
 
 

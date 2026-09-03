@@ -79,9 +79,11 @@ python rtl_encrypt.py \
 
 filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
 unit，当前语义与同位置的裸 `PATH` 完全相同，不用它判断供应商归属，也不提供仿真器的惰性
-library search。被 include 的 `.svh/.vh` 、显式列出的 `.h` 以及由已列源码直接或递归 include 的
-lower-case `.sv/.v` 都是只读物理依赖：include-only `.sv/.v` 会复制、校验和恢复，但不作为独立 source unit
-进入 `design.f`。同名 source-suffix include 在 local 目录和 `+incdir+` 中同时命中时拒绝猜测。
+library search。被 include 的 `.svh/.vh`、显式列出的 `.h`，以及由已列源码通过当前目录或
+`+incdir+` 的字面量路径直接或递归唯一解析到的普通文件，都是只读物理依赖；任意后缀只有在这种
+bounded literal include closure 中成为 include-only physical dependency，不是 standalone suffix，不能作为
+裸 filelist 或 `-v` entry。include-only 文件会按规范化路径去重并进入 manifest、gate 和 restore，但不作为独立
+source unit 进入 `design.f`；同名 include 同时命中多个候选时拒绝猜测。
 
 显式 filelist 还可用裸路径列出 `.vic`
 compilation-unit 参数上下文；显式列出后，source/header 可 `` `include`` 同一规范化完整路径，但不能
@@ -92,7 +94,8 @@ compilation-unit 参数上下文；显式列出后，source/header 可 `` `inclu
 
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
-保留对应对象，不发布不确定的 gate。
+保留对应对象，不发布不确定的 gate。宏计算出的 include 不自动登记；若 PySlang parse 实际打开未登记的
+真实 source/include buffer，工具会在 SourceCatalog 全树遍历或 FAST 改名索引开始前带路径拒绝。
 
 ### 需要补依赖时用包装 filelist，原始 filelist 一行不动
 

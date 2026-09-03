@@ -94,9 +94,12 @@ PySlang 11.0.0 中只精确放行经验证的 edge-sensitive `ifnone` 与六个 
 source/header include，但 include-only `.vic` 不支持。`.vic` 也不支持 `-v`、single-file 或
 project-root 自动发现。
 
-已列 source/header/context 通过 local 目录或 `+incdir+` 唯一解析到的 lower-case `.sv/.v` 可作为 include-only
-物理依赖。它会进入 manifest、gate 和 restore，但不进入 `ordered_source_files`、`compile_order`、canonical
-`design.f` 或 rename target；多个候选命中时拒绝猜测。
+已列 source/header/context 通过 local 目录或 `+incdir+` 的字面量路径直接或递归唯一解析到的普通文件（包括
+任意后缀）可作为 include-only 物理依赖。任意后缀只在这个 bounded closure 中有效，不扩展 standalone suffix，
+也不能作为裸 filelist 或 `-v` entry；同一规范化路径只保留一次。它会进入 manifest、gate 和 restore，但不进入
+`ordered_source_files`、`compile_order`、canonical `design.f` 或 rename target；多个候选命中时拒绝猜测。
+宏计算出的 include 不自动登记；PySlang parse 若打开未登记的真实 source/include buffer，会在 SourceCatalog
+全树遍历或 FAST 改名索引开始前带物理路径拒绝。
 
 ## 示例
 

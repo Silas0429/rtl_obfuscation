@@ -493,6 +493,55 @@ def _pyslang_source_manager(
     return manager
 
 
+_SOURCE_BACKED_BUFFER_KINDS = frozenset(
+    {
+        pyslang.BufferKind.DesignFile,
+        pyslang.BufferKind.LibraryFile,
+        pyslang.BufferKind.IncludeFile,
+    }
+)
+
+
+def _check_pyslang_physical_buffers(
+    *, root: Path, manager: pyslang.SourceManager, registered_files: Iterable[str]
+) -> None:
+    """Reject source-backed PySlang buffers missing from the physical input set."""
+
+    source_root = Path(root).resolve()
+    registered = {
+        (source_root / relative).resolve().as_posix()
+        for relative in registered_files
+    }
+    for buffer in manager.getAllBuffers():
+        try:
+            kind = manager.getBufferKind(buffer)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            raise ProjectAnalysisError(
+                "UNREGISTERED_PHYSICAL_BUFFER",
+                "PySlang opened a source-backed buffer with no registered physical path",
+            ) from error
+        if kind not in _SOURCE_BACKED_BUFFER_KINDS:
+            continue
+        full_path: Path | str = "<unknown>"
+        try:
+            full_path = Path(manager.getFullPath(buffer))
+            if re.fullmatch(r"<unnamed_buffer\d+>", full_path.name):
+                continue
+            absolute = full_path.resolve()
+            relative = absolute.relative_to(source_root).as_posix()
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            raise ProjectAnalysisError(
+                "UNREGISTERED_PHYSICAL_BUFFER",
+                f"PySlang opened an unregistered physical buffer: {full_path}",
+            ) from error
+        if absolute.as_posix() not in registered:
+            raise ProjectAnalysisError(
+                "UNREGISTERED_PHYSICAL_BUFFER",
+                f"PySlang opened an unregistered physical buffer: {relative} ({absolute})",
+                file=relative,
+            )
+
+
 def _parse_pyslang_syntax_tree(
     *,
     root: Path,
@@ -527,6 +576,11 @@ def _parse_pyslang_syntax_tree(
         bag,
     )
     _observe(stage_observer, COMPILE_PARSE, "end")
+    _check_pyslang_physical_buffers(
+        root=root,
+        manager=manager,
+        registered_files=(*ordered_files, *ordered_includes),
+    )
     return manager, bag, syntax_tree
 
 
@@ -1644,13 +1698,7 @@ def _discover_sourceset(
         )
         compilation_order = context_files + source_order
         included_files = {
-            path
-            for path in candidate_order
-            if (
-                is_header_file(path)
-                or is_context_file(path)
-                or (is_source_file(path) and path not in source_order)
-            )
+            path for path in candidate_order if path not in source_order
         }
         return SourceSetDiscovery(
             included_files=tuple(path for path in candidate_order if path in included_files),
