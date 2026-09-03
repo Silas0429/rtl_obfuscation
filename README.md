@@ -142,10 +142,14 @@ python rtl_encrypt.py \
 当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
 `signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
 快速路径。完整 filelist 只做一次预处理和语法解析，随后只在 rewrite-root 内显式 source unit
-的 `ModuleDeclaration` 中检查直接 `logic`/`wire` declarator；只有能由 value-expression CST
-位置和唯一物理字节范围证明的同名引用才改写。ports、function/task locals、package/global、
-interface、struct 以及 rewrite-root 外文件保持不改；歧义对象以
-`syntax_local_ambiguous` 保留。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
+的 `ModuleDeclaration` 中检查直接 `logic`/`wire` 或未限定的用户自定义命名类型 declarator（CST
+`NamedType.name` 必须是简单 `IdentifierName`，例如 `word_t`；不支持 `pkg::RspCmd_t`）；只有能由
+value-expression CST 位置和唯一物理字节范围证明的同名引用才改写。除了裸 value reference，
+还允许改写 element/bit/part/indexed selection 的根 identifier，以及 `signal.field` 中
+`.` 左侧的根 identifier；字段名、索引表达式中的名字、`::` scope 和层次路径保持不改。
+ports、function/task locals、package/global、interface 对象、struct/union 类型定义与字段以及
+rewrite-root 外文件保持不改；直接 struct-typed module 变量的根名仍按上述规则处理。
+歧义对象以 `syntax_local_ambiguous` 保留。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
 绑定或编译问题会原子失败，绝不静默回退慢路径。
 
 PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/

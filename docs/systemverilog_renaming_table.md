@@ -5,7 +5,7 @@
 
 | `--category` | 识别对象 | 不建立改名记录的对象 |
 | --- | --- | --- |
-| `signals` | module-owned signal；filelist + rewrite-root 快速路径按 module-definition-local CST 识别直接 `logic`/`wire` | module 端口、parameter、interface 成员、struct/union 字段 |
+| `signals` | module-owned signal；filelist + rewrite-root 快速路径按 module-definition-local CST 识别直接 `logic`/`wire` 或未限定的用户自定义命名类型（简单 `IdentifierName`，如 `word_t`），并允许安全 selection/member 根引用 | module 端口、parameter、interface 成员、struct/union 类型定义与字段；不支持 `pkg::RspCmd_t` 等限定类型 |
 | `ports` | source-backed module `PortSymbol` | selected top 的 ABI 端口按边界保留 |
 | `interface` | source-backed interface 类型、标量/数组实例、成员、modport | 匿名 elaboration element、`SystemCallInfo` 等无源码节点 |
 | `struct` | 物理 `typedef struct/union` 类型及 `FieldSymbol` 字段 | parameter type、隐式 conversion、canonical aggregate shape |
@@ -68,8 +68,12 @@ candidate、rename、preserve、unsupported 和 issues。记录 action 只有 `r
 
 在 filelist + rewrite-root、仅 `signals`、无 `top`/rate 的快速路径中，完整 filelist 只解析一次；
 mapping 不建立 semantic `Compilation`，而按每个 rewrite-root module 的 definition-local CST
-检查直接声明和安全 value-reference。无法证明的同名嵌套声明、层次/成员选择、named label、类型位置、
-宏来源或 escaped identifier 统一以 `syntax_local_ambiguous` 保留。
+检查直接 `logic`/`wire` 或未限定的用户自定义命名类型声明（`NamedType.name` 必须是简单
+`IdentifierName`，不支持 `pkg::RspCmd_t` 等限定类型）和安全 value-reference。selection 只允许
+`IdentifierSelectName` 的根 identifier；member 只允许 `.` 分隔的 `ScopedName` 最左根 identifier，
+不改字段/member、索引表达式、`::` scope 或层次路径。无法证明的同名嵌套声明、named label、类型位置、
+宏来源或 escaped identifier 统一以 `syntax_local_ambiguous` 保留。直接 struct-typed module 变量的
+根名可按此规则改写，但 struct/union 类型定义与字段本身不建 signals 记录。
 
 ## 只读文件与目录授权
 

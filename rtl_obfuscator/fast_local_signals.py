@@ -136,6 +136,7 @@ class _ModuleInventory:
     scopes_by_declarator_key: dict[
         tuple[str, int, int], tuple[SourceRange, ...]
     ]
+    authorized_selection_root_keys: frozenset[tuple[str, int, int]]
 
 
 def _kind(value: Any) -> str:
@@ -360,10 +361,45 @@ def _token_is_in_node(token: Any, node: Any) -> bool:
         return False
 
 
+def _same_physical_token(left: Any, right: Any) -> bool:
+    """Compare CST token wrappers by their physical source location."""
+
+    if left is right:
+        return True
+    try:
+        left_location = left.location
+        right_location = right.location
+        return (
+            left_location.buffer == right_location.buffer
+            and int(left_location.offset) == int(right_location.offset)
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _ambiguous_context(item: _CstNode, token: Any) -> bool:
     kind = item.kind
     if kind in _BAD_CONTEXT_KINDS:
         return True
+    if kind == "IdentifierSelectName":
+        # PySlang represents element/bit/part/indexed selections as one node
+        # whose ``identifier`` is the root token. Only that token belongs to
+        # the selected module signal; names in the selector expression do not.
+        return not _same_physical_token(
+            getattr(item.node, "identifier", None), token
+        )
+    if kind == "ScopedName":
+        # A direct ``signal.field`` is the one member-selection form this
+        # definition-local path can prove. Scope separators and tokens on the
+        # right side remain ambiguous, including any hierarchy represented by
+        # another CST shape.
+        left = getattr(item.node, "left", None)
+        left_identifier = getattr(left, "identifier", None)
+        separator = getattr(item.node, "separator", None)
+        return not (
+            _raw_text(separator) == "."
+            and _same_physical_token(left_identifier, token)
+        )
     if kind in _HIERARCHICAL_KINDS:
         return True
     if (
@@ -492,6 +528,26 @@ def _module_inventory(
             continue
         identifier_nodes_by_key.setdefault(_range_key(item.source_range), []).append(item)
 
+    authorized_selection_root_keys: set[tuple[str, int, int]] = set()
+    for item in syntax_nodes:
+        if item.kind != "IdentifierSelectName":
+            continue
+        identifier = getattr(item.node, "identifier", None)
+        if identifier is None:
+            continue
+        try:
+            identifier_range = _token_range(
+                view,
+                source_set,
+                identifier,
+                _raw_text(identifier),
+                source_cache,
+            )
+        except FastLocalSignalsError:
+            continue
+        if _contains(module_span, identifier_range):
+            authorized_selection_root_keys.add(_range_key(identifier_range))
+
     tokens_by_spelling: dict[str, list[_IndexedToken]] = {}
     valid_tokens: list[_IndexedToken] = []
     for token in raw_tokens:
@@ -567,6 +623,7 @@ def _module_inventory(
         {name: tuple(items) for name, items in tokens_by_spelling.items()},
         {name: frozenset(keys) for name, keys in declarator_keys_by_spelling.items()},
         scopes_by_declarator_key,
+        frozenset(authorized_selection_root_keys),
     )
 
 
@@ -577,15 +634,34 @@ def _direct_signal_declarations(
     module_span: SourceRange,
     source_cache: _PhysicalSourceCache | None = None,
 ) -> tuple[_CstSignal, ...]:
-    """Collect only direct ``logic``/``wire`` declarators of one module."""
+    """Collect direct logic/wire and named-type declarators of one module."""
 
     result: list[_CstSignal] = []
     for member in tuple(getattr(syntax, "members", ())):
         member_kind = _kind(getattr(member, "kind", None))
         if member_kind not in {"DataDeclaration", "NetDeclaration"}:
             continue
-        first = _raw_text(member.getFirstToken())
-        if first not in _DIRECT_SIGNAL_TYPES:
+        declaration_type = getattr(member, "type", None)
+        type_kind = _kind(getattr(declaration_type, "kind", None))
+        if type_kind == "LogicType":
+            keyword = _raw_text(getattr(declaration_type, "keyword", None))
+            supported_type = keyword in _DIRECT_SIGNAL_TYPES
+        elif type_kind == "ImplicitType":
+            supported_type = (
+                _raw_text(member.getFirstToken()) in _DIRECT_SIGNAL_TYPES
+            )
+        elif type_kind == "NamedType":
+            type_name = getattr(declaration_type, "name", None)
+            type_identifier = getattr(type_name, "identifier", None)
+            supported_type = (
+                _kind(getattr(type_name, "kind", None)) == _IDENTIFIER_NAME_KIND
+                and _token_kind(type_identifier) == "Identifier"
+                and _PLAIN_IDENTIFIER.fullmatch(_raw_text(type_identifier))
+                is not None
+            )
+        else:
+            supported_type = False
+        if not supported_type:
             continue
         semantic_kind = "NetSymbol" if member_kind == "NetDeclaration" else "VariableSymbol"
         for declarator in tuple(getattr(member, "declarators", ())):
@@ -652,7 +728,10 @@ def _analyze_signal(
         if _token_kind(indexed.token) != "Identifier":
             ambiguous = True
             continue
-        if indexed.identifier_name_count != 1 or indexed.ambiguous:
+        if (
+            indexed.identifier_name_count != 1
+            and key not in inventory.authorized_selection_root_keys
+        ) or indexed.ambiguous:
             ambiguous = True
             continue
         if key in accounted:
