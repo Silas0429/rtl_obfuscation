@@ -48,6 +48,7 @@ from rtl_obfuscator.source_set import (
     from_project_root,
     from_single_file,
     infer_filelist_root,
+    render_filelist_path_views,
 )
 def _write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -732,9 +733,9 @@ def _cli_vnext_write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
 
 
-def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
+def _cli_vnext_write_bytes_atomic(path: Path, payload: bytes) -> None:
     try:
-        payload = value.encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
@@ -755,6 +756,10 @@ def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
             raise
     except (OSError, TypeError, ValueError, UnicodeError) as error:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+
+
+def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
+    _cli_vnext_write_bytes_atomic(path, value.encode("utf-8"))
 
 
 def _cli_vnext_mapping_table(
@@ -1233,18 +1238,56 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
                 (gate_dir / include_dir).mkdir(parents=True, exist_ok=True)
         except OSError as error:
             _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
-        _cli_vnext_write_text_atomic(
-            gate_dir / "design.f",
-            _cli_vnext_filelist(source_set, root=output_dir),
-        )
-        _cli_vnext_write_text_atomic(
-            gate_dir / "export_design.f",
-            _cli_vnext_filelist(source_set, environment_root="$OUT"),
-        )
-        _cli_vnext_write_text_atomic(
-            gate_dir / "original_design.f",
-            _cli_vnext_filelist(source_set, root=source_set.source_root),
-        )
+        if bool(getattr(args, "public_cli", False)) and args.filelist is not None:
+            try:
+                filelist_views = render_filelist_path_views(
+                    filelist=Path(args.filelist),
+                    source_root=source_set.source_root,
+                    output_root=output_dir,
+                )
+            except SourceSetError as error:
+                _cli_vnext_fail_source_set(
+                    error,
+                    source_set.source_root,
+                    filelist=Path(args.filelist),
+                    source_root=source_set.source_root,
+                )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "design.f", filelist_views.design
+            )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "export_design.f", filelist_views.export
+            )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "original_design.f", filelist_views.original
+            )
+            for relative, payload in filelist_views.design_nested:
+                _cli_vnext_write_bytes_atomic(
+                    gate_dir
+                    / ".rtl_obfuscation/filelists/design"
+                    / relative,
+                    payload,
+                )
+            for relative, payload in filelist_views.export_nested:
+                _cli_vnext_write_bytes_atomic(
+                    gate_dir
+                    / ".rtl_obfuscation/filelists/export"
+                    / relative,
+                    payload,
+                )
+        else:
+            _cli_vnext_write_text_atomic(
+                gate_dir / "design.f",
+                _cli_vnext_filelist(source_set, root=output_dir),
+            )
+            _cli_vnext_write_text_atomic(
+                gate_dir / "export_design.f",
+                _cli_vnext_filelist(source_set, environment_root="$OUT"),
+            )
+            _cli_vnext_write_text_atomic(
+                gate_dir / "original_design.f",
+                _cli_vnext_filelist(source_set, root=source_set.source_root),
+            )
         artifacts = [(gate_dir, output_dir)]
         if not map_default:
             artifacts.append((staged_map, map_file))

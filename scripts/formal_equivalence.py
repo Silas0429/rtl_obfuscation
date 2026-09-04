@@ -128,42 +128,100 @@ def _resolve_filelist(filelist_path: Path, root: Path) -> _FilelistContext:
         resolved_filelist = (root / filelist_path).resolve()
     if not resolved_filelist.is_file():
         raise argparse.ArgumentTypeError(f"filelist does not exist: {filelist_path}")
-    lines = resolved_filelist.read_text(encoding="utf-8").strip().splitlines()
     files: list[Path] = []
     include_dirs: list[Path] = []
     defines: list[tuple[str, str]] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        expanded = os.path.expandvars(line)
-        if expanded.startswith("+incdir+"):
-            raw = _safe_yosys_argument(
-                expanded[len("+incdir+") :], label="include directory"
+
+    def resolved_path(raw: str, *, base: Path, label: str) -> Path:
+        safe = _safe_yosys_argument(os.path.expandvars(raw), label=label)
+        path = Path(safe)
+        return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+    def visit(current: Path, active: tuple[Path, ...], entry_base: Path) -> None:
+        canonical = current.resolve()
+        if canonical in active:
+            raise argparse.ArgumentTypeError(
+                f"filelist includes itself through a recursive -f chain: {canonical}"
             )
-            resolved_dir = Path(raw).resolve() if Path(raw).is_absolute() else (root / raw).resolve()
-            if not resolved_dir.is_dir():
-                raise argparse.ArgumentTypeError(
-                    f"include directory does not exist: {resolved_dir}"
+        if not canonical.is_file():
+            raise argparse.ArgumentTypeError(f"filelist does not exist: {canonical}")
+        next_active = (*active, canonical)
+        for raw_line in canonical.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+            tokens = line.split()
+            if tokens[0] == "-f":
+                if len(tokens) != 2:
+                    raise argparse.ArgumentTypeError(
+                        "-f requires exactly one filelist path"
+                    )
+                nested = resolved_path(
+                    tokens[1], base=entry_base, label="nested filelist"
                 )
-            include_dirs.append(resolved_dir)
-            continue
-        if expanded.startswith("+define+"):
-            payload = expanded[len("+define+") :]
-            name, separator, value = payload.partition("=")
-            if SIMPLE_IDENTIFIER.fullmatch(name) is None:
-                raise argparse.ArgumentTypeError(f"invalid formal define: {payload}")
-            definition = value if separator else "1"
-            _safe_yosys_argument(
-                definition, label="define value", allow_empty=True
+                visit(nested, next_active, nested.parent)
+                continue
+            if tokens[0] == "-v":
+                if len(tokens) != 2:
+                    raise argparse.ArgumentTypeError(
+                        "-v requires exactly one source path"
+                    )
+                source = resolved_path(
+                    tokens[1], base=entry_base, label="input path"
+                )
+                if not source.is_file():
+                    raise argparse.ArgumentTypeError(
+                        f"file does not exist: {source}"
+                    )
+                files.append(source)
+                continue
+            if line.startswith("+incdir+"):
+                paths = line[len("+incdir+") :].split("+")
+                if not paths or any(not path for path in paths):
+                    raise argparse.ArgumentTypeError(
+                        "+incdir+ requires one or more directory paths"
+                    )
+                for raw in paths:
+                    resolved_dir = resolved_path(
+                        raw, base=entry_base, label="include directory"
+                    )
+                    if not resolved_dir.is_dir():
+                        raise argparse.ArgumentTypeError(
+                            f"include directory does not exist: {resolved_dir}"
+                        )
+                    include_dirs.append(resolved_dir)
+                continue
+            if line.startswith("+define+"):
+                payloads = line[len("+define+") :].split("+")
+                if not payloads or any(not payload for payload in payloads):
+                    raise argparse.ArgumentTypeError(
+                        "+define+ requires one or more NAME[=VALUE] definitions"
+                    )
+                for payload in payloads:
+                    expanded = os.path.expandvars(payload)
+                    name, separator, value = expanded.partition("=")
+                    if SIMPLE_IDENTIFIER.fullmatch(name) is None:
+                        raise argparse.ArgumentTypeError(
+                            f"invalid formal define: {payload}"
+                        )
+                    definition = value if separator else "1"
+                    _safe_yosys_argument(
+                        definition, label="define value", allow_empty=True
+                    )
+                    defines.append((name, definition))
+                continue
+            if len(tokens) != 1 or line.startswith(("+", "-")):
+                raise argparse.ArgumentTypeError(
+                    f"unsupported formal filelist entry: {line}"
+                )
+            source = resolved_path(
+                tokens[0], base=entry_base, label="input path"
             )
-            defines.append((name, definition))
-            continue
-        raw = _safe_yosys_argument(expanded, label="input path")
-        resolved = Path(raw).resolve() if Path(raw).is_absolute() else (root / raw).resolve()
-        if not resolved.is_file():
-            raise argparse.ArgumentTypeError(f"file does not exist: {resolved}")
-        files.append(resolved)
+            if not source.is_file():
+                raise argparse.ArgumentTypeError(f"file does not exist: {source}")
+            files.append(source)
+
+    visit(resolved_filelist, (), root.resolve())
     if not files:
         raise argparse.ArgumentTypeError("filelist has no source entries")
     return _FilelistContext(tuple(files), tuple(include_dirs), tuple(defines))

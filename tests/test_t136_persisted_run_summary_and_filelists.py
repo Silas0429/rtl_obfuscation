@@ -121,7 +121,6 @@ class T136PersistedRunSummaryAndFilelistsTests(unittest.TestCase):
 
     def test_three_filelists_share_context_and_only_change_path_root(self):
         output_root = self.gate.resolve().as_posix()
-        source_root = self.project.resolve().as_posix()
         expected = {
             "design.f": [
                 f"+incdir+{output_root}/include",
@@ -134,9 +133,9 @@ class T136PersistedRunSummaryAndFilelistsTests(unittest.TestCase):
                 "$OUT/rtl/top.sv",
             ],
             "original_design.f": [
-                f"+incdir+{source_root}/include",
+                "+incdir+include",
                 "+define+T136_FEATURE=1",
-                f"{source_root}/rtl/top.sv",
+                "rtl/top.sv",
             ],
         }
         for name, lines in expected.items():
@@ -175,6 +174,80 @@ class T136PersistedRunSummaryAndFilelistsTests(unittest.TestCase):
                 (restored / relative).read_bytes(),
                 (self.project / relative).read_bytes(),
             )
+
+    def test_cli_only_context_is_not_injected_into_filelist_views(self):
+        with tempfile.TemporaryDirectory(prefix="t137-cli-context-") as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            (project / "include").mkdir(parents=True)
+            (project / "rtl").mkdir()
+            (project / "include" / "feature.svh").write_text(
+                "`define T137_CLI_WIDTH 1\n", encoding="utf-8"
+            )
+            (project / "rtl" / "top.sv").write_text(
+                '`include "feature.svh"\n'
+                "module t137_cli_context(input logic a, output logic y);\n"
+                "  logic internal_signal;\n"
+                "  assign internal_signal = a;\n"
+                "  assign y = internal_signal;\n"
+                "endmodule\n",
+                encoding="utf-8",
+            )
+            filelist = project / "input.f"
+            original = b"rtl/top.sv\n"
+            filelist.write_bytes(original)
+            gate = root / "gate"
+            encrypted = subprocess.run(
+                (
+                    sys.executable,
+                    str(ENCRYPT),
+                    "--filelist",
+                    str(filelist),
+                    "--top",
+                    "t137_cli_context",
+                    "--rewrite-root",
+                    str(project / "rtl"),
+                    "--include-dir",
+                    str(project / "include"),
+                    "--define",
+                    "T137_CLI_ONLY=1",
+                    "--category",
+                    "signals",
+                    "--output-dir",
+                    str(gate),
+                ),
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            self.assertEqual(encrypted.returncode, 0, encrypted.stderr)
+            self.assertEqual((gate / "original_design.f").read_bytes(), original)
+            for name in ("design.f", "export_design.f", "original_design.f"):
+                text = (gate / name).read_text(encoding="utf-8")
+                self.assertNotIn("+incdir+", text)
+                self.assertNotIn("+define+", text)
+
+            restored = root / "restored"
+            decrypted = subprocess.run(
+                (
+                    sys.executable,
+                    str(DECRYPT),
+                    "--map",
+                    str(gate / "mapping.json"),
+                    "--gate-dir",
+                    str(gate),
+                    "--output-dir",
+                    str(restored),
+                ),
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            self.assertEqual(decrypted.returncode, 0, decrypted.stderr)
 
     def test_actual_gate_formal_positive_and_fixed_functional_negative(self):
         arguments = (

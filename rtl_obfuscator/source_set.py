@@ -67,6 +67,22 @@ class FilelistEntry:
 
 
 @dataclass(frozen=True)
+class FilelistPathViews:
+    """Byte-preserving delivery views for one authoritative filelist tree.
+
+    This is transient publication data, not part of the portable ``SourceSet``
+    or mapping schema.  Nested paths are relative to ``source_root`` and are
+    emitted only for filelists reached from the requested top-level filelist.
+    """
+
+    original: bytes
+    design: bytes
+    export: bytes
+    design_nested: tuple[tuple[str, bytes], ...]
+    export_nested: tuple[tuple[str, bytes], ...]
+
+
+@dataclass(frozen=True)
 class SourceSet:
     schema_version: int
     origin: str
@@ -370,11 +386,16 @@ def _parse_filelist_context_directive(
                 "+incdir+ requires one or more directory paths",
                 text,
             )
+        if any(any(character.isspace() for character in value) for value in values):
+            _raise_unsupported_filelist_directive(text)
         directories: list[str] = []
         for value in values:
+            expanded_value = _expand_filelist_environment(value, environment)
+            if any(character.isspace() for character in expanded_value):
+                _raise_unsupported_filelist_directive(text)
             absolute, relative = _resolve_filelist_path(
                 root=root,
-                text=value,
+                text=expanded_value,
                 environment=environment,
                 label="include directory",
                 base=base,
@@ -644,6 +665,173 @@ def _read_filelist(
         tuple(defines),
         tuple(physical_paths),
         tuple(filelist_entries),
+    )
+
+
+def render_filelist_path_views(
+    *,
+    filelist: Path,
+    source_root: Path,
+    output_root: Path,
+    environment: dict[str, str] | None = None,
+) -> FilelistPathViews:
+    """Preserve an accepted filelist tree and replace only its path tokens.
+
+    The caller must first build the authoritative filelist ``SourceSet``.  This
+    renderer intentionally reuses the same path and directive helpers as that
+    parser; it does not accept a second filelist language or flatten ``-f``.
+    """
+
+    top = Path(filelist).expanduser().resolve()
+    root = Path(source_root).expanduser().resolve()
+    output = Path(output_root).expanduser().resolve()
+    environment_snapshot = dict(os.environ if environment is None else environment)
+    design_documents: dict[str, bytes] = {}
+    export_documents: dict[str, bytes] = {}
+    document_cache: dict[Path, tuple[bytes, bytes]] = {}
+    active: tuple[Path, ...] = ()
+
+    def delivery_path(relative: str, *, export: bool) -> str:
+        if export:
+            return "$OUT" if relative == "." else f"$OUT/{relative}"
+        return (output / relative).resolve().as_posix()
+
+    def nested_delivery_path(relative: str, *, export: bool) -> str:
+        prefix = ".rtl_obfuscation/filelists/export" if export else ".rtl_obfuscation/filelists/design"
+        nested_relative = f"{prefix}/{relative}"
+        return delivery_path(nested_relative, export=export)
+
+    def replace_token(line: str, token_index: int, replacement: str) -> str:
+        matches = tuple(re.finditer(r"\S+", line))
+        if token_index >= len(matches):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT",
+                "filelist path token is unavailable",
+                line.strip(),
+            )
+        match = matches[token_index]
+        return f"{line[:match.start()]}{replacement}{line[match.end():]}"
+
+    def transform_line(
+        content: str, *, canonical: Path, export: bool, next_active: tuple[Path, ...]
+    ) -> str:
+        text = content.strip()
+        if not text or text.startswith("#") or text.startswith("//"):
+            return content
+        tokens = text.split()
+        if tokens[0] == "-f":
+            child, child_relative_unused = _resolve_filelist_path(
+                root=root,
+                text=tokens[1],
+                environment=environment_snapshot,
+                label="nested filelist",
+                base=canonical.parent,
+            )
+            del child_relative_unused
+            relative = _relative_to_root(root, child, label="nested filelist")
+            visit(child, next_active)
+            return replace_token(
+                content, 1, nested_delivery_path(relative, export=export)
+            )
+
+        if text.startswith("+incdir+"):
+            context = _parse_filelist_context_directive(
+                root=root,
+                text=text,
+                environment=environment_snapshot,
+                base=canonical.parent,
+            )
+            if context is None:
+                raise SourceSetError(
+                    "SOURCESET_INVALID_ARGUMENT", "include directory is invalid", text
+                )
+            directories, _defines = context
+            replacement = "+incdir+" + "+".join(
+                delivery_path(relative, export=export) for relative in directories
+            )
+            return replace_token(content, 0, replacement)
+
+        if text.startswith("+define+"):
+            return content
+
+        library_source = tokens[0] == "-v"
+        token_index = 1 if library_source else 0
+        relative = _normalize_filelist_entry(
+            root=root,
+            text=tokens[token_index],
+            environment=environment_snapshot,
+            base=canonical.parent,
+        )
+        return replace_token(
+            content, token_index, delivery_path(relative, export=export)
+        )
+
+    def render_document(
+        canonical: Path, *, export: bool, next_active: tuple[Path, ...]
+    ) -> bytes:
+        try:
+            decoded = canonical.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            raise SourceSetError(
+                "SOURCESET_FILE_NOT_FOUND", "filelist cannot be read", str(canonical)
+            ) from error
+        rendered: list[str] = []
+        for raw_line in decoded.splitlines(keepends=True):
+            ending = ""
+            content = raw_line
+            for candidate in ("\r\n", "\n", "\r"):
+                if raw_line.endswith(candidate):
+                    content = raw_line[: -len(candidate)]
+                    ending = candidate
+                    break
+            rendered.append(
+                transform_line(
+                    content,
+                    canonical=canonical,
+                    export=export,
+                    next_active=next_active,
+                )
+                + ending
+            )
+        return "".join(rendered).encode("utf-8")
+
+    def visit(current: Path, ancestors: tuple[Path, ...]) -> tuple[bytes, bytes]:
+        canonical = current.resolve()
+        if canonical in ancestors:
+            raise SourceSetError(
+                "SOURCESET_FILELIST_CYCLE",
+                "filelist includes itself through a recursive -f chain",
+                str(canonical),
+            )
+        if canonical in document_cache:
+            return document_cache[canonical]
+        if not canonical.is_file():
+            raise SourceSetError(
+                "SOURCESET_FILE_NOT_FOUND", "filelist does not exist", str(canonical)
+            )
+        next_active = (*ancestors, canonical)
+        relative = _relative_to_root(root, canonical, label="nested filelist")
+        design = render_document(canonical, export=False, next_active=next_active)
+        exported = render_document(canonical, export=True, next_active=next_active)
+        document_cache[canonical] = (design, exported)
+        if canonical != top:
+            design_documents[relative] = design
+            export_documents[relative] = exported
+        return design, exported
+
+    design, exported = visit(top, active)
+    try:
+        original = top.read_bytes()
+    except OSError as error:
+        raise SourceSetError(
+            "SOURCESET_FILE_NOT_FOUND", "filelist cannot be read", str(top)
+        ) from error
+    return FilelistPathViews(
+        original=original,
+        design=design,
+        export=exported,
+        design_nested=tuple(design_documents.items()),
+        export_nested=tuple(export_documents.items()),
     )
 
 

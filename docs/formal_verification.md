@@ -30,15 +30,17 @@ Formal 输入必须满足：
 - 原始 RTL 与加密 RTL 使用相同的 top module 名称；
 - top 的端口和端口方向保持一致；
 - 多文件工程使用相同的编译顺序和等价的宏/include 设置；
-- filelist source entry 可使用绝对路径，或相对于各自的 `--gold-root` / `--gate-root` 查找；
-  `+incdir+` 和 `+define+NAME=VALUE` 会分别传给 gold/gate 的 Yosys `read_verilog`。
+- filelist source entry 可使用绝对路径；顶层 filelist 的相对路径以各自
+  `--gold-root` / `--gate-root` 为基准，nested `-f` 内的相对路径以 nested filelist 所在目录为基准；
+  `-f` 按出现位置递归处理，`-v PATH` 按 source entry 处理，`+incdir+A+B` 和
+  `+define+NAME=VALUE` 会分别传给 gold/gate 的 Yosys `read_verilog`。
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
-- 三份公开 filelist 使用加密输出的完整 `compile_order`：显式列出的 `.h/.svh/.vh` header/context
-  以及显式 filelist-only `.vic` 参数 context 前导在 source unit 之前；由 `` `include`` 发现但未
-  显式列出的 header 仍随 gate 保留，不写入 `design.f`。source/header 可 include 已显式列入
-  filelist 的同一规范化 `.vic` 路径；include-only `.vic` 仍不支持。`design.f` 指向当前 gate 的
-  绝对路径，`export_design.f` 使用 `$OUT`，`original_design.f` 指向原始物理输入。
+- 公开 `--filelist` 生成的三份视图保留顶层与 nested `-f` 的原始顺序和结构：
+  `design.f` 指向当前 gate 绝对路径，`export_design.f` 使用 `$OUT`，
+  `original_design.f` 与顶层输入逐字节一致。由 `` `include`` 发现但未显式列出的 header 仍随
+  gate 保留，但不会增加 filelist 条目。CLI 另外提供的 include-dir / define 不写入视图，
+  Formal 调用时需另行传递对应 Yosys 选项。
 
 ## 多文件项目：推荐命令
 

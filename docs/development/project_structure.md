@@ -80,11 +80,13 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 `encryption_summary.txt`。成功运行的 summary 还记录 shell 已展开的有效 argv、工作目录，并与
 cleanup 后的终端“加密总结”复用同一字符串；这些运行证据不进入 mapping / metrics schema。
 
-CLI 对外发布三份共享同一 include-dir、define 与 compile-order 的 filelist：`design.f` 绑定当前
-gate 的绝对根，`export_design.f` 使用 `$OUT` 作为可移动根，`original_design.f` 绑定本次原始
-SourceSet 根。内部 staging 仍使用原有相对 canonical compile order 完成 strict compile 和
-byte-identical restore，临时目录不会泄露到公开 filelist。include-only 物理依赖仍只复制而不进入
-compile order。
+公开 `--filelist` 模式对外发布三份原序路径视图：`original_design.f` 是顶层输入 filelist
+的逐字节副本；`design.f` 与 `export_design.f` 递归保留原有行、顺序、`-v` / `-f`、注释、
+空行和非路径文字，只将路径 token 替换为当前 gate 绝对根或 `$OUT`。两套 nested `-f`
+镜像位于 `.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`，只写出从
+顶层闭包可达的文件。CLI-only include-dir / define 不注入视图。`--input` 与 project-root 模式因
+没有原始 filelist，仍使用 canonical 三视图。内部 staging 继续完成 strict compile 和 byte-identical
+restore；include-only 物理依赖仍只复制而不增加 filelist 条目。
 
 统计范围由 FAST 与 FULL 共用：提供 rewrite root 时取 SourceSet 已登记 physical files 与 rewrite roots 的有序交集；
 未提供时使用全部 physical files。该范围只影响 metrics、覆盖率、代码行数和加密率，完整 physical manifest、gate、

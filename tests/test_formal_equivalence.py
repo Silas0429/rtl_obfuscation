@@ -88,12 +88,8 @@ class FormalEquivalenceRegressionTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                (gate / "original_design.f").read_text(encoding="utf-8").splitlines(),
-                [
-                    f"+incdir+{project.resolve().as_posix()}",
-                    "+define+T136_ROOT_FEATURE=1",
-                    (project / "top.sv").resolve().as_posix(),
-                ],
+                (gate / "original_design.f").read_bytes(),
+                filelist.read_bytes(),
             )
             self.assertNotIn(
                 "defs.svh", (gate / "design.f").read_text(encoding="utf-8")

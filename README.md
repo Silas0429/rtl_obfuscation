@@ -97,7 +97,8 @@ compilation-unit 参数上下文；显式列出后，source/header 可 `` `inclu
 仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
 自动发现。`-f` 嵌套 filelist、
 `+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
-`--source-root`；源码根目录由 filelist 和 include 路径自动推导。
+`--source-root`；源码根目录由 filelist 和 include 路径自动推导。filelist 不提供引号或反斜杠转义层，
+因此未转义且含空白字符的 `+incdir+` 路径会在 SourceSet 阶段直接拒绝。
 
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
@@ -200,11 +201,16 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 
 - `design.f` 使用当前输出目录的绝对路径，可从任意工作目录直接使用；
 - `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
-- `original_design.f` 使用本次运行的原始物理绝对路径，便于 gold/gate 对照。
+- `original_design.f` 与 `--filelist` 指定的顶层 filelist 逐字节一致，便于 gold/gate 对照。
 
-三份 filelist 以相同顺序保存规范化 include directories、defines 和 `compile_order`，仅路径根表示
-不同。由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
-compilation unit。mapping 使用
+公开 `--filelist` 模式以原始顶层 filelist 和 nested `-f` 文本为模板：不增删条目、
+不改顺序、不丢弃 `-v` / `-f` / 注释 / 空行，只把 bare source/context、`-v`、
+`-f` 和 `+incdir+` 中的路径替换为 gate 绝对路径或 `$OUT` 路径。nested filelist 在
+`.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export` 中分别保留递归结构。
+CLI 单独提供的 `--include-dir` / `--define` 不会注入这三份 filelist；下游编译时仍需单独
+传入。`--input` 和 `--source-root + --top` 没有原始 filelist，仍生成 canonical 三视图。
+由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
+filelist 条目。mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
 semantic kind、物理 declaration/occurrences、action 和 reason。
 

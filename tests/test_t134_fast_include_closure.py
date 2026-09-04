@@ -83,11 +83,8 @@ class T134FastIncludeClosureTests(unittest.TestCase):
                 ["+define+T134_WIDTH=4", *(f"$OUT/{item}" for item in SOURCES)],
             )
             self.assertEqual(
-                (gate / "original_design.f").read_text(encoding="utf-8").splitlines(),
-                [
-                    "+define+T134_WIDTH=4",
-                    *((FIXTURE / item).resolve().as_posix() for item in SOURCES),
-                ],
+                (gate / "original_design.f").read_bytes(),
+                (FIXTURE / "design.f").read_bytes(),
             )
 
             execution = report["mapping_execution"]
@@ -243,6 +240,24 @@ class T134FastIncludeClosureTests(unittest.TestCase):
             with self.assertRaises(SourceSetError) as bare:
                 from_filelist(filelist=root / "bare.f", source_root=root)
             self.assertEqual(bare.exception.code, "SOURCESET_UNSUPPORTED_FILE")
+
+    def test_unquoted_incdir_whitespace_is_rejected_before_delivery(self):
+        with tempfile.TemporaryDirectory(prefix="t137-incdir-space-") as temporary:
+            root = Path(temporary)
+            (root / "include with space").mkdir()
+            (root / "top.sv").write_text(
+                "module t137_incdir_space; endmodule\n", encoding="utf-8"
+            )
+            filelist = root / "design.f"
+            filelist.write_text(
+                "+incdir+include with space\ntop.sv\n", encoding="utf-8"
+            )
+            with self.assertRaises(SourceSetError) as rejected:
+                from_filelist(filelist=filelist, source_root=root)
+            self.assertEqual(
+                rejected.exception.code,
+                "SOURCESET_UNSUPPORTED_FILELIST_DIRECTIVE",
+            )
 
 
 if __name__ == "__main__":
