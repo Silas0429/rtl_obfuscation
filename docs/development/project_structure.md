@@ -32,9 +32,9 @@ value-reference/selection/member 根位置建映射；字段、索引表达式�
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
 | `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate |
-| `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；拒绝 schema 1 |
+| `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；验证公开三视图 filelist；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
-| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root` 和公共错误输出 |
+| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、持久化运行记录、公开三视图 filelist 和公共错误输出 |
 
 ## 四核心组边界
 
@@ -76,7 +76,15 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 
 公开 CLI 的 compile 与 RenameIndex 外层进度内部提供固定粗粒度子阶段（如
 `compile.parse`、`compile.owner_registry`、`rename_index.name_completeness`）。这些阶段只通过
-同一个 observer 实时写入 stderr，不改变 SourceCatalog、RenameIndex 或任何持久化报告。
+同一个 observer 生成一次显示字符串：非 quiet 时立即写 stderr，并按原顺序写入
+`encryption_summary.txt`。成功运行的 summary 还记录 shell 已展开的有效 argv、工作目录，并与
+cleanup 后的终端“加密总结”复用同一字符串；这些运行证据不进入 mapping / metrics schema。
+
+CLI 对外发布三份共享同一 include-dir、define 与 compile-order 的 filelist：`design.f` 绑定当前
+gate 的绝对根，`export_design.f` 使用 `$OUT` 作为可移动根，`original_design.f` 绑定本次原始
+SourceSet 根。内部 staging 仍使用原有相对 canonical compile order 完成 strict compile 和
+byte-identical restore，临时目录不会泄露到公开 filelist。include-only 物理依赖仍只复制而不进入
+compile order。
 
 统计范围由 FAST 与 FULL 共用：提供 rewrite root 时取 SourceSet 已登记 physical files 与 rewrite roots 的有序交集；
 未提供时使用全部 physical files。该范围只影响 metrics、覆盖率、代码行数和加密率，完整 physical manifest、gate、

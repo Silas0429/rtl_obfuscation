@@ -61,6 +61,11 @@ STAGE_LABELS = (
     "生成映射",
     "写出加密结果",
     "逐字节回填校验",
+    "构建执行索引 [audit.execution]",
+    "计算加密指标 [audit.metrics]",
+    "组装结果报告 [audit.report]",
+    "原子发布输出",
+    "清理临时文件",
 )
 ELAPSED = re.compile(r"^\[\s*(\d+\.\d{3})s\] (开始|完成) (.+?)(?:（本阶段 \d+\.\d{3}s）)?$")
 POSITION = re.compile(r"^  (\S+):(\d+):(\d+)  (\S+)$")
@@ -143,7 +148,7 @@ class T116StdoutContractTests(unittest.TestCase):
                 "strict_compile_passed", "restored_byte_identical",
                 "effective_line_total", "affected_line_count", "symbol_coverage",
                 "occurrence_coverage", "plaintext_leakage_rate", "effective_coverage",
-                "rename", "preserve", "unsupported",
+                "rename", "preserve", "unsupported", "physical_files",
             },
         )
         # Not a vacuous run: this fixture really renames and really restores.
@@ -278,22 +283,24 @@ class T116StdoutContractTests(unittest.TestCase):
             ),
         )
 
-    def test_persisted_artifacts_are_unchanged_by_the_terminal_report(self):
-        """The gate must stay what it was: the report is stderr only."""
+    def test_persisted_summary_reuses_terminal_timing_and_result_text(self):
+        """The durable summary is the same evidence already shown on stderr."""
 
         summary_text = (self.gate / "encryption_summary.txt").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(
-            [line.split("：")[0] for line in summary_text.strip().splitlines()],
-            [
-                "改名对象（rename）", "保留对象（preserve）", "不支持对象（unsupported）",
-                "修改 token 数", "加密率", "实际加密行数", "总代码行数",
-                "加密类型数", "加密类型",
-            ],
-        )
-        self.assertNotIn("加密总结", summary_text)
-        self.assertNotIn("实际修改对象数", summary_text)
+        stderr_timing = [
+            line for line in self.result.stderr.splitlines() if ELAPSED.fullmatch(line)
+        ]
+        persisted_timing = [
+            line for line in summary_text.splitlines() if ELAPSED.fullmatch(line)
+        ]
+        self.assertEqual(persisted_timing, stderr_timing)
+        terminal_summary = "加密总结\n" + self.result.stderr.split("加密总结\n", 1)[1]
+        self.assertTrue(summary_text.endswith(terminal_summary))
+        self.assertIn("启动指令", summary_text)
+        self.assertIn("工作目录", summary_text)
+        self.assertIn("实际修改对象数", summary_text)
         self.assertFalse((self.gate / "progress.txt").exists())
 
     def test_quiet_silences_stderr_without_touching_stdout(self):

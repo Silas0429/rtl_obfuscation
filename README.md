@@ -47,8 +47,10 @@ SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、�
 
 编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
 `compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
-成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。时间只用于实时展示，不会写入
-mapping、metrics 或其他产物。
+成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行会把当前 Python
+executable、脚本、shell 已展开的完整 argv、工作目录以及这些计时行写入
+`encryption_summary.txt`；计时行与 stderr 逐行逐字符同源。`--quiet` 仅压制 stderr，不关闭
+持久化记录。失败或被 SIGKILL 的运行仍不会发布半成品 summary。
 
 加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
 总文件数 / 加密文件数 / 文件覆盖率，以及
@@ -193,8 +195,16 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 
 ## 输出、恢复和 schema
 
-输出目录包含加密 RTL、canonical `design.f`、`mapping.json`、`metrics.json`、
-`mapping_table.csv` 和 `encryption_summary.txt`。mapping 使用
+输出目录包含完整物理层级下的加密 RTL / 只读依赖、三份等价编译上下文 filelist、
+`mapping.json`、`metrics.json`、`mapping_table.csv` 和 `encryption_summary.txt`：
+
+- `design.f` 使用当前输出目录的绝对路径，可从任意工作目录直接使用；
+- `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
+- `original_design.f` 使用本次运行的原始物理绝对路径，便于 gold/gate 对照。
+
+三份 filelist 以相同顺序保存规范化 include directories、defines 和 `compile_order`，仅路径根表示
+不同。由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
+compilation unit。mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
 semantic kind、物理 declaration/occurrences、action 和 reason。
 

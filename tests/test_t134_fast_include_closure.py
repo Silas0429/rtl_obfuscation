@@ -72,8 +72,22 @@ class T134FastIncludeClosureTests(unittest.TestCase):
             self.assertTrue(all(item["action"] == "rename" for item in records.values()))
             self.assertEqual(report["source_set"]["included_files"], [INCLUDE])
             self.assertEqual(
-                (gate / "design.f").read_text(encoding="utf-8"),
-                "".join(f"{item}\n" for item in SOURCES),
+                (gate / "design.f").read_text(encoding="utf-8").splitlines(),
+                [
+                    "+define+T134_WIDTH=4",
+                    *((gate / item).resolve().as_posix() for item in SOURCES),
+                ],
+            )
+            self.assertEqual(
+                (gate / "export_design.f").read_text(encoding="utf-8").splitlines(),
+                ["+define+T134_WIDTH=4", *(f"$OUT/{item}" for item in SOURCES)],
+            )
+            self.assertEqual(
+                (gate / "original_design.f").read_text(encoding="utf-8").splitlines(),
+                [
+                    "+define+T134_WIDTH=4",
+                    *((FIXTURE / item).resolve().as_posix() for item in SOURCES),
+                ],
             )
 
             execution = report["mapping_execution"]

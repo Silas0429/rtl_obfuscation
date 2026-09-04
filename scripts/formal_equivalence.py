@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -28,13 +30,29 @@ def _top_name(value: str) -> str:
     return value
 
 
+@dataclass(frozen=True)
+class _FilelistContext:
+    files: tuple[Path, ...]
+    include_dirs: tuple[Path, ...]
+    defines: tuple[tuple[str, str], ...]
+
+
+def _read_verilog(context: _FilelistContext) -> str:
+    arguments = (
+        *(f"-I{path}" for path in context.include_dirs),
+        *(f"-D{name}={value}" for name, value in context.defines),
+        *(str(path) for path in context.files),
+    )
+    return "read_verilog -sv -formal -defer " + " ".join(arguments)
+
+
 def _yosys_script_multifile(
-    gold_files: list[Path], gate_files: list[Path], top: str, seq: int
+    gold: _FilelistContext, gate: _FilelistContext, top: str, seq: int
 ) -> str:
-    gold_paths = " ".join(str(f) for f in gold_files)
-    gate_paths = " ".join(str(f) for f in gate_files)
+    gold_read = _read_verilog(gold)
+    gate_read = _read_verilog(gate)
     return f"""
-read_verilog -sv -formal -defer {gold_paths}
+{gold_read}
 prep -top {top} -flatten
 async2sync
 memory_map -formal
@@ -43,7 +61,7 @@ rename {top} gold
 design -stash gold_design
 design -reset
 
-read_verilog -sv -formal -defer {gate_paths}
+{gate_read}
 prep -top {top} -flatten
 async2sync
 memory_map -formal
@@ -92,7 +110,18 @@ equiv_status -assert
 """
 
 
-def _resolve_filelist(filelist_path: Path, root: Path) -> list[Path]:
+def _safe_yosys_argument(
+    value: str, *, label: str, allow_empty: bool = False
+) -> str:
+    if (not value and not allow_empty) or any(
+        character.isspace() or character in {'"', ";", "`"}
+        for character in value
+    ):
+        raise argparse.ArgumentTypeError(f"formal {label} is not shell-safe")
+    return value
+
+
+def _resolve_filelist(filelist_path: Path, root: Path) -> _FilelistContext:
     # filelist_path: try cwd first, then root
     resolved_filelist = filelist_path.resolve()
     if not resolved_filelist.is_file():
@@ -100,18 +129,44 @@ def _resolve_filelist(filelist_path: Path, root: Path) -> list[Path]:
     if not resolved_filelist.is_file():
         raise argparse.ArgumentTypeError(f"filelist does not exist: {filelist_path}")
     lines = resolved_filelist.read_text(encoding="utf-8").strip().splitlines()
-    files = []
+    files: list[Path] = []
+    include_dirs: list[Path] = []
+    defines: list[tuple[str, str]] = []
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        resolved = (root / line).resolve()
+        expanded = os.path.expandvars(line)
+        if expanded.startswith("+incdir+"):
+            raw = _safe_yosys_argument(
+                expanded[len("+incdir+") :], label="include directory"
+            )
+            resolved_dir = Path(raw).resolve() if Path(raw).is_absolute() else (root / raw).resolve()
+            if not resolved_dir.is_dir():
+                raise argparse.ArgumentTypeError(
+                    f"include directory does not exist: {resolved_dir}"
+                )
+            include_dirs.append(resolved_dir)
+            continue
+        if expanded.startswith("+define+"):
+            payload = expanded[len("+define+") :]
+            name, separator, value = payload.partition("=")
+            if SIMPLE_IDENTIFIER.fullmatch(name) is None:
+                raise argparse.ArgumentTypeError(f"invalid formal define: {payload}")
+            definition = value if separator else "1"
+            _safe_yosys_argument(
+                definition, label="define value", allow_empty=True
+            )
+            defines.append((name, definition))
+            continue
+        raw = _safe_yosys_argument(expanded, label="input path")
+        resolved = Path(raw).resolve() if Path(raw).is_absolute() else (root / raw).resolve()
         if not resolved.is_file():
             raise argparse.ArgumentTypeError(f"file does not exist: {resolved}")
-        if any(c.isspace() or c in {'"', ';'} for c in str(resolved)):
-            raise argparse.ArgumentTypeError("formal input paths cannot contain whitespace, quotes, or semicolons")
         files.append(resolved)
-    return files
+    if not files:
+        raise argparse.ArgumentTypeError("filelist has no source entries")
+    return _FilelistContext(tuple(files), tuple(include_dirs), tuple(defines))
 
 
 def main() -> int:
@@ -167,10 +222,10 @@ def main() -> int:
         )
         return 0
     elif multi_mode and not single_mode:
-        gold_files = _resolve_filelist(args.gold_filelist, args.gold_root)
-        gate_files = _resolve_filelist(args.gate_filelist, args.gate_root)
+        gold_context = _resolve_filelist(args.gold_filelist, args.gold_root)
+        gate_context = _resolve_filelist(args.gate_filelist, args.gate_root)
         process = subprocess.run(
-            ["yosys", "-Q", "-p", _yosys_script_multifile(gold_files, gate_files, args.top, args.seq)],
+            ["yosys", "-Q", "-p", _yosys_script_multifile(gold_context, gate_context, args.top, args.seq)],
             capture_output=True,
             text=True,
             check=False,

@@ -162,8 +162,12 @@ def _parse_source_set(value: object, root: Path) -> SourceSet:
     sequence_keys = ("ordered_source_files", "included_files", "include_dirs", "top_closure_files", "compile_order")
     if any(not isinstance(value[key], list) or not all(isinstance(item, str) for item in value[key]) for key in sequence_keys):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set sequence is invalid")
-    if any(not _portable_file(item) for key in sequence_keys for item in value[key]):
-        _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set path is not portable")
+    for key in sequence_keys:
+        if any(
+            not _portable_file(item) and not (key == "include_dirs" and item == ".")
+            for item in value[key]
+        ):
+            _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set path is not portable")
     if not isinstance(value["defines"], list):
         _fail("RESTORE_VNEXT_INPUT_INVALID", "source_set defines are invalid")
     defines: list[tuple[str, str]] = []
@@ -300,6 +304,11 @@ def _manifest(data: dict[str, bytes], files: tuple[str, ...]) -> tuple[InputFile
 
 def _validate_gate_files(gate: Path, files: tuple[str, ...], report_path: Path) -> None:
     expected = set(files) | {"design.f"}
+    delivery_views = {"export_design.f", "original_design.f"}
+    present_views = {name for name in delivery_views if (gate / name).is_file()}
+    if present_views and present_views != delivery_views:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "gate filelist views are incomplete")
+    expected.update(present_views)
     for name in ("mapping.json", "metrics.json", "mapping_table.csv", "encryption_summary.txt"):
         path = gate / name
         if path.exists():
@@ -309,6 +318,99 @@ def _validate_gate_files(gate: Path, files: tuple[str, ...], report_path: Path) 
         _fail("RESTORE_VNEXT_GATE_INVALID", "gate file set is invalid")
     if (gate / "mapping.json").exists() and (gate / "mapping.json").resolve() != report_path.resolve():
         _fail("RESTORE_VNEXT_GATE_INVALID", "gate mapping.json differs from requested report")
+
+
+def _context_filelist_lines(
+    source_set: SourceSet,
+    *,
+    root: Path | None = None,
+    environment_root: str | None = None,
+) -> tuple[str, ...]:
+    if (root is None) == (environment_root is None):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "filelist root is invalid")
+
+    def path(entry: str) -> str:
+        if environment_root is not None:
+            if entry == ".":
+                return environment_root
+            return f"{environment_root}/{entry}"
+        assert root is not None
+        return (root / entry).resolve().as_posix()
+
+    return (
+        *(f"+incdir+{path(item)}" for item in source_set.include_dirs),
+        *(f"+define+{name}={value}" for name, value in source_set.defines),
+        *(path(item) for item in source_set.compile_order),
+    )
+
+
+def _read_filelist_lines(path: Path) -> tuple[str, ...]:
+    try:
+        return tuple(
+            line for line in path.read_text(encoding="utf-8").splitlines() if line
+        )
+    except (OSError, UnicodeError) as error:
+        _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
+
+
+def _root_before_suffix(value: str, suffix: str) -> Path:
+    path = Path(value)
+    if suffix == ".":
+        if not path.is_absolute():
+            _fail("RESTORE_VNEXT_GATE_INVALID", "original filelist path is invalid")
+        return path
+    suffix_parts = Path(suffix).parts
+    path_parts = path.parts
+    if (
+        not path.is_absolute()
+        or not suffix_parts
+        or len(path_parts) <= len(suffix_parts)
+        or path_parts[-len(suffix_parts) :] != suffix_parts
+    ):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "original filelist path is invalid")
+    return Path(*path_parts[: -len(suffix_parts)])
+
+
+def _validate_original_filelist(
+    lines: tuple[str, ...], source_set: SourceSet
+) -> None:
+    include_count = len(source_set.include_dirs)
+    define_count = len(source_set.defines)
+    if len(lines) != include_count + define_count + len(source_set.compile_order):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "original filelist shape is invalid")
+    roots: list[Path] = []
+    for line, item in zip(lines[:include_count], source_set.include_dirs):
+        if not line.startswith("+incdir+"):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "original include directory is invalid")
+        roots.append(_root_before_suffix(line[len("+incdir+") :], item))
+    define_lines = lines[include_count : include_count + define_count]
+    expected_defines = tuple(
+        f"+define+{name}={value}" for name, value in source_set.defines
+    )
+    if define_lines != expected_defines:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "original defines differ from SourceSet")
+    compile_lines = lines[include_count + define_count :]
+    for line, item in zip(compile_lines, source_set.compile_order):
+        roots.append(_root_before_suffix(line, item))
+    if not roots or any(root != roots[0] for root in roots[1:]):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "original filelist roots are inconsistent")
+
+
+def _validate_gate_filelists(gate_path: Path, source_set: SourceSet) -> None:
+    design = _read_filelist_lines(gate_path / "design.f")
+    export_path = gate_path / "export_design.f"
+    original_path = gate_path / "original_design.f"
+    if not export_path.exists() and not original_path.exists():
+        if design != tuple(source_set.compile_order):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "gate design.f differs from compile order")
+        return
+    if design != _context_filelist_lines(source_set, root=gate_path):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "gate design.f differs from delivery context")
+    if _read_filelist_lines(export_path) != _context_filelist_lines(
+        source_set, environment_root="$OUT"
+    ):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "export filelist differs from delivery context")
+    _validate_original_filelist(_read_filelist_lines(original_path), source_set)
 
 
 def _validate_per_file(execution: dict[str, object], records: tuple[MappingRecord, ...], files: tuple[str, ...], gate_data: dict[str, bytes]) -> dict[str, list[tuple[int, int, bytes]]]:
@@ -383,12 +485,7 @@ def _load_inputs(report_path: Path, gate_path: Path) -> tuple[dict[str, object],
     files = _files(source_set)
     _validate_gate_files(gate_path, files, report_path)
     gate_data = _read_files(gate_path, files)
-    try:
-        design = tuple(line for line in (gate_path / "design.f").read_text(encoding="utf-8").splitlines() if line)
-    except (OSError, UnicodeError) as error:
-        _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
-    if design != tuple(source_set.compile_order):
-        _fail("RESTORE_VNEXT_GATE_INVALID", "gate design.f differs from compile order")
+    _validate_gate_filelists(gate_path, source_set)
     original_records = _parse_mapping_report(report["mapping"], source_set=source_set, source_data=None)
     execution = report.get("mapping_execution")
     if not isinstance(execution, dict) or not isinstance(execution.get("mapping"), dict):

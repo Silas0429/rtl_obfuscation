@@ -11,11 +11,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 import unicodedata
 
 from rtl_obfuscator import orchestration_vnext
@@ -825,44 +826,6 @@ def _cli_vnext_renamed_categories(records: list[dict[str, Any]]) -> tuple[str, .
     )
 
 
-def _cli_vnext_encryption_summary(
-    report: dict[str, Any],
-    metrics_report: dict[str, Any],
-) -> str:
-    mapping = report.get("mapping")
-    records = mapping.get("records") if isinstance(mapping, dict) else None
-    summary = report.get("summary")
-    effective_lines = metrics_report.get("effective_lines")
-    affected_lines = metrics_report.get("affected_lines")
-    if (
-        not isinstance(records, list)
-        or not isinstance(summary, dict)
-        or type(summary.get("modified_tokens")) is not int
-        or not isinstance(effective_lines, dict)
-        or not isinstance(affected_lines, dict)
-        or type(effective_lines.get("total")) is not int
-        or type(affected_lines.get("changed")) is not int
-        or isinstance(affected_lines.get("rate"), bool)
-        or not isinstance(affected_lines.get("rate"), (int, float))
-    ):
-        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
-    action_counts = _cli_vnext_action_counts(report)
-    categories = _cli_vnext_renamed_categories(records)
-    return "\n".join(
-        (
-            f"改名对象（rename）：{action_counts['rename']}",
-            f"保留对象（preserve）：{action_counts['preserve']}",
-            f"不支持对象（unsupported）：{action_counts['unsupported']}",
-            f"修改 token 数：{summary['modified_tokens']}",
-            f"加密率：{affected_lines['rate']}",
-            f"实际加密行数：{affected_lines['changed']}",
-            f"总代码行数：{effective_lines['total']}",
-            f"加密类型数：{len(categories)}",
-            f"加密类型：{', '.join(categories)}",
-        )
-    ) + "\n"
-
-
 class _CliVNextProgress:
     """The one stage clock and the one stderr writer of the encryption CLI.
 
@@ -907,6 +870,7 @@ class _CliVNextProgress:
         self._origin = time.monotonic()
         self._elapsed = 0.0
         self._begun: dict[str, float] = {}
+        self._timing_lines: list[str] = []
 
     def elapsed(self) -> float:
         value = time.monotonic() - self._origin
@@ -930,12 +894,19 @@ class _CliVNextProgress:
         if phase == "begin":
             self._begun[stage] = now
             suffix = f" [{stage}]" if "." in stage else ""
-            self.write(f"[{now:7.3f}s] 开始 {label}{suffix}\n")
-            return
-        started = self._begun.get(stage)
-        spent = "" if started is None else f"（本阶段 {now - started:.3f}s）"
-        suffix = f" [{stage}]" if "." in stage else ""
-        self.write(f"[{now:7.3f}s] 完成 {label}{suffix}{spent}\n")
+            line = f"[{now:7.3f}s] 开始 {label}{suffix}\n"
+        else:
+            started = self._begun.get(stage)
+            spent = "" if started is None else f"（本阶段 {now - started:.3f}s）"
+            suffix = f" [{stage}]" if "." in stage else ""
+            line = f"[{now:7.3f}s] 完成 {label}{suffix}{spent}\n"
+        # Generate the text once.  The exact same object feeds stderr now and
+        # the persisted run record after the atomic work has completed.
+        self._timing_lines.append(line)
+        self.write(line)
+
+    def timing_text(self) -> str:
+        return "".join(self._timing_lines)
 
 
 _CLI_VNEXT_REPORT_LABEL_WIDTH = 26
@@ -1081,6 +1052,63 @@ def _cli_vnext_terminal_report(report: dict[str, Any], *, elapsed: float) -> str
     return "加密总结\n\n" + body + "\n\n" + footnote
 
 
+def _cli_vnext_effective_command() -> str:
+    """Return the executable, script, and shell-expanded argv of this run."""
+
+    executable = Path(sys.executable).expanduser().resolve().as_posix()
+    arguments = [executable, *sys.argv]
+    if arguments[1]:
+        try:
+            arguments[1] = Path(arguments[1]).expanduser().resolve().as_posix()
+        except (OSError, RuntimeError, ValueError):
+            pass
+    return shlex.join(arguments)
+
+
+def _cli_vnext_persisted_summary(
+    progress: _CliVNextProgress,
+    *,
+    command: str,
+    working_directory: str,
+    terminal_summary: str,
+) -> str:
+    """One durable record assembled only from already-generated display text."""
+
+    return (
+        "运行信息\n\n"
+        f"  启动指令  {command}\n"
+        f"  工作目录  {working_directory}\n\n"
+        "阶段耗时\n\n"
+        f"{progress.timing_text()}\n"
+        f"{terminal_summary}"
+    )
+
+
+def _cli_vnext_filelist(
+    source_set: object,
+    *,
+    root: Path | None = None,
+    environment_root: str | None = None,
+) -> str:
+    """Render one canonical context view without changing compile membership."""
+
+    if (root is None) == (environment_root is None):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+
+    def path(entry: str) -> str:
+        if environment_root is not None:
+            if entry == ".":
+                return environment_root
+            return f"{environment_root}/{entry}"
+        assert root is not None
+        return (root / entry).resolve().as_posix()
+
+    lines = [f"+incdir+{path(item)}" for item in source_set.include_dirs]
+    lines.extend(f"+define+{name}={value}" for name, value in source_set.defines)
+    lines.extend(path(item) for item in source_set.compile_order)
+    return "".join(f"{line}\n" for line in lines)
+
+
 def _cli_vnext_remove(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
@@ -1088,7 +1116,11 @@ def _cli_vnext_remove(path: Path) -> None:
         path.unlink()
 
 
-def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
+def _cli_vnext_publish(
+    artifacts: list[tuple[Path, Path]],
+    *,
+    before_commit: Callable[[dict[Path, Path]], None] | None = None,
+) -> None:
     prepared: list[tuple[Path, Path, bool]] = []
     success = False
     try:
@@ -1100,6 +1132,10 @@ def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
             else:
                 shutil.copy2(source, payload)
             prepared.append((container, target, False))
+        if before_commit is not None:
+            before_commit(
+                {target: container / "payload" for container, target, _ in prepared}
+            )
         for index, (container, target, _published) in enumerate(prepared):
             if target.exists() or target.is_symlink():
                 _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID")
@@ -1122,6 +1158,8 @@ def _cli_vnext_publish(artifacts: list[tuple[Path, Path]]) -> None:
 
 def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
     progress = _CliVNextProgress(quiet=bool(getattr(args, "quiet", False)))
+    effective_command = _cli_vnext_effective_command()
+    working_directory = Path.cwd().resolve().as_posix()
     (
         source_root,
         (output_dir, map_file, metrics_file),
@@ -1139,6 +1177,8 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         metrics_file=metrics_file,
     )
     progress.stage("source_set", "end")
+    cleanup_complete = False
+    terminal_summary: str | None = None
     try:
         staging_root = Path(tempfile.mkdtemp(prefix="rtl-obfuscation-cli-vnext-"))
     except OSError as error:
@@ -1182,16 +1222,28 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         staged_map = gate_dir / "mapping.json" if map_default else staging_root / "orchestration.json"
         staged_metrics = gate_dir / "metrics.json" if metrics_default else staging_root / "metrics.json"
         staged_mapping_table = gate_dir / "mapping_table.csv"
-        staged_encryption_summary = gate_dir / "encryption_summary.txt"
         _cli_vnext_write_json_atomic(staged_map, report)
         _cli_vnext_write_json_atomic(staged_metrics, metrics_report)
         _cli_vnext_write_text_atomic(
             staged_mapping_table,
             _cli_vnext_mapping_table(report),
         )
+        try:
+            for include_dir in source_set.include_dirs:
+                (gate_dir / include_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
         _cli_vnext_write_text_atomic(
-            staged_encryption_summary,
-            _cli_vnext_encryption_summary(report, metrics_report),
+            gate_dir / "design.f",
+            _cli_vnext_filelist(source_set, root=output_dir),
+        )
+        _cli_vnext_write_text_atomic(
+            gate_dir / "export_design.f",
+            _cli_vnext_filelist(source_set, environment_root="$OUT"),
+        )
+        _cli_vnext_write_text_atomic(
+            gate_dir / "original_design.f",
+            _cli_vnext_filelist(source_set, root=source_set.source_root),
         )
         artifacts = [(gate_dir, output_dir)]
         if not map_default:
@@ -1199,9 +1251,31 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
         if not metrics_default:
             artifacts.append((staged_metrics, metrics_file))
         progress.stage("publish", "begin")
-        _cli_vnext_publish(artifacts)
-        progress.stage("publish", "end")
-        progress.write(_cli_vnext_terminal_report(report, elapsed=progress.elapsed()))
+
+        def finalize_prepared_artifacts(prepared: dict[Path, Path]) -> None:
+            nonlocal cleanup_complete, terminal_summary
+            progress.stage("publish", "end")
+            progress.stage("cleanup", "begin")
+            shutil.rmtree(staging_root, ignore_errors=True)
+            progress.stage("cleanup", "end")
+            cleanup_complete = True
+            total_elapsed = progress.elapsed()
+            terminal_summary = _cli_vnext_terminal_report(
+                report, elapsed=total_elapsed
+            )
+            _cli_vnext_write_text_atomic(
+                prepared[output_dir] / "encryption_summary.txt",
+                _cli_vnext_persisted_summary(
+                    progress,
+                    command=effective_command,
+                    working_directory=working_directory,
+                    terminal_summary=terminal_summary,
+                ),
+            )
+
+        _cli_vnext_publish(artifacts, before_commit=finalize_prepared_artifacts)
+        assert terminal_summary is not None
+        progress.write(terminal_summary)
         return {
             "format": "rtl-obfuscation.cli-vnext",
             "schema_version": 2,
@@ -1210,9 +1284,10 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             "summary": summary,
         }
     finally:
-        progress.stage("cleanup", "begin")
-        shutil.rmtree(staging_root, ignore_errors=True)
-        progress.stage("cleanup", "end")
+        if not cleanup_complete:
+            progress.stage("cleanup", "begin")
+            shutil.rmtree(staging_root, ignore_errors=True)
+            progress.stage("cleanup", "end")
 
 
 def _decrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
