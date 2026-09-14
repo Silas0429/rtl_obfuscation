@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -28,13 +30,29 @@ def _top_name(value: str) -> str:
     return value
 
 
+@dataclass(frozen=True)
+class _FilelistContext:
+    files: tuple[Path, ...]
+    include_dirs: tuple[Path, ...]
+    defines: tuple[tuple[str, str], ...]
+
+
+def _read_verilog(context: _FilelistContext) -> str:
+    arguments = (
+        *(f"-I{path}" for path in context.include_dirs),
+        *(f"-D{name}={value}" for name, value in context.defines),
+        *(str(path) for path in context.files),
+    )
+    return "read_verilog -sv -formal -defer " + " ".join(arguments)
+
+
 def _yosys_script_multifile(
-    gold_files: list[Path], gate_files: list[Path], top: str, seq: int
+    gold: _FilelistContext, gate: _FilelistContext, top: str, seq: int
 ) -> str:
-    gold_paths = " ".join(str(f) for f in gold_files)
-    gate_paths = " ".join(str(f) for f in gate_files)
+    gold_read = _read_verilog(gold)
+    gate_read = _read_verilog(gate)
     return f"""
-read_verilog -sv -formal -defer {gold_paths}
+{gold_read}
 prep -top {top} -flatten
 async2sync
 memory_map -formal
@@ -43,7 +61,7 @@ rename {top} gold
 design -stash gold_design
 design -reset
 
-read_verilog -sv -formal -defer {gate_paths}
+{gate_read}
 prep -top {top} -flatten
 async2sync
 memory_map -formal
@@ -92,26 +110,121 @@ equiv_status -assert
 """
 
 
-def _resolve_filelist(filelist_path: Path, root: Path) -> list[Path]:
+def _safe_yosys_argument(
+    value: str, *, label: str, allow_empty: bool = False
+) -> str:
+    if (not value and not allow_empty) or any(
+        character.isspace() or character in {'"', ";", "`"}
+        for character in value
+    ):
+        raise argparse.ArgumentTypeError(f"formal {label} is not shell-safe")
+    return value
+
+
+def _resolve_filelist(filelist_path: Path, root: Path) -> _FilelistContext:
     # filelist_path: try cwd first, then root
     resolved_filelist = filelist_path.resolve()
     if not resolved_filelist.is_file():
         resolved_filelist = (root / filelist_path).resolve()
     if not resolved_filelist.is_file():
         raise argparse.ArgumentTypeError(f"filelist does not exist: {filelist_path}")
-    lines = resolved_filelist.read_text(encoding="utf-8").strip().splitlines()
-    files = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        resolved = (root / line).resolve()
-        if not resolved.is_file():
-            raise argparse.ArgumentTypeError(f"file does not exist: {resolved}")
-        if any(c.isspace() or c in {'"', ';'} for c in str(resolved)):
-            raise argparse.ArgumentTypeError("formal input paths cannot contain whitespace, quotes, or semicolons")
-        files.append(resolved)
-    return files
+    files: list[Path] = []
+    include_dirs: list[Path] = []
+    defines: list[tuple[str, str]] = []
+
+    def resolved_path(raw: str, *, base: Path, label: str) -> Path:
+        safe = _safe_yosys_argument(os.path.expandvars(raw), label=label)
+        path = Path(safe)
+        return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+    def visit(current: Path, active: tuple[Path, ...], entry_base: Path) -> None:
+        canonical = current.resolve()
+        if canonical in active:
+            raise argparse.ArgumentTypeError(
+                f"filelist includes itself through a recursive -f chain: {canonical}"
+            )
+        if not canonical.is_file():
+            raise argparse.ArgumentTypeError(f"filelist does not exist: {canonical}")
+        next_active = (*active, canonical)
+        for raw_line in canonical.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+            tokens = line.split()
+            if tokens[0] == "-f":
+                if len(tokens) != 2:
+                    raise argparse.ArgumentTypeError(
+                        "-f requires exactly one filelist path"
+                    )
+                nested = resolved_path(
+                    tokens[1], base=entry_base, label="nested filelist"
+                )
+                visit(nested, next_active, nested.parent)
+                continue
+            if tokens[0] == "-v":
+                if len(tokens) != 2:
+                    raise argparse.ArgumentTypeError(
+                        "-v requires exactly one source path"
+                    )
+                source = resolved_path(
+                    tokens[1], base=entry_base, label="input path"
+                )
+                if not source.is_file():
+                    raise argparse.ArgumentTypeError(
+                        f"file does not exist: {source}"
+                    )
+                files.append(source)
+                continue
+            if line.startswith("+incdir+"):
+                paths = line[len("+incdir+") :].split("+")
+                if not paths or any(not path for path in paths):
+                    raise argparse.ArgumentTypeError(
+                        "+incdir+ requires one or more directory paths"
+                    )
+                for raw in paths:
+                    resolved_dir = resolved_path(
+                        raw, base=entry_base, label="include directory"
+                    )
+                    if not resolved_dir.is_dir():
+                        raise argparse.ArgumentTypeError(
+                            f"include directory does not exist: {resolved_dir}"
+                        )
+                    include_dirs.append(resolved_dir)
+                continue
+            if line.startswith("+define+"):
+                payloads = line[len("+define+") :].split("+")
+                if not payloads or any(not payload for payload in payloads):
+                    raise argparse.ArgumentTypeError(
+                        "+define+ requires one or more NAME[=VALUE] definitions"
+                    )
+                for payload in payloads:
+                    expanded = os.path.expandvars(payload)
+                    name, separator, value = expanded.partition("=")
+                    if SIMPLE_IDENTIFIER.fullmatch(name) is None:
+                        raise argparse.ArgumentTypeError(
+                            f"invalid formal define: {payload}"
+                        )
+                    definition = value if separator else "1"
+                    _safe_yosys_argument(
+                        definition, label="define value", allow_empty=True
+                    )
+                    defines.append((name, definition))
+                continue
+            if len(tokens) != 1 or line.startswith(("+", "-")):
+                raise argparse.ArgumentTypeError(
+                    f"unsupported formal filelist entry: {line}"
+                )
+            source = resolved_path(
+                tokens[0], base=entry_base, label="input path"
+            )
+            if not source.is_file():
+                raise argparse.ArgumentTypeError(f"file does not exist: {source}")
+            files.append(source)
+
+    visit(resolved_filelist, (), root.resolve())
+    if not files:
+        raise argparse.ArgumentTypeError("filelist has no source entries")
+    return _FilelistContext(tuple(files), tuple(include_dirs), tuple(defines))
 
 
 def main() -> int:
@@ -167,10 +280,10 @@ def main() -> int:
         )
         return 0
     elif multi_mode and not single_mode:
-        gold_files = _resolve_filelist(args.gold_filelist, args.gold_root)
-        gate_files = _resolve_filelist(args.gate_filelist, args.gate_root)
+        gold_context = _resolve_filelist(args.gold_filelist, args.gold_root)
+        gate_context = _resolve_filelist(args.gate_filelist, args.gate_root)
         process = subprocess.run(
-            ["yosys", "-Q", "-p", _yosys_script_multifile(gold_files, gate_files, args.top, args.seq)],
+            ["yosys", "-Q", "-p", _yosys_script_multifile(gold_context, gate_context, args.top, args.seq)],
             capture_output=True,
             text=True,
             check=False,

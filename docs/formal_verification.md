@@ -30,22 +30,28 @@ Formal 输入必须满足：
 - 原始 RTL 与加密 RTL 使用相同的 top module 名称；
 - top 的端口和端口方向保持一致；
 - 多文件工程使用相同的编译顺序和等价的宏/include 设置；
-- filelist 中的路径相对于各自的 `--gold-root` 或 `--gate-root` 可找到。
+- 顶层 filelist 的相对路径相对于各自的 `--gold-root` / `--gate-root` 解析；nested `-f` 内的
+  相对路径相对于 nested filelist 所在目录解析。filelist 也支持绝对路径、`-v PATH`、
+  `+incdir+A+B`、`+define+NAME=VALUE`，并递归处理 `-f`。
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
-- canonical `design.f` 使用加密输出的完整 `compile_order`：显式列出的 `.h/.svh/.vh` header/context
-  以及显式 filelist-only `.vic` 参数 context 前导在 source unit 之前；由 `` `include`` 发现但未
-  显式列出的 header 仍随 gate 保留，不写入 `design.f`。source/header 可 include 已显式列入
-  `design.f` 的同一规范化 `.vic` 路径；include-only `.vic` 仍不支持。
+- 公开 `--filelist` 的 `original_design.f` 保留顶层输入逐字节内容，`design.f` 使用 gate 绝对路径，
+  `export_design.f` 使用 `$OUT`；reachable nested `-f` 结构和顺序保持不变。由 `` `include`` 发现但未
+  显式列出的 header 仍随 gate 保留，但不会增加 filelist 条目。CLI 另外提供的 include-dir / define
+  不写入视图；本脚本没有对应的 `--include-dir` / `--define` 参数，需要使用分别补齐上下文的
+  gold/gate 包装 filelist，或由下游 EDA 命令自行提供这些选项。
+- 三视图路径使用当前 filelist 语法的裸 token；为避免生成无法重放的路径，`--output-dir` 含空白时
+  会在加密前拒绝。custom `--map` / `--metrics` 路径不受该 filelist 路径限制。
 
 ## 多文件项目：推荐命令
 
-加密时保留原始 filelist，并让工具在输出目录生成加密后的 `design.f`：
+加密成功后工具在输出目录同时生成三份上下文视图：
 
 ```sh
 python rtl_encrypt.py \
   --filelist <原始项目>/design.f \
   --top <top_module> \
+  --category signals \
   --output-dir <工作目录>/gate
 ```
 
@@ -53,7 +59,7 @@ python rtl_encrypt.py \
 
 ```sh
 python scripts/formal_equivalence.py \
-  --gold-filelist <原始项目>/design.f \
+  --gold-filelist <工作目录>/gate/original_design.f \
   --gold-root <原始项目> \
   --gate-filelist <工作目录>/gate/design.f \
   --gate-root <工作目录>/gate \
@@ -62,6 +68,8 @@ python scripts/formal_equivalence.py \
 ```
 
 `--seq 5` 是默认的时序证明深度；如果项目需要更深的时序展开，可以改为更大的正整数。
+`--gold-root` 通常填写原始输入顶层 filelist 所在的项目目录；它只作为顶层相对 entry 的解析基准，
+nested filelist 内的相对 entry 仍以 nested 文件所在目录为基准。
 
 ## 单文件：简化命令
 
@@ -70,11 +78,12 @@ python scripts/formal_equivalence.py \
 ```sh
 python rtl_encrypt.py \
   --input <原始目录>/design.sv \
+  --category signals \
   --output-dir <工作目录>/gate
 
 python scripts/formal_equivalence.py \
   --gold <原始目录>/design.sv \
-  --gate <工作目录>/gate/rtl/design.sv \
+  --gate <工作目录>/gate/design.sv \
   --top <top_module> \
   --seq 5
 ```

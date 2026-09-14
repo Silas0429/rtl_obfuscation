@@ -48,6 +48,7 @@ from rtl_obfuscator.source_set import (
     from_project_root,
     from_single_file,
     infer_filelist_root,
+    render_filelist_path_views,
 )
 def _write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,6 +407,11 @@ def _cli_vnext_output_path(value: object, option: str) -> Path:
         path = candidate.resolve()
     except (OSError, RuntimeError, TypeError) as error:
         _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", f"{option}: {error}")
+    if option == "--output-dir" and any(character.isspace() for character in path.as_posix()):
+        _cli_vnext_fail(
+            "CLI_VNEXT_OUTPUT_INVALID",
+            f"{option}: path cannot be represented by the supported filelist syntax",
+        )
     if path.exists() or path.is_symlink() or not path.parent.is_dir():
         _cli_vnext_fail("CLI_VNEXT_OUTPUT_INVALID", option)
     return path
@@ -732,9 +738,9 @@ def _cli_vnext_write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
 
 
-def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
+def _cli_vnext_write_bytes_atomic(path: Path, payload: bytes) -> None:
     try:
-        payload = value.encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
@@ -755,6 +761,10 @@ def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
             raise
     except (OSError, TypeError, ValueError, UnicodeError) as error:
         _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+
+
+def _cli_vnext_write_text_atomic(path: Path, value: str) -> None:
+    _cli_vnext_write_bytes_atomic(path, value.encode("utf-8"))
 
 
 def _cli_vnext_mapping_table(
@@ -1082,6 +1092,31 @@ def _cli_vnext_persisted_summary(
     )
 
 
+def _cli_vnext_filelist(
+    source_set: object,
+    *,
+    root: Path | None = None,
+    environment_root: str | None = None,
+) -> str:
+    """Render one canonical context view without changing compile membership."""
+
+    if (root is None) == (environment_root is None):
+        _cli_vnext_fail("CLI_VNEXT_ORCHESTRATION_INVALID")
+
+    def path(entry: str) -> str:
+        if environment_root is not None:
+            if entry == ".":
+                return environment_root
+            return f"{environment_root}/{entry}"
+        assert root is not None
+        return (root / entry).resolve().as_posix()
+
+    lines = [f"+incdir+{path(item)}" for item in source_set.include_dirs]
+    lines.extend(f"+define+{name}={value}" for name, value in source_set.defines)
+    lines.extend(path(item) for item in source_set.compile_order)
+    return "".join(f"{line}\n" for line in lines)
+
+
 def _cli_vnext_remove(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
@@ -1200,6 +1235,52 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             staged_mapping_table,
             _cli_vnext_mapping_table(report),
         )
+        if bool(getattr(args, "public_cli", False)) and args.filelist is not None:
+            try:
+                filelist_views = render_filelist_path_views(
+                    filelist=Path(args.filelist),
+                    source_root=source_set.source_root,
+                    output_root=output_dir,
+                )
+            except SourceSetError as error:
+                _cli_vnext_fail_source_set(
+                    error,
+                    source_set.source_root,
+                    filelist=Path(args.filelist),
+                    source_root=source_set.source_root,
+                )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "design.f", filelist_views.design
+            )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "export_design.f", filelist_views.export
+            )
+            _cli_vnext_write_bytes_atomic(
+                gate_dir / "original_design.f", filelist_views.original
+            )
+            for relative, payload in filelist_views.design_nested:
+                _cli_vnext_write_bytes_atomic(
+                    gate_dir / ".rtl_obfuscation/filelists/design" / relative,
+                    payload,
+                )
+            for relative, payload in filelist_views.export_nested:
+                _cli_vnext_write_bytes_atomic(
+                    gate_dir / ".rtl_obfuscation/filelists/export" / relative,
+                    payload,
+                )
+        else:
+            _cli_vnext_write_text_atomic(
+                gate_dir / "design.f",
+                _cli_vnext_filelist(source_set, root=output_dir),
+            )
+            _cli_vnext_write_text_atomic(
+                gate_dir / "export_design.f",
+                _cli_vnext_filelist(source_set, environment_root="$OUT"),
+            )
+            _cli_vnext_write_text_atomic(
+                gate_dir / "original_design.f",
+                _cli_vnext_filelist(source_set, root=source_set.source_root),
+            )
         artifacts = [(gate_dir, output_dir)]
         if not map_default:
             artifacts.append((staged_map, map_file))

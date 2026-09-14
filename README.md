@@ -93,7 +93,9 @@ compilation-unit 参数上下文；显式列出后，source/header 可 `` `inclu
 仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
 自动发现。`-f` 嵌套 filelist、
 `+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
-`--source-root`；源码根目录由 filelist 和 include 路径自动推导。
+`--source-root`；源码根目录由 filelist 和 include 路径自动推导。当前 filelist 语法没有引号或反斜杠
+转义层；原值或环境变量展开后含空白的 `+incdir+` token 会 fail-closed 拒绝。CLI 单独提供的
+`--include-dir` / `--define` 不会注入交付 filelist 视图，下游编译时仍须另行传入。
 
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
@@ -176,8 +178,19 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 
 ## 输出、恢复和 schema
 
-输出目录包含加密 RTL、canonical `design.f`、`mapping.json`、`metrics.json`、
-`mapping_table.csv` 和 `encryption_summary.txt`。mapping 使用
+输出目录包含加密 RTL、三份编译上下文 filelist、`mapping.json`、`metrics.json`、
+`mapping_table.csv` 和 `encryption_summary.txt`。显式 `--filelist` 模式下：
+
+- `original_design.f` 是顶层输入 filelist 的逐字节副本；
+- `design.f` 保留原始行序、注释、空行、`-v`、`-f`、`+incdir+` 和 `+define+`，只把路径替换成 gate 绝对路径；
+- `export_design.f` 使用 `$OUT`，可在移动后的交付目录中编译；reachable nested filelist 分别镜像到
+  `.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`。
+
+include-only 物理依赖会复制到 gate，但不会新增 compile entry。`--input` 与
+`--source-root + --top` 没有原始 filelist，三份文件使用 canonical include/define/compile_order 视图。
+由于当前 filelist 语法不提供引号/转义层，`--output-dir` 的绝对路径含空白时会在发布前拒绝；custom
+`--map` / `--metrics` 路径仍可含空白。
+mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
 semantic kind、物理 declaration/occurrences、action 和 reason。
 

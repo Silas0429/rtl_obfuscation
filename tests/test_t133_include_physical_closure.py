@@ -95,7 +95,8 @@ class T133IncludePhysicalClosureTests(unittest.TestCase):
             )
             self.assertEqual(
                 (gate / "design.f").read_text(encoding="utf-8"),
-                "".join(f"{path}\n" for path in SOURCES),
+                "+define+T133_WIDTH=4\n"
+                + "".join(f"{(gate / path).resolve().as_posix()}\n" for path in SOURCES),
             )
 
             manifest = report["mapping_execution"]

@@ -76,8 +76,16 @@ class T119FilelistMultiRootOutputTests(unittest.TestCase):
             self.assertTrue(summary["summary"]["restored_byte_identical"])
 
             self.assertEqual(
-                (gate / "design.f").read_text(encoding="utf-8"),
-                "".join(f"{file}\n" for file in files),
+                (gate / "design.f").read_text(encoding="utf-8").splitlines(),
+                [(gate / file).resolve().as_posix() for file in files],
+            )
+            self.assertEqual(
+                (gate / "export_design.f").read_text(encoding="utf-8").splitlines(),
+                [f"$OUT/{file}" for file in files],
+            )
+            self.assertEqual(
+                (gate / "original_design.f").read_text(encoding="utf-8").splitlines(),
+                [(Path("/") / file).resolve().as_posix() for file in files],
             )
             self.assertTrue(
                 any((gate / file).read_bytes() != original[file] for file in files)
@@ -137,6 +145,13 @@ class T119FilelistMultiRootOutputTests(unittest.TestCase):
 
             negative = root / "negative"
             shutil.copytree(gate, negative)
+            negative_design = negative / "design.f"
+            negative_design.write_text(
+                negative_design.read_text(encoding="utf-8").replace(
+                    gate.resolve().as_posix(), negative.resolve().as_posix()
+                ),
+                encoding="utf-8",
+            )
             target = negative / files[0]
             mutated = target.read_bytes().replace(b" ^ ", b" | ", 1)
             self.assertNotEqual(mutated, target.read_bytes())
@@ -157,7 +172,7 @@ class T119FilelistMultiRootOutputTests(unittest.TestCase):
                 FORMAL,
                 "--gold-filelist", str(filelist),
                 "--gold-root", "/",
-                "--gate-filelist", str(negative / "design.f"),
+                "--gate-filelist", str(negative_design),
                 "--gate-root", str(negative),
                 "--top", "t119_top",
                 "--seq", "5",

@@ -27,9 +27,9 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
 | `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate，并缓存已验证报告与后处理阶段事实 |
-| `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；拒绝 schema 1 |
+| `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；验证公开三视图及 nested filelist 闭包；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
-| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、后处理进度、成功运行记录和公共错误输出 |
+| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、公开三视图、持久化运行记录和公共错误输出 |
 
 ## 四核心组边界
 
@@ -74,6 +74,12 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 `audit.execution`、`audit.metrics`、`audit.report`、`publish` 和 `cleanup`。这些阶段共用同一个
 observer 和单调时钟；成功运行把同源计时、启动命令、工作目录和最终总结写入
 `encryption_summary.txt`，其中总用时不包含最后总结文件写入本身。
+
+公开 `--filelist` 模式发布 `original_design.f`、绝对路径 `design.f` 和 `$OUT` 路径
+`export_design.f`；nested `-f` 只复制顶层闭包可达的结构到两套 `.rtl_obfuscation/filelists/*`
+镜像。原始行序、注释、空行、`-v`、`+incdir+` 与 `+define+` 保持不变，CLI-only context 不注入。
+`--input` 与 project-root 模式使用 canonical include/define/compile_order 三视图；include-only
+物理依赖仍进入 manifest/gate/restore，但不成为 compile entry。
 
 统计使用 `file_scope_vnext.py` 的有序物理范围：有 rewrite root 时，metrics 只统计 SourceSet
 已登记且落在 root 内的文件；`summary.files` 是统计范围文件数，`summary.physical_files` 是完整
