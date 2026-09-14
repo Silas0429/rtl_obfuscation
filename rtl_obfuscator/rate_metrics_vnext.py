@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import metrics_vnext, rate_execution_vnext
+from .performance_probe import StageObserver, _observe
 from .rate_vnext import RateSelectionVNext
 from .rewrite_vnext import MappingExecutionVNext, RewriteVNextError, build_mapping_execution_vnext
 
@@ -162,10 +163,12 @@ def build_rate_metrics_vnext(
     *,
     gate_dir: Path,
     restore_dir: Path,
+    stage_observer: StageObserver | None = None,
 ) -> RateMetricsVNext:
     """Restore and audit one established T050 actual selected gate."""
 
     rate_execution = _validate_rate_execution_input(rate_execution)
+    _observe(stage_observer, "restore", "begin")
     try:
         restore_result = rate_execution_vnext.restore_rate_selected_gate_vnext(
             rate_execution,
@@ -174,8 +177,10 @@ def build_rate_metrics_vnext(
         )
     except rate_execution_vnext.RateExecutionVNextError as error:
         _fail("RATE_METRICS_RESTORE_INVALID", f"T050 restore failed: {error.message}")
+    _observe(stage_observer, "restore", "end")
     if not isinstance(restore_result, rate_execution_vnext.rewrite_vnext.RestoreResult):
         _fail("RATE_METRICS_RESTORE_INVALID", "T050 restore result is invalid")
+    _observe(stage_observer, "audit.execution", "begin")
     try:
         mapping_execution = build_mapping_execution_vnext(
             rate_execution.rewrite_execution,
@@ -183,8 +188,10 @@ def build_rate_metrics_vnext(
         )
     except RewriteVNextError as error:
         _fail("RATE_METRICS_ENVELOPE_INVALID", f"T047 envelope failed: {error.message}")
+    _observe(stage_observer, "audit.execution", "end")
     if not isinstance(mapping_execution, MappingExecutionVNext):
         _fail("RATE_METRICS_ENVELOPE_INVALID", "T047 mapping execution is invalid")
+    _observe(stage_observer, "audit.metrics", "begin")
     try:
         metrics = metrics_vnext.build_metrics_vnext(
             mapping_execution,
@@ -192,6 +199,7 @@ def build_rate_metrics_vnext(
         )
     except metrics_vnext.MetricsVNextError as error:
         _fail("RATE_METRICS_INVALID", f"T048 metrics failed: {error.message}")
+    _observe(stage_observer, "audit.metrics", "end")
     if not isinstance(metrics, metrics_vnext.MetricsVNext):
         _fail("RATE_METRICS_INVALID", "T048 metrics object is invalid")
     if mapping_execution.rewrite_execution is not rate_execution.rewrite_execution:

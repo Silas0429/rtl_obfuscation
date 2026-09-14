@@ -42,22 +42,25 @@ python rtl_encrypt.py \
 ```
 
 进度按既有流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
-SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验。
+SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验，
+以及 restore 后的执行审计、指标计算、报告组装、原子发布和清理。
 真实工程上编译与索引通常是主要耗时段，所以分阶段计时比只报总时间有用。
 
 编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
 `compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
-成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。时间只用于实时展示，不会写入
-mapping、metrics 或其他产物。
+成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行还会把同一批计时行、
+启动命令和工作目录写入 `encryption_summary.txt`；总结中的总用时不包含最后写入总结文件本身的耗时。
 
 加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
-总文件数 / 加密文件数 / 文件覆盖率，以及
+统计范围文件数 / 交付物理文件数 / 加密文件数 / 文件覆盖率，以及
 改名对象数(rename) / 保留对象数(preserve) / 不支持对象数(unsupported) / 实际修改对象数。
+当使用 `--rewrite-root` 时，统计范围只包含 SourceSet 已登记且位于 root 内的物理文件；
+`summary.files` 和 metrics 行数按该范围计算，`summary.physical_files` 始终表示完整交付集合。
 其中**加密文件数**和**实际修改对象数**指真正落地了编辑的文件数与记录数：`rename` 是决策数，
 `实际修改对象数` 是字节确实被改写的记录数，使用 `--encryption-rate` 时前者会大于后者。
 分母为 0 时相应比率显示 `n/a`。
 
-`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON，也不会让失败变安静：
+`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON 或成功运行记录，也不会让失败变安静：
 失败仍然打印错误码、`message` 和位置。
 
 输入失败会指出位置：文件缺失给出解析后的绝对路径以及它来自哪个 filelist 的第几行；

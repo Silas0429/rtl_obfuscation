@@ -37,7 +37,12 @@ RENAME_STAGES = (
     "rename_index.name_completeness",
     "rename_index.finalize",
 )
-STAGES = COMPILE_STAGES + RENAME_STAGES
+AUDIT_STAGES = (
+    "audit.execution",
+    "audit.metrics",
+    "audit.report",
+)
+STAGES = COMPILE_STAGES + RENAME_STAGES + AUDIT_STAGES
 TIMING_PREFIX = re.compile(r"^\[\s*(\d+\.\d{3})s\] (开始|完成) ")
 STAGE_ID = re.compile(r" \[([a-z][a-z_.]+)\]")
 DURATION = re.compile(r"（本阶段 (\d+\.\d{3})s）$")

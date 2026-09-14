@@ -21,14 +21,15 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | `rtl_obfuscator/source_set.py` | 归一化三种输入；filelist 模式轻量保留编译顺序、entry 来源记录、include-only 物理依赖和 root-relative rewrite allowlist |
 | `rtl_obfuscator/project_discovery.py` | 运行 PySlang 编译/elaboration；parse 后在 SourceCatalog 前核对真实 source/include buffer；按诊断码和物理字节精确分类已验证供应商诊断 |
 | `rtl_obfuscator/performance_probe.py` | 保存永久粗粒度阶段 ID 与无状态 observer 转发，不参与流水线计算 |
+| `rtl_obfuscator/file_scope_vnext.py` | 从 SourceSet 构造有序统计范围与完整物理交付集合，不扫描目录 |
 | `rtl_obfuscator/source_catalog.py` | 保存 compilation、top overlay、模块物理 declaration，并给出诊断文件与 include-only 只读清单 |
 | `rtl_obfuscator/rename_index.py` | 建立四核心组物理索引；对跨入供应商诊断文件、rewrite root 之外或 include-only 文件的整条记录应用只读 firewall |
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
-| `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate |
+| `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate，并缓存已验证报告与后处理阶段事实 |
 | `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
-| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root` 和公共错误输出 |
+| `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、后处理进度、成功运行记录和公共错误输出 |
 
 ## 四核心组边界
 
@@ -69,8 +70,14 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 绑定，但任一 declaration/occurrence 跨入它时整条记录不改写。
 
 公开 CLI 的 compile 与 RenameIndex 外层进度内部提供固定粗粒度子阶段（如
-`compile.parse`、`compile.owner_registry`、`rename_index.name_completeness`）。这些阶段只通过
-同一个 observer 实时写入 stderr，不改变 SourceCatalog、RenameIndex 或任何持久化报告。
+`compile.parse`、`compile.owner_registry`、`rename_index.name_completeness`）；restore 后还会记录
+`audit.execution`、`audit.metrics`、`audit.report`、`publish` 和 `cleanup`。这些阶段共用同一个
+observer 和单调时钟；成功运行把同源计时、启动命令、工作目录和最终总结写入
+`encryption_summary.txt`，其中总用时不包含最后总结文件写入本身。
+
+统计使用 `file_scope_vnext.py` 的有序物理范围：有 rewrite root 时，metrics 只统计 SourceSet
+已登记且落在 root 内的文件；`summary.files` 是统计范围文件数，`summary.physical_files` 是完整
+manifest/交付文件数。gate、strict compile、restore 和 per-file mapping 仍使用完整物理集合。
 
 ## 验证边界
 
