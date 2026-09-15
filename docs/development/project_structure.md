@@ -36,6 +36,13 @@ SourceCatalog 的 compilation、catalog root 和 source manager，且仅存活�
 Mapping 在既有 source/owner/range 校验之后才复用它。通过 `dataclasses.replace` 或替换任一绑定
 对象后，Mapping 回到原有名称遍历；空快照与无效（例如名称 getter 失败）快照保持可区分。
 
+同次 workset 构建始终完整、有序地分类 catalog 与 top。二者为同一 tuple 时，只按位置复用
+`declaredType.type` 两层成功读取后的 alias 事实；任一属性缺失或失败仍在 top 阶段重试，
+`isInterface` 与 conversion type 仍在原 top 阶段读取。事实随本次构建结束释放，未增加节点类型
+预筛选或另一份 top 分类规则。端口声明只在同次登记内按强引用与对象身份复用预扫描成功结果；
+失败保持原顺序重试，owner、category、support、reason、internalSymbol 与 targets 仍逐节点计算。
+这些复用不保存候选名单或准入结论，新增语义类型、候选和准入规则继续使用原有规则入口。
+
 名字完整性检查始终保留完整 CST token 和无法验证的名称。它先采用本次记录已有的声明与引用证据，
 仅对剩余 token 补充通用声明证明，再对仍未解释的 token 补充通用引用证明；最终判定仍检查完整分母。
 候选名称和所有 eligible 记录的改写位置每次重新计算，不缓存准入结论，也不按现有类别或节点形状

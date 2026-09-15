@@ -302,14 +302,19 @@ class _SemanticWorkset:
         completeness: list[Any] = []
         semantic_names: set[str] = set()
         semantic_name_snapshot_valid = True
+        # Positional facts belong only to this same ordered tuple.  None means
+        # either getter was missing or failed and must be retried at top time.
+        alias_facts: list[bool | None] | None = [] if self.top is catalog else None
         # Build every catalog projection in one in-memory pass.  This pass is
         # intentionally after the single semantic root visit; it does not
         # inspect children or otherwise recreate a semantic collector.
         for ordered in catalog:
             node = ordered.node
             node_type = type(node).__name__
-            declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
+            declared_type, declared_type_known = _declared_type_fact(node)
             has_alias = type(declared_type).__name__ == "TypeAliasType"
+            if alias_facts is not None:
+                alias_facts.append(has_alias if declared_type_known else None)
             try:
                 raw_name = getattr(node, "name", "")
             except Exception:
@@ -351,16 +356,19 @@ class _SemanticWorkset:
         top_type: list[Any] = []
         # The top root is distinct only for the explicit overlay view.  It is
         # visited at most once by ``collect`` and classified once here.
-        for ordered in self.top:
+        for position, ordered in enumerate(self.top):
             node = ordered.node
             node_type = type(node).__name__
-            declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
+            has_alias = alias_facts[position] if alias_facts is not None else None
+            if has_alias is None:
+                declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
+                has_alias = type(declared_type).__name__ == "TypeAliasType"
             if node_type == "InterfacePortSymbol" or (
                 node_type == "InstanceSymbol"
                 and bool(_safe_attr(node, "isInterface", False))
             ):
                 top_interface.append(node)
-            if type(declared_type).__name__ == "TypeAliasType" or (
+            if has_alias or (
                 node_type == "ConversionExpression"
                 and type(_safe_attr(node, "type")).__name__ == "TypeAliasType"
             ):
@@ -502,6 +510,23 @@ def _safe_attr(value: object, name: str, default: object = None) -> object:
         return getattr(value, name, default)
     except Exception:
         return default
+
+
+_MISSING_DECLARED_TYPE = object()
+
+
+def _declared_type_fact(node: object) -> tuple[object, bool]:
+    """Return the usual declared type, marking only two successful getters."""
+    try:
+        declared = getattr(node, "declaredType", _MISSING_DECLARED_TYPE)
+        if declared is _MISSING_DECLARED_TYPE:
+            return None, False
+        value = getattr(declared, "type", _MISSING_DECLARED_TYPE)
+    except Exception:
+        return None, False
+    if value is _MISSING_DECLARED_TYPE:
+        return None, False
+    return value, True
 
 
 def _source_bytes(
@@ -1506,6 +1531,9 @@ def _register_core_declarations(
     context: _RangePathContext | None = None,
 ) -> None:
     port_ranges: set[tuple[str, int, int]] = set()
+    # Keep each successful declaration with its actual node until this call
+    # ends.  Shared physical ranges do not imply shared owners or targets.
+    port_declarations: dict[int, tuple[object, SourceRange]] = {}
     for node in nodes:
         if type(node).__name__ != "PortSymbol":
             continue
@@ -1522,6 +1550,7 @@ def _register_core_declarations(
         )
         if declaration is None:
             continue
+        port_declarations[id(node)] = (node, declaration)
         port_ranges.add((declaration.file, declaration.start, declaration.end))
     for node in nodes:
         node_type = type(node).__name__
@@ -1587,11 +1616,17 @@ def _register_core_declarations(
                 context=context,
             )
             category = "interface" if owner_kind == "interface" else "ports"
-            declaration = _try_declaration_range(
-                catalog, binding_issues, category, node,
-                _safe_attr(node, "syntax"), name,
-                candidates=(node, _safe_attr(node, "syntax")), context=context,
-            )
+            cached_declaration = port_declarations.get(id(node))
+            if cached_declaration is not None and cached_declaration[0] is node:
+                declaration = cached_declaration[1]
+            else:
+                # A failed pre-scan still retries here, after owner/category
+                # resolution and with the original diagnostic candidates.
+                declaration = _try_declaration_range(
+                    catalog, binding_issues, category, node,
+                    _safe_attr(node, "syntax"), name,
+                    candidates=(node, _safe_attr(node, "syntax")), context=context,
+                )
             if declaration is None:
                 continue
             if owner_kind == "module" and "ports" in selected:
