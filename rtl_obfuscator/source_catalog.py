@@ -243,7 +243,13 @@ def _known_physical_files(source_set: SourceSet) -> frozenset[str]:
     )
 
 
-def _relative_file(source_set: SourceSet, manager: Any, buffer: Any) -> str:
+def _relative_file(
+    source_set: SourceSet,
+    manager: Any,
+    buffer: Any,
+    *,
+    physical_files: frozenset[str] | None = None,
+) -> str:
     try:
         buffer_kind = manager.getBufferKind(buffer)
     except (AttributeError, RuntimeError, TypeError, ValueError) as error:
@@ -264,7 +270,9 @@ def _relative_file(source_set: SourceSet, manager: Any, buffer: Any) -> str:
         raise SourceCatalogError(
             "CATALOG_RANGE_INVALID", "declaration is outside the SourceSet root"
         ) from error
-    if relative not in _known_physical_files(source_set):
+    if physical_files is None:
+        physical_files = _known_physical_files(source_set)
+    if relative not in physical_files:
         raise SourceCatalogError(
             "CATALOG_RANGE_INVALID",
             "semantic location is not a SourceSet physical file",
@@ -296,11 +304,20 @@ def _has_source_backed_semantic_location(
 
 
 def _definition_range(
-    source_set: SourceSet, manager: Any, definition: Any
+    source_set: SourceSet,
+    manager: Any,
+    definition: Any,
+    *,
+    physical_files: frozenset[str] | None = None,
 ) -> SourceRange:
     name = str(definition.name)
     start = int(definition.location.offset)
-    file = _relative_file(source_set, manager, definition.location.buffer)
+    file = _relative_file(
+        source_set,
+        manager,
+        definition.location.buffer,
+        physical_files=physical_files,
+    )
     expected = name.encode("utf-8")
     end = start + len(expected)
     source = _read_physical_token(source_set, file, start, len(expected))
@@ -315,7 +332,10 @@ def _definition_range(
 
 
 def _module_definitions_for(
-    source_set: SourceSet, view: _CompiledView
+    source_set: SourceSet,
+    view: _CompiledView,
+    *,
+    physical_files: frozenset[str] | None = None,
 ) -> tuple[_DefinitionRecord, ...]:
     nodes: list[Any] = []
     view.root.visit(nodes.append)
@@ -326,7 +346,12 @@ def _module_definitions_for(
             continue
         if getattr(definition, "definitionKind", None) != pyslang.ast.DefinitionKind.Module:
             continue
-        declaration = _definition_range(source_set, view.source_manager, definition)
+        declaration = _definition_range(
+            source_set,
+            view.source_manager,
+            definition,
+            physical_files=physical_files,
+        )
         key = (declaration.file, declaration.start, declaration.end)
         records[key] = _DefinitionRecord(definition, declaration)
     return tuple(
@@ -343,7 +368,10 @@ def _module_definitions_for(
 
 
 def _physical_module_declarations(
-    source_set: SourceSet, view: _CompiledView
+    source_set: SourceSet,
+    view: _CompiledView,
+    *,
+    physical_files: frozenset[str] | None = None,
 ) -> tuple[_PhysicalModuleDeclaration, ...]:
     """Inventory every module declaration in the supplied syntax tree.
 
@@ -363,7 +391,12 @@ def _physical_module_declarations(
         token = getattr(getattr(node, "header", None), "name", None)
         if token is None or not token.rawText:
             return
-        file = _relative_file(source_set, view.source_manager, token.location.buffer)
+        file = _relative_file(
+            source_set,
+            view.source_manager,
+            token.location.buffer,
+            physical_files=physical_files,
+        )
         if file not in source_files:
             return
         name = str(token.rawText)
@@ -405,6 +438,7 @@ def _semantic_name_range(
     node: Any,
     *,
     name: str | None = None,
+    physical_files: frozenset[str] | None = None,
 ) -> SourceRange:
     value = str(name if name is not None else getattr(node, "name", ""))
     if not value:
@@ -416,7 +450,12 @@ def _semantic_name_range(
         raise SourceCatalogError(
             "CATALOG_OWNER_INVALID", "semantic owner has no source location"
         )
-    file = _relative_file(source_set, manager, location.buffer)
+    file = _relative_file(
+        source_set,
+        manager,
+        location.buffer,
+        physical_files=physical_files,
+    )
     start = int(location.offset)
     expected = value.encode("utf-8")
     end = start + len(expected)
@@ -435,6 +474,8 @@ def _semantic_owner_ids(
     source_set: SourceSet,
     view: _CompiledView,
     modules: tuple[ModuleOwner, ...],
+    *,
+    physical_files: frozenset[str] | None = None,
 ) -> tuple[str, ...]:
     """Return the registry of semantic owners consumed by RenameIndex.
 
@@ -465,7 +506,12 @@ def _semantic_owner_ids(
                 view.source_manager, node, getattr(definition, "location", None)
             ):
                 return
-            declaration = _definition_range(source_set, view.source_manager, definition)
+            declaration = _definition_range(
+                source_set,
+                view.source_manager,
+                definition,
+                physical_files=physical_files,
+            )
             syntax_kind = str(getattr(syntax, "kind", ""))
             if "ModuleDeclaration" in syntax_kind:
                 owner_id = module_owner_by_range.get(
@@ -482,7 +528,12 @@ def _semantic_owner_ids(
                 view.source_manager, node, getattr(node, "location", None)
             ):
                 return
-            declaration = _semantic_name_range(source_set, view.source_manager, node)
+            declaration = _semantic_name_range(
+                source_set,
+                view.source_manager,
+                node,
+                physical_files=physical_files,
+            )
             owners.add(f"type:{declaration.file}:{declaration.start}:{declaration.end}")
 
     view.root.visit(collect)
@@ -490,7 +541,10 @@ def _semantic_owner_ids(
 
 
 def _check_duplicate_syntax_modules(
-    source_set: SourceSet, view: _CompiledView
+    source_set: SourceSet,
+    view: _CompiledView,
+    *,
+    physical_files: frozenset[str] | None = None,
 ) -> None:
     nodes: list[Any] = []
     view.syntax_tree.root.visit(nodes.append)
@@ -501,7 +555,12 @@ def _check_duplicate_syntax_modules(
         token = node.header.name
         if not token.rawText:
             continue
-        file = _relative_file(source_set, view.source_manager, token.location.buffer)
+        file = _relative_file(
+            source_set,
+            view.source_manager,
+            token.location.buffer,
+            physical_files=physical_files,
+        )
         name = token.rawText
         start = int(token.location.offset)
         expected = name.encode("utf-8")
@@ -698,17 +757,32 @@ def _module_owners_from_inventory(
 def _build_single_explicit_top_catalog(
     source_set: SourceSet,
     *,
+    physical_files: frozenset[str] | None = None,
     stage_observer: StageObserver | None = None,
 ) -> SourceCatalog:
     """Build a rewrite-root filelist catalog from one explicit-top view."""
 
     assert source_set.top is not None
+    if physical_files is None:
+        physical_files = _known_physical_files(source_set)
     view = _compile_view(
         source_set, top=source_set.top, stage_observer=stage_observer
     )
     parse_errors, _ = _diagnostic_counts(view)
     _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "begin")
-    declarations = _physical_module_declarations(source_set, view)
+    declarations = _physical_module_declarations(
+        source_set,
+        view,
+        physical_files=physical_files,
+    )
+    declaration_keys = {
+        (
+            item.declaration.file,
+            item.declaration.start,
+            item.declaration.end,
+        )
+        for item in declarations
+    }
     # Apply all duplicate checks that do not require top reachability first.
     _readonly_duplicate_inventory(
         source_set,
@@ -733,9 +807,14 @@ def _build_single_explicit_top_catalog(
     reachable_ranges: set[tuple[str, int, int]] = set()
     reachable_names = frozenset(str(definition.name) for definition in reachable)
     for definition in reachable:
-        declaration = _definition_range(source_set, view.source_manager, definition)
+        declaration = _definition_range(
+            source_set,
+            view.source_manager,
+            definition,
+            physical_files=physical_files,
+        )
         key = (declaration.file, declaration.start, declaration.end)
-        if not any(item.declaration == declaration for item in declarations):
+        if key not in declaration_keys:
             raise SourceCatalogError(
                 "CATALOG_TOP_MISMATCH",
                 "top view definition cannot map to physical module inventory",
@@ -755,14 +834,17 @@ def _build_single_explicit_top_catalog(
             "CATALOG_TOP_MISMATCH", "selected top is not unique"
         )
     selected_declaration = _definition_range(
-        source_set, view.source_manager, tops[0].definition
+        source_set,
+        view.source_manager,
+        tops[0].definition,
+        physical_files=physical_files,
     )
     selected_range = (
         selected_declaration.file,
         selected_declaration.start,
         selected_declaration.end,
     )
-    if not any(item.declaration == selected_declaration for item in declarations):
+    if selected_range not in declaration_keys:
         raise SourceCatalogError(
             "CATALOG_TOP_MISMATCH",
             "selected top cannot map to physical module inventory",
@@ -806,7 +888,12 @@ def _build_single_explicit_top_catalog(
         top_compilation=view.compilation,
         top_root=view.root,
         top_source_manager=view.source_manager,
-        semantic_owner_ids=_semantic_owner_ids(source_set, view, modules),
+        semantic_owner_ids=_semantic_owner_ids(
+            source_set,
+            view,
+            modules,
+            physical_files=physical_files,
+        ),
         readonly_vendor_files=tuple(view.vendor_compatibility_files),
         readonly_include_files=tuple(source_set.included_files),
         readonly_duplicate_inventory=readonly_duplicates,
@@ -822,13 +909,17 @@ def build_source_catalog(
 ) -> SourceCatalog:
     """Build the catalog view and optional selected-top overlay."""
 
+    physical_files = _known_physical_files(source_set)
+
     if (
         source_set.origin == "filelist"
         and source_set.top
         and source_set.rewrite_roots
     ):
         return _build_single_explicit_top_catalog(
-            source_set, stage_observer=stage_observer
+            source_set,
+            physical_files=physical_files,
+            stage_observer=stage_observer,
         )
 
     catalog_view = _compile_view(
@@ -840,8 +931,16 @@ def build_source_catalog(
             "CATALOG_PARSE_FAILED", "catalog view contains parse errors"
         )
     _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "begin")
-    catalog_records = _module_definitions_for(source_set, catalog_view)
-    _check_duplicate_syntax_modules(source_set, catalog_view)
+    catalog_records = _module_definitions_for(
+        source_set,
+        catalog_view,
+        physical_files=physical_files,
+    )
+    _check_duplicate_syntax_modules(
+        source_set,
+        catalog_view,
+        physical_files=physical_files,
+    )
     _observe(stage_observer, COMPILE_CATALOG_INVENTORY, "end")
     _, catalog_semantic_errors = _diagnostic_counts(catalog_view)
     if catalog_semantic_errors:
@@ -882,7 +981,10 @@ def build_source_catalog(
             )
         for definition in reachable:
             declaration = _definition_range(
-                source_set, top_view.source_manager, definition
+                source_set,
+                top_view.source_manager,
+                definition,
+                physical_files=physical_files,
             )
             key = (declaration.file, declaration.start, declaration.end)
             if key not in owner_by_range:
@@ -906,7 +1008,10 @@ def build_source_catalog(
             )
         selected_definition = tops[0].definition
         selected_declaration = _definition_range(
-            source_set, top_view.source_manager, selected_definition
+            source_set,
+            top_view.source_manager,
+            selected_definition,
+            physical_files=physical_files,
         )
         selected_range = (
             selected_declaration.file,
@@ -967,7 +1072,12 @@ def build_source_catalog(
         top_compilation=None if top_view is None else top_view.compilation,
         top_root=None if top_view is None else top_view.root,
         top_source_manager=None if top_view is None else top_view.source_manager,
-        semantic_owner_ids=_semantic_owner_ids(source_set, catalog_view, tuple(modules)),
+        semantic_owner_ids=_semantic_owner_ids(
+            source_set,
+            catalog_view,
+            tuple(modules),
+            physical_files=physical_files,
+        ),
         readonly_vendor_files=tuple(readonly_vendor_files),
         readonly_include_files=tuple(source_set.included_files),
         readonly_duplicate_inventory=(),
