@@ -491,7 +491,22 @@ def _unavailable_names(
     rename_index: RenameIndex,
 ) -> set[str]:
     unavailable: set[str] = set()
-    unavailable.update(_semantic_names(catalog))
+    identity = getattr(rename_index, "_live_semantic_name_identity", None)
+    current_identity = (
+        catalog,
+        catalog.catalog_compilation,
+        catalog.catalog_root,
+        catalog.catalog_source_manager,
+    )
+    if (
+        getattr(rename_index, "_live_semantic_name_snapshot_valid", False)
+        and isinstance(identity, tuple)
+        and len(identity) == len(current_identity)
+        and all(left is right for left, right in zip(identity, current_identity))
+    ):
+        unavailable.update(rename_index._live_semantic_names)
+    else:
+        unavailable.update(_semantic_names(catalog))
     unavailable.update(symbol.name for symbol in rename_index.symbols)
     return unavailable
 

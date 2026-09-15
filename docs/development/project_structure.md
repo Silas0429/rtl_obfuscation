@@ -31,6 +31,11 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
 | `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、公开三视图、持久化运行记录和公共错误输出 |
 
+RenameIndex 的一次性有序 catalog 遍历可附带不可变的语义名称快照。该快照只绑定同一次
+SourceCatalog 的 compilation、catalog root 和 source manager，且仅存活于该 RenameIndex 实例；
+Mapping 在既有 source/owner/range 校验之后才复用它。通过 `dataclasses.replace` 或替换任一绑定
+对象后，Mapping 回到原有名称遍历；空快照与无效（例如名称 getter 失败）快照保持可区分。
+
 ## 四核心组边界
 
 - `signals` 只收集 module-owned `VariableSymbol/NetSymbol`，排除端口和 aggregate/interface 成员；

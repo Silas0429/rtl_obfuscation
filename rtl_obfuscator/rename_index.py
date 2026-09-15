@@ -69,6 +69,15 @@ class RenameIndex:
     symbols: tuple[SourceSymbol, ...]
     decisions: tuple[RenameDecision, ...]
     category_outcomes: tuple[dict[str, object], ...]
+    _live_semantic_names: frozenset[str] = field(
+        default_factory=frozenset, init=False, repr=False, compare=False
+    )
+    _live_semantic_name_snapshot_valid: bool = field(
+        default=False, init=False, repr=False, compare=False
+    )
+    _live_semantic_name_identity: tuple[object, object, object, object] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -250,6 +259,8 @@ class _SemanticWorkset:
 
     catalog: tuple[_OrderedSemanticNode, ...]
     top: tuple[_OrderedSemanticNode, ...]
+    semantic_names: frozenset[str] = field(init=False)
+    semantic_name_snapshot_valid: bool = field(init=False)
     instance_body_nodes: tuple[Any, ...] = field(init=False)
     struct_nodes: tuple[Any, ...] = field(init=False)
     declaration_nodes: tuple[Any, ...] = field(init=False)
@@ -289,6 +300,8 @@ class _SemanticWorkset:
         occurrence: list[Any] = []
         dead_source: list[Any] = []
         completeness: list[Any] = []
+        semantic_names: set[str] = set()
+        semantic_name_snapshot_valid = True
         # Build every catalog projection in one in-memory pass.  This pass is
         # intentionally after the single semantic root visit; it does not
         # inspect children or otherwise recreate a semantic collector.
@@ -297,8 +310,18 @@ class _SemanticWorkset:
             node_type = type(node).__name__
             declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
             has_alias = type(declared_type).__name__ == "TypeAliasType"
+            try:
+                raw_name = getattr(node, "name", "")
+            except Exception:
+                # Keep the existing completeness default while marking the
+                # snapshot unusable.  Mapping will retry its original
+                # getter after the established source/range validations.
+                raw_name = ""
+                semantic_name_snapshot_valid = False
+            if isinstance(raw_name, str) and raw_name:
+                semantic_names.add(raw_name)
             if (
-                bool(_safe_attr(node, "name", ""))
+                bool(raw_name)
                 or _safe_attr(node, "symbol") is not None
                 or _safe_attr(node, "member") is not None
                 or node_type == "TypeAliasType"
@@ -349,6 +372,8 @@ class _SemanticWorkset:
         object.__setattr__(self, "occurrence_nodes", tuple(occurrence))
         object.__setattr__(self, "dead_source_nodes", tuple(dead_source))
         object.__setattr__(self, "completeness_nodes", tuple(completeness))
+        object.__setattr__(self, "semantic_names", frozenset(semantic_names))
+        object.__setattr__(self, "semantic_name_snapshot_valid", semantic_name_snapshot_valid)
         object.__setattr__(self, "top_interface_nodes", tuple(top_interface))
         object.__setattr__(self, "top_type_nodes", tuple(top_type))
 
@@ -3587,6 +3612,22 @@ def build_rename_index(
         symbols=symbols,
         decisions=decisions,
         category_outcomes=_category_outcomes(selected, symbols, range_issues),
+    )
+    object.__setattr__(result, "_live_semantic_names", workset.semantic_names)
+    object.__setattr__(
+        result,
+        "_live_semantic_name_snapshot_valid",
+        workset.semantic_name_snapshot_valid,
+    )
+    object.__setattr__(
+        result,
+        "_live_semantic_name_identity",
+        (
+            source_catalog,
+            source_catalog.catalog_compilation,
+            source_catalog.catalog_root,
+            source_catalog.catalog_source_manager,
+        ),
     )
     _observe(stage_observer, RENAME_FINALIZE, "end")
     return result
