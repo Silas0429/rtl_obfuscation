@@ -2893,6 +2893,39 @@ def _reference_attributions(
     return found
 
 
+def _pending_reference_tokens(
+    tokens: tuple[_NameToken, ...],
+    pending: tuple[_NameToken, ...],
+) -> tuple[_NameToken, ...]:
+    """Limit proof queries without changing the existing interval index.
+
+    Physical identifiers normally have monotonic ends when sorted by start.
+    The reference index bisects that end sequence; if an unusual location view
+    violates the premise, retain the complete bucket so its query behavior is
+    unchanged.  This affects only supplemental proof work, never the complete
+    token denominator.
+    """
+
+    needed = {(token.file, token.name) for token in pending}
+    buckets: dict[tuple[str, str], list[_NameToken]] = {}
+    for token in tokens:
+        key = (token.file, token.name)
+        if key in needed:
+            buckets.setdefault(key, []).append(token)
+    retain_full: set[tuple[str, str]] = set()
+    for key, bucket_tokens in buckets.items():
+        ordered = sorted(bucket_tokens, key=lambda token: (token.start, token.end))
+        if any(left.end > right.end for left, right in zip(ordered, ordered[1:])):
+            retain_full.add(key)
+    pending_keys = {(token.file, token.start, token.end) for token in pending}
+    return tuple(
+        token
+        for token in tokens
+        if (token.file, token.name) in retain_full
+        or (token.file, token.start, token.end) in pending_keys
+    )
+
+
 def _apply_name_completeness(
     catalog: SourceCatalog,
     nodes: list[Any],
@@ -2949,6 +2982,13 @@ def _apply_name_completeness(
     diagnostic of the two; a record already preserved keeps its own reason.  The
     preserve is per record and never escalates to a core group, so the T111
     boundary is untouched.
+
+    Supplemental declarations and references need prove only tokens not already
+    accounted for.  Candidate names and rewritten targets still come from all
+    currently eligible records on every call, including names with no remaining
+    tokens.  Thus changes to candidate groups or admission rules do not reuse a
+    prior decision, and new evidence remains the responsibility of the generic
+    providers above.  The final judgement always uses the full denominator.
     """
 
     eligible = tuple(
@@ -2986,16 +3026,39 @@ def _apply_name_completeness(
             *[item.source_range for item in record.occurrences.values()],
         )
     )
-    by_start = {(token.file, token.start): token for token in tokens}
-    accounted |= _declaration_attributions(catalog, nodes, by_start, wanted, context)
-    reference_stats = _ReferenceQueryStats()
-    accounted |= _reference_attributions(
-        tokens,
-        _reference_spans(catalog, nodes, wanted, context),
-        rewritten_starts,
-        reference_stats,
+    pending = tuple(
+        token
+        for token in tokens
+        if (token.file, token.start, token.end) not in accounted
     )
-    context.reference_candidate_checks += reference_stats.candidate_checks
+    if pending:
+        # Build from the complete denominator before filtering, preserving the
+        # original last-value choice when multiple tokens share a start.
+        by_start = {(token.file, token.start): token for token in tokens}
+        by_start = {
+            key: token
+            for key, token in by_start.items()
+            if (token.file, token.start, token.end) not in accounted
+        }
+        pending_names = frozenset(token.name for token in pending)
+        accounted |= _declaration_attributions(
+            catalog, nodes, by_start, pending_names, context
+        )
+        pending = tuple(
+            token
+            for token in pending
+            if (token.file, token.start, token.end) not in accounted
+        )
+    if pending:
+        pending_names = frozenset(token.name for token in pending)
+        reference_stats = _ReferenceQueryStats()
+        accounted |= _reference_attributions(
+            _pending_reference_tokens(tokens, pending),
+            _reference_spans(catalog, nodes, pending_names, context),
+            rewritten_starts,
+            reference_stats,
+        )
+        context.reference_candidate_checks += reference_stats.candidate_checks
     incomplete = set(unverified)
     for token in tokens:
         if (token.file, token.start, token.end) not in accounted:

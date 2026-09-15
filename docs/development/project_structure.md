@@ -36,6 +36,12 @@ SourceCatalog 的 compilation、catalog root 和 source manager，且仅存活�
 Mapping 在既有 source/owner/range 校验之后才复用它。通过 `dataclasses.replace` 或替换任一绑定
 对象后，Mapping 回到原有名称遍历；空快照与无效（例如名称 getter 失败）快照保持可区分。
 
+名字完整性检查始终保留完整 CST token 和无法验证的名称。它先采用本次记录已有的声明与引用证据，
+仅对剩余 token 补充通用声明证明，再对仍未解释的 token 补充通用引用证明；最终判定仍检查完整分母。
+候选名称和所有 eligible 记录的改写位置每次重新计算，不缓存准入结论，也不按现有类别或节点形状
+筛选证据来源。扩展候选或准入规则时沿用同一证明入口；若改变证据含义或在检查之后重新开放候选，
+需要重新执行适用证明并验证扩展回归。
+
 ## 四核心组边界
 
 - `signals` 只收集 module-owned `VariableSymbol/NetSymbol`，排除端口和 aggregate/interface 成员；
