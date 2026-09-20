@@ -1279,6 +1279,45 @@ def _record_for_semantic_target(
     return symbol_id
 
 
+def _record_for_value_target(
+    catalog: SourceCatalog,
+    records: dict[str, _WorkingSymbol],
+    target_map: dict[object, str],
+    target: object,
+    *,
+    record_index: _RecordPhysicalIndex | None = None,
+    context: _RangePathContext | None = None,
+) -> str | None:
+    """Resolve a simple modport proxy only through its real physical member.
+
+    Explicit modport expressions have independent names and are not aliases.
+    Failed getters remain unknown; neither spelling nor the proxy's own
+    declaration may substitute for a direct, source-backed internal symbol.
+    """
+
+    if type(target).__name__ != "ModportPortSymbol":
+        return _record_for_semantic_target(
+            catalog, records, target_map, target,
+            record_index=record_index, context=context,
+        )
+    if _kind_name(_safe_attr(_safe_attr(target, "syntax"), "kind")) != "ModportNamedPort":
+        return None
+    internal = _safe_attr(target, "internalSymbol")
+    name = str(_safe_attr(target, "name", ""))
+    if not name or name != str(_safe_attr(internal, "name", "")):
+        return None
+    declaration = _definition_range(catalog, internal, context=context)
+    if declaration is None:
+        return None
+    if record_index is None:
+        record_index = _RecordPhysicalIndex.from_records(records)
+    symbol_id = record_index.resolve(declaration, category="interface")
+    record = records.get(symbol_id) if symbol_id is not None else None
+    if record is None or record.kind != "interface_member" or record.name != name:
+        return None
+    return symbol_id
+
+
 def _interface_record_for_definition(
     catalog: SourceCatalog,
     records: dict[str, _WorkingSymbol],
@@ -3213,7 +3252,7 @@ def _collect_occurrences(
             continue
         if node_type in {"NamedValueExpression", "HierarchicalValueExpression", "ArbitrarySymbolExpression"}:
             target = getattr(node, "symbol", None)
-            symbol_id = _record_for_semantic_target(
+            symbol_id = _record_for_value_target(
                 catalog, records, target_map, target,
                 record_index=record_index, context=context
             )
@@ -3246,7 +3285,7 @@ def _collect_occurrences(
             _claim_occurrence(record, occurrence, range_claims)
         elif node_type == "MemberAccessExpression":
             target = getattr(node, "member", None)
-            symbol_id = _record_for_semantic_target(
+            symbol_id = _record_for_value_target(
                 catalog, records, target_map, target,
                 record_index=record_index, context=context
             )

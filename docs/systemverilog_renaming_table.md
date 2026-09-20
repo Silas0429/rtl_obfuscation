@@ -16,6 +16,10 @@ PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-b
 只来自 PySlang 直接 target binding，并且必须有唯一物理 identifier token 和源码字节证据。
 
 - 同一个 interface 的 `ModportPortSymbol` 是已有 interface member 的 semantic alias/occurrence，不是新记录。
+- 简单 modport 的值引用只有在 `internalSymbol` 直接指向唯一物理 interface member、名称一致且使用处
+  能逐字节定位时才随该成员改名；支持有此证据的普通、数组及 non-ANSI interface 端口引用。
+  显式别名/表达式（如 `.rx(req)`、`.rx(req[0])`）不套用简单别名规则；当前无法证明使用处范围的
+  向量切片/选择继续保留。该绑定不通过名字搜索补全，也不绕过完整性与只读边界。
 - struct member reference 使用 PySlang 直接 `FieldSymbol` target 的 declaration location 绑定；不按名称、文件顺序或 token 顺序选择。
 - interface instance array 只为 source-backed array root 建记录，elaborated element 只作 alias，不产生空名称或伪造 range。
 - source-less semantic node、隐式 conversion 和 compiler metadata 不产生 edit。
