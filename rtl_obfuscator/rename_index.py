@@ -312,7 +312,7 @@ class _SemanticWorkset:
             node = ordered.node
             node_type = type(node).__name__
             declared_type, declared_type_known = _declared_type_fact(node)
-            has_alias = type(declared_type).__name__ == "TypeAliasType"
+            has_alias = type(declared_type).__name__ in _TYPE_REFERENCE_ROOTS
             if alias_facts is not None:
                 alias_facts.append(has_alias if declared_type_known else None)
             try:
@@ -362,15 +362,16 @@ class _SemanticWorkset:
             has_alias = alias_facts[position] if alias_facts is not None else None
             if has_alias is None:
                 declared_type = _safe_attr(_safe_attr(node, "declaredType"), "type")
-                has_alias = type(declared_type).__name__ == "TypeAliasType"
+                has_alias = type(declared_type).__name__ in _TYPE_REFERENCE_ROOTS
             if node_type == "InterfacePortSymbol" or (
                 node_type == "InstanceSymbol"
                 and bool(_safe_attr(node, "isInterface", False))
             ):
                 top_interface.append(node)
-            if has_alias or (
+            if (has_alias and node_type != "TypeAliasType") or (
                 node_type == "ConversionExpression"
-                and type(_safe_attr(node, "type")).__name__ == "TypeAliasType"
+                and not _safe_attr(node, "isImplicit", False)
+                and type(_safe_attr(node, "type")).__name__ in _TYPE_REFERENCE_ROOTS
             ):
                 top_type.append(node)
 
@@ -513,6 +514,8 @@ def _safe_attr(value: object, name: str, default: object = None) -> object:
 
 
 _MISSING_DECLARED_TYPE = object()
+_FIXED_ARRAY_TYPES = frozenset({"PackedArrayType", "FixedSizeUnpackedArrayType"})
+_TYPE_REFERENCE_ROOTS = _FIXED_ARRAY_TYPES | {"TypeAliasType"}
 
 
 def _declared_type_fact(node: object) -> tuple[object, bool]:
@@ -527,6 +530,23 @@ def _declared_type_fact(node: object) -> tuple[object, bool]:
     if value is _MISSING_DECLARED_TYPE:
         return None, False
     return value, True
+
+
+def _source_spelled_type_alias(target: object) -> object | None:
+    """Peel fixed dimensions, stopping at the first source-spelled alias.
+
+    An alias target is deliberately not followed here: ``array_t word`` does
+    not physically spell the element alias of ``array_t``.  Keep wrappers
+    alive while guarding cycles; a failed edge remains unknown and is retried
+    on the next use, never cached as a negative fact.
+    """
+    seen: dict[int, object] = {}
+    while type(target).__name__ in _FIXED_ARRAY_TYPES:
+        if id(target) in seen:
+            return None
+        seen[id(target)] = target
+        target = _safe_attr(target, "elementType")
+    return target if type(target).__name__ == "TypeAliasType" else None
 
 
 def _source_bytes(
@@ -1116,18 +1136,27 @@ def _top_active_types(
         catalog.top_root.visit(collected.append)
         nodes = collected
     for node in nodes:
-        declared = getattr(node, "declaredType", None)
-        target = getattr(declared, "type", None)
-        if type(target).__name__ == "TypeAliasType":
-            key = _definition_key(catalog, target, context=context)
-            if key is not None:
-                result.add(key)
-        if type(node).__name__ == "ConversionExpression":
-            target = getattr(node, "type", None)
-            if type(target).__name__ == "TypeAliasType":
+        # A typedef declaration describes a relationship, not a live use.
+        # Keep generic declaredType roots so future semantic node kinds still
+        # reach this same rule without a variable / port whitelist.
+        if type(node).__name__ == "TypeAliasType":
+            continue
+        roots = [_safe_attr(_safe_attr(node, "declaredType"), "type")]
+        if type(node).__name__ == "ConversionExpression" and not _safe_attr(node, "isImplicit", False):
+            roots.append(_safe_attr(node, "type"))
+        for target in roots:
+            seen: dict[int, object] = {}
+            while type(target).__name__ in _TYPE_REFERENCE_ROOTS and id(target) not in seen:
+                # Identity is semantic-wrapper identity, not a physical key or
+                # canonical shape that could merge parameter specializations.
+                seen[id(target)] = target
+                if type(target).__name__ in _FIXED_ARRAY_TYPES:
+                    target = _safe_attr(target, "elementType")
+                    continue
                 key = _definition_key(catalog, target, context=context)
                 if key is not None:
                     result.add(key)
+                target = _safe_attr(_safe_attr(target, "targetType"), "type")
     return result
 
 
@@ -3309,7 +3338,7 @@ def _collect_occurrences(
             )
             _claim_occurrence(record, occurrence, range_claims)
         declared = getattr(node, "declaredType", None)
-        target = getattr(declared, "type", None)
+        target = _source_spelled_type_alias(getattr(declared, "type", None))
         if type(target).__name__ == "TypeAliasType":
             alias_key = _definition_key(catalog, target, context=context)
             symbol_id = alias_map.get(alias_key) if alias_key is not None else None
