@@ -357,7 +357,7 @@ class T108RenameIndexTests(unittest.TestCase):
         )
         self.assertEqual(outcome["status"], "preserved")
         self.assertGreater(outcome["rename"], 0)
-        self.assertEqual(outcome["preserve"], 2)
+        self.assertEqual(outcome["preserve"], 4)
         self.assertFalse(
             any(issue["message"] == "source_binding_incomplete" for issue in outcome["issues"])
         )
@@ -367,15 +367,20 @@ class T108RenameIndexTests(unittest.TestCase):
                 for symbol in index.symbols
                 if symbol.support == "eligible"
             },
-            {"macro_if", "macro_mp", "value"},
+            {"macro_mp"},
         )
         self.assertEqual(
             {
-                symbol.name
+                (symbol.name, symbol.reason)
                 for symbol in index.symbols
                 if symbol.support == "preserved"
             },
-            {"if0", "if_array"},
+            {
+                ("macro_if", "readonly_include_file"),
+                ("value", "readonly_include_file"),
+                ("if0", "hierarchical_prefix_unsupported"),
+                ("if_array", "hierarchical_prefix_unsupported"),
+            },
         )
 
         class InvalidToken:

@@ -1827,6 +1827,25 @@ def _instance_ports_by_name(node: object) -> dict[str, object]:
     return result
 
 
+def _port_connection_provenance(catalog: SourceCatalog, label: object) -> str:
+    """Classify the original label location, before physical range recovery.
+
+    The expression may have a different macro origin from its port label.
+    SourceManager failures must reach the caller's binding guard: a guessed
+    macro origin would incorrectly limit a real cross-record conflict.
+    """
+
+    location = label.location
+    manager = catalog.catalog_source_manager
+    if not manager.isMacroLoc(location):
+        return "semantic_port_connection"
+    return (
+        "semantic_macro_argument"
+        if manager.isMacroArgLoc(location)
+        else "semantic_macro_body"
+    )
+
+
 def _interface_port_header(node: object) -> object:
     """Return the port header syntax of one module interface port."""
 
@@ -3448,6 +3467,20 @@ def _collect_occurrences(
                 if symbol_id is None:
                     continue
                 record = records[symbol_id]
+                try:
+                    provenance = _port_connection_provenance(catalog, label)
+                except Exception as error:
+                    _append_binding_issue(
+                        catalog, binding_issues, record.category,
+                        semantic_kind=record.semantic_kind, name=record.name,
+                        candidates=(label, connection_syntax),
+                        detail=getattr(error, "message", str(error)),
+                        context=context,
+                    )
+                    if record.support == "eligible":
+                        record.support = "preserved"
+                        record.reason = "source_binding_incomplete"
+                    continue
                 source_range = _safe_occurrence_range(
                     catalog,
                     binding_issues,
@@ -3462,7 +3495,7 @@ def _collect_occurrences(
                     continue
                 _claim_occurrence(
                     record,
-                    SymbolOccurrence(source_range, "semantic_port_connection"),
+                    SymbolOccurrence(source_range, provenance),
                     range_claims,
                 )
     return _resolve_range_claims(records, range_claims)

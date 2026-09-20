@@ -659,8 +659,16 @@ class T111RecordScopePreserveTests(unittest.TestCase):
             mutated = original.replace(b"1'b0", b"1'b1")
             self.assertNotEqual(mutated, original)
             target.write_bytes(mutated)
+            # Published filelists contain absolute gate paths. Bind this
+            # single-file negative to its mutated copy, not the original gate.
+            (negative / "design.f").write_text(str(target.resolve()) + "\n")
             negative_set = from_filelist(
                 filelist=negative / "design.f", top="t111_formal_top"
+            )
+            self.assertEqual(
+                tuple((negative_set.source_root / file).resolve()
+                      for file in negative_set.ordered_source_files),
+                (target.resolve(),),
             )
             # A functional negative, not a compile error.
             self.assertEqual(

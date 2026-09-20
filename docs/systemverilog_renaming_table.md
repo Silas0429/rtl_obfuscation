@@ -23,6 +23,9 @@ PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-b
 
 宏对象本身不加密。宏正文或实参中的 identifier 只有在 PySlang 直接绑定某个选中 RTL symbol 且物理来源
 唯一时才作为该 symbol 的 occurrence；多个 symbol 共享同一物理 token 时报告 `macro_origin_conflict` 并保留。
+named port connection 的标签同样按标签自身的 `SourceManager` 位置区分普通连接、宏正文与宏实参，
+不按连接表达式推断来源。真实宏共享冲突只保留涉及的对象；无法读取来源时报告
+`source_binding_incomplete` 并保留相关记录。普通 `.port` 简写等未知跨记录冲突仍沿用整组保留规则。
 
 ## 死源码引用保留
 
