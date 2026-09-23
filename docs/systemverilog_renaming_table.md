@@ -23,8 +23,10 @@ PySlang compile/elaborate 是语义唯一来源。改名记录只来自 source-b
 - struct member reference 使用 PySlang 直接 `FieldSymbol` target 的 declaration location 绑定；不按名称、文件顺序或 token 顺序选择。
 - 固定 packed/unpacked struct/union 数组及 typedef-array alias 链按直接类型关系判断活跃性；
   只改写源码实际写出的 aggregate typedef 名称，不为中间 array alias 新增记录或伪造元素类型引用。
-  未使用的 scalar/array typedef alias 声明本身不能激活类型。嵌套 aggregate 字段的类型传播、
-  动态/关联数组和 queue 不因此获得支持；完整性、只读文件及 rewrite root 保护继续生效。
+  嵌套 aggregate 字段可沿直接类型关系继续激活具名类型；字段声明里实际写出的 NamedType
+  必须同时具有真实 FieldSymbol 绑定和唯一物理 token，多个 declarator 共享的类型 token 只改一次。
+  内联 aggregate 可作为类型关系载体，但不新增匿名类型记录。未使用的 typedef 声明本身不能
+  激活类型；动态/关联数组和 queue 不因此获得支持。完整性、只读文件及 rewrite root 保护继续生效。
 - interface instance array 只为 source-backed array root 建记录，elaborated element 只作 alias，不产生空名称或伪造 range。
 - source-less semantic node、隐式 conversion 和 compiler metadata 不产生 edit。
 - 不能证明唯一 owner、semantic target 或物理 range 时，相关对象/核心组安全保留并报告位置；绝不猜测。

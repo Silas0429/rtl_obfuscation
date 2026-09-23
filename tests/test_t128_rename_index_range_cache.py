@@ -134,7 +134,7 @@ class T128RenameIndexRangeCacheTests(unittest.TestCase):
         self.assertEqual(sum(len(item.occurrences) for item in self.index.symbols), 70)
         self.assertEqual(len(self.t115_index.symbols), 56)
         self.assertEqual(
-            sum(len(item.occurrences) for item in self.t115_index.symbols), 125
+            sum(len(item.occurrences) for item in self.t115_index.symbols), 126
         )
         self.assertEqual(
             self.t108_digest,
@@ -142,7 +142,7 @@ class T128RenameIndexRangeCacheTests(unittest.TestCase):
         )
         self.assertEqual(
             self.t115_digest,
-            "dbbc8fb76135251abcd8f87dca6e78ce3a5df7c19101e1c3907f020d8dd49a78",
+            "1099de8c3ec0ffa69fc6a082aa65ddda31e76df31e3d95c24e55483fa6f311c1",
         )
 
     def test_build_uses_one_context_and_one_resolution_per_hashable_buffer(self):

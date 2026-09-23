@@ -298,6 +298,7 @@ class _SemanticWorkset:
         struct: list[Any] = []
         declaration: list[Any] = []
         occurrence: list[Any] = []
+        type_roots: list[Any] = []
         dead_source: list[Any] = []
         completeness: list[Any] = []
         semantic_names: set[str] = set()
@@ -313,6 +314,8 @@ class _SemanticWorkset:
             node_type = type(node).__name__
             declared_type, declared_type_known = _declared_type_fact(node)
             has_alias = type(declared_type).__name__ in _TYPE_REFERENCE_ROOTS
+            if has_alias:
+                type_roots.append(declared_type)
             if alias_facts is not None:
                 alias_facts.append(has_alias if declared_type_known else None)
             try:
@@ -351,6 +354,14 @@ class _SemanticWorkset:
                 "GenerateBlockSymbol",
             }:
                 dead_source.append(node)
+
+        # Root.visit does not expose aggregate fields.  Follow the catalog's
+        # direct type relationships, including fields outside the selected top,
+        # so readonly and completeness checks see their real source references.
+        occurrence.extend(
+            node for node in _type_reference_nodes(type_roots)
+            if type(node).__name__ == "FieldSymbol"
+        )
 
         top_interface: list[Any] = []
         top_type: list[Any] = []
@@ -515,7 +526,42 @@ def _safe_attr(value: object, name: str, default: object = None) -> object:
 
 _MISSING_DECLARED_TYPE = object()
 _FIXED_ARRAY_TYPES = frozenset({"PackedArrayType", "FixedSizeUnpackedArrayType"})
-_TYPE_REFERENCE_ROOTS = _FIXED_ARRAY_TYPES | {"TypeAliasType"}
+_AGGREGATE_TYPES = frozenset({
+    "PackedStructType", "UnpackedStructType", "PackedUnionType", "UnpackedUnionType",
+})
+_TYPE_REFERENCE_ROOTS = _FIXED_ARRAY_TYPES | _AGGREGATE_TYPES | {"TypeAliasType"}
+
+
+def _type_reference_nodes(roots: Iterable[Any]) -> Iterable[Any]:
+    """Follow direct alias, fixed-array and aggregate-field relationships.
+
+    Only successfully read edges are deduplicated; missing or failing getters
+    remain unknown and may be retried on another encounter.  Holding the actual
+    wrappers prevents address reuse and keeps parameter specializations distinct.
+    """
+    seen: dict[int, object] = {}
+    pending = list(reversed(tuple(roots)))
+    while pending:
+        node = pending.pop()
+        kind = type(node).__name__
+        if kind not in _TYPE_REFERENCE_ROOTS and kind != "FieldSymbol":
+            continue
+        if id(node) in seen:
+            continue
+        yield node
+        try:
+            if kind in _FIXED_ARRAY_TYPES:
+                children = (node.elementType,)
+            elif kind == "TypeAliasType":
+                children = (node.targetType.type,)
+            elif kind == "FieldSymbol":
+                children = (node.declaredType.type,)
+            else:
+                children = tuple(member for member in node if type(member).__name__ == "FieldSymbol")
+        except Exception:
+            continue
+        seen[id(node)] = node
+        pending.extend(reversed(children))
 
 
 def _declared_type_fact(node: object) -> tuple[object, bool]:
@@ -1144,19 +1190,11 @@ def _top_active_types(
         roots = [_safe_attr(_safe_attr(node, "declaredType"), "type")]
         if type(node).__name__ == "ConversionExpression" and not _safe_attr(node, "isImplicit", False):
             roots.append(_safe_attr(node, "type"))
-        for target in roots:
-            seen: dict[int, object] = {}
-            while type(target).__name__ in _TYPE_REFERENCE_ROOTS and id(target) not in seen:
-                # Identity is semantic-wrapper identity, not a physical key or
-                # canonical shape that could merge parameter specializations.
-                seen[id(target)] = target
-                if type(target).__name__ in _FIXED_ARRAY_TYPES:
-                    target = _safe_attr(target, "elementType")
-                    continue
+        for target in _type_reference_nodes(roots):
+            if type(target).__name__ == "TypeAliasType":
                 key = _definition_key(catalog, target, context=context)
                 if key is not None:
                     result.add(key)
-                target = _safe_attr(_safe_attr(target, "targetType"), "type")
     return result
 
 
@@ -1829,7 +1867,20 @@ def _type_occurrence_range(
     context: _RangePathContext | None = None,
 ) -> SourceRange | None:
     declared = getattr(node, "declaredType", None)
-    syntax = getattr(declared, "typeSyntax", None)
+    if type(node).__name__ == "FieldSymbol":
+        # Only an actual None admits the structural syntax edge.  A getter
+        # raising AttributeError must not masquerade as a missing value.
+        syntax = declared.typeSyntax
+    else:
+        syntax = getattr(declared, "typeSyntax", None)
+    if syntax is None and type(node).__name__ == "FieldSymbol":
+        declarator = getattr(node, "syntax", None)
+        parent = getattr(declarator, "parent", None)
+        if _kind_name(getattr(declarator, "kind", None)) != "Declarator":
+            return None
+        if _kind_name(getattr(parent, "kind", None)) != "StructUnionMember":
+            return None
+        syntax = getattr(parent, "type", None)
     if _kind_name(getattr(syntax, "kind", None)) != "NamedType":
         return None
     return _syntax_identifier_range(
@@ -3337,8 +3388,13 @@ def _collect_occurrences(
                 source_range, _member_access_provenance(catalog, node)
             )
             _claim_occurrence(record, occurrence, range_claims)
-        declared = getattr(node, "declaredType", None)
-        target = _source_spelled_type_alias(getattr(declared, "type", None))
+        if node_type == "FieldSymbol":
+            # A failed field getter leaves its physical token unattributed;
+            # the unchanged completeness guard then prevents a partial rename.
+            declared_type, _ = _declared_type_fact(node)
+        else:
+            declared_type = getattr(getattr(node, "declaredType", None), "type", None)
+        target = _source_spelled_type_alias(declared_type)
         if type(target).__name__ == "TypeAliasType":
             alias_key = _definition_key(catalog, target, context=context)
             symbol_id = alias_map.get(alias_key) if alias_key is not None else None

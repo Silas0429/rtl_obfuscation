@@ -11,14 +11,19 @@ shape-independent question of ``token_first_binding.md`` section 2 instead:
     unattributed, attributed meaning bound to a semantic reference or to a
     declaration.
 
-The fixture carries two mutually independent shapes.  Shape one is the fail-open
+The fixture carries two mutually independent shapes.  Shape one was the fail-open
 recorded in ``token_first_binding.md`` section 2.1: a typedef used both as a
 variable type and as another aggregate's member type, where the member-type
-``NamedType`` reference is bound to nothing, produces no issue, and used to let
+``NamedType`` reference used to be bound to nothing, produced no issue, and let
 the declaration be renamed on its own -- after which the gate no longer compiled.
 Shape two is a second typedef of the same core group whose every token is
 attributed, and it must keep renaming, which is what proves the preserve is per
 record rather than per group.
+
+T147 now binds that real member-type reference.  The safety tests below inject
+the original missing claim at exactly design.sv [1880, 1892), while keeping the
+semantic tree, physical token denominator and attribution rules intact.  A
+separate normal path proves all three type tokens actually rename.
 
 Two of the assertions here exist to stop a fix that only looks like one:
 
@@ -45,6 +50,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from rtl_obfuscator import rename_index as rename_index_module
 from rtl_obfuscator.mapping_vnext import build_mapping_vnext
@@ -85,7 +91,19 @@ class T115NameCompletenessTests(unittest.TestCase):
     def setUpClass(cls):
         cls.source_set = from_filelist(filelist=FIXTURE / "design.f", top="t115_top")
         cls.catalog = build_source_catalog(cls.source_set)
-        cls.index = build_rename_index(cls.catalog, categories=("all",))
+        cls.normal_index = build_rename_index(cls.catalog, categories=("all",))
+        real_claim = rename_index_module._claim_occurrence
+
+        def omit_member_type(record, occurrence, claims):
+            value = occurrence.source_range
+            if (record.category, record.name, value.file, value.start, value.end) == (
+                "struct", "t115_inner_t", "design.sv", 1880, 1892
+            ):
+                return
+            return real_claim(record, occurrence, claims)
+
+        with patch.object(rename_index_module, "_claim_occurrence", side_effect=omit_member_type):
+            cls.index = build_rename_index(cls.catalog, categories=("all",))
         cls.files = tuple(
             dict.fromkeys(
                 (
@@ -239,12 +257,12 @@ class T115NameCompletenessTests(unittest.TestCase):
         return result.returncode, json.loads(report.read_text(encoding="utf-8"))
 
     def _pre_t115_index(self) -> RenameIndex:
-        """This run's own decision set with the new preserve flipped back.
+        """This run's fault decision set with its safety preserve flipped back.
 
         The pre-fix gate is not a hand-edited forgery.  The criterion is the last
         rule applied and only ever touches records that were still eligible, so
         flipping its preserves back to ``rename`` reproduces exactly the decision
-        set the product emitted before this task.
+        set for the exact missing-reference fault, without repairing its ranges.
         """
 
         flipped = sum(
@@ -268,6 +286,28 @@ class T115NameCompletenessTests(unittest.TestCase):
                 for decision in self.index.decisions
             ),
         )
+
+    def test_normal_nested_reference_renames_all_three_tokens_and_audits_clean(self):
+        record, = [r for r in self.normal_index.symbols if (r.category, r.name) == SHAPE_ONE]
+        self.assertEqual((record.support, record.reason), ("eligible", None))
+        self.assertEqual(
+            [(r.file, r.start, r.end) for r in (record.declaration, *(o.source_range for o in record.occurrences))],
+            [("design.sv", 1757, 1769), ("design.sv", 1880, 1892), ("design.sv", 2085, 2097)],
+        )
+        fault = self._one(category=SHAPE_ONE[0], name=SHAPE_ONE[1])
+        self.assertEqual(len(fault.occurrences), 1)
+        # The injected missing claim changes exactly one physical record.
+        for normal, damaged in zip(self.normal_index.symbols, self.index.symbols):
+            if normal.symbol_id != record.symbol_id:
+                self.assertEqual(normal, damaged)
+        with tempfile.TemporaryDirectory(prefix="t115-normal-") as temporary:
+            root = Path(temporary)
+            gate = self._publish(self.normal_index, root, "normal")
+            self.assertNotIn(SHAPE_ONE[1].encode(), (gate / "design.sv").read_bytes())
+            exit_code, audited = self._audit(gate, root / "normal.json")
+            self.assertEqual((exit_code, audited["verdict"]), (0, "clean"))
+            self.assertEqual(audited["implicit_nets"]["gate_only"], 0)
+            self.assertEqual(audited["renamed_range_bytes"]["mismatched"], 0)
 
     # --- T115 5: the fixture is not the T113 shape --------------------------
 
@@ -358,9 +398,9 @@ class T115NameCompletenessTests(unittest.TestCase):
 
         The typedef is written three times: its own declaration, the member type
         of the second aggregate, and a variable type.  The product binds the first
-        and the third.  The second is a ``NamedType`` reference that PySlang binds
-        to no reference node and reports no issue for, which is why renaming the
-        declaration alone used to produce a gate that no longer compiled.
+        and the third in the fault path.  The second's exact occurrence claim is
+        deliberately omitted, without deleting its semantic FieldSymbol or CST
+        token.  Renaming this incomplete set must still fail strict compilation.
         """
 
         name = SHAPE_ONE[1]
@@ -597,6 +637,12 @@ class T115NameCompletenessTests(unittest.TestCase):
             self.assertFalse((root / "before").exists())
 
             after_gate = self._publish(self.index, root, "after")
+            fault_mapping = json.loads((after_gate / "mapping.json").read_text())["mapping"]
+            preserved, = [r for r in fault_mapping["records"]
+                          if r["reason"] == "incomplete_name_coverage"]
+            self.assertEqual((preserved["category"], preserved["original_name"]), SHAPE_ONE)
+            self.assertEqual(preserved["action"], "preserve")
+            self.assertIsNone(preserved["renamed_name"])
             after_exit, after = self._audit(after_gate, root / "after.json")
             self.assertEqual(after["verdict"], "clean")
             self.assertEqual(after_exit, 0)
@@ -651,17 +697,18 @@ class T115NameCompletenessTests(unittest.TestCase):
                 self.assertGreater(outcomes[category]["rename"], 0, category)
                 for issue in outcomes[category]["issues"]:
                     self.assertIn(issue["message"], ALLOWED_REASONS, issue)
-            # The published mapping carries the new reason for the operator.
+            # The normal public path now binds the nested type reference.
             preserved = {
                 (record["category"], record["original_name"])
                 for record in report["mapping"]["records"]
                 if record["reason"] == "incomplete_name_coverage"
             }
-            self.assertEqual(preserved, {SHAPE_ONE})
-            for record in report["mapping"]["records"]:
-                if record["reason"] == "incomplete_name_coverage":
-                    self.assertEqual(record["action"], "preserve")
-                    self.assertIsNone(record["renamed_name"])
+            self.assertEqual(preserved, set())
+            normal, = [r for r in report["mapping"]["records"]
+                       if (r["category"], r["original_name"]) == SHAPE_ONE]
+            self.assertEqual(normal["action"], "rename")
+            self.assertEqual(len(normal["occurrences"]), 2)
+            self.assertNotIn(SHAPE_ONE[1].encode(), (gate / "design.sv").read_bytes())
             _, audited = self._audit(gate, root / "cli_audit.json")
             self.assertEqual(audited["verdict"], "clean")
             self.assertEqual(audited["implicit_nets"]["gate_only"], 0)

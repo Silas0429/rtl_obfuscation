@@ -156,7 +156,12 @@ endmodule
             source = sources(Path(temporary), code)
             catalog = build_source_catalog(source)
             index = ri.build_rename_index(catalog, categories=("all",))
-            for name in ("payload_t", "field", "other_t", "other_field"):
+            for name in ("payload_t", "field"):
+                self.assertEqual(self._one(index, name).support, "eligible")
+            payload = self._one(index, "payload_t")
+            self.assertEqual([o.source_range.start for o in payload.occurrences],
+                             [code.index("payload_t inner")])
+            for name in ("other_t", "other_field"):
                 self.assertEqual(self._one(index, name).reason, "outside_top_closure")
             signals = ri.build_rename_index(catalog, categories=("signals",))
             self.assertFalse(any(s.category == "struct" for s in signals.symbols))
