@@ -377,6 +377,110 @@ def _validate_delivery_filelists_manifest(
     return expected_paths[1:]
 
 
+def _validate_flattened_delivery_manifest(
+    gate: Path,
+    source_set: SourceSet,
+    value: object,
+) -> tuple[str, ...]:
+    if source_set.origin != "filelist":
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery requires filelist origin")
+    if not isinstance(value, dict) or set(value) != {"design_sha256", "log_sha256", "sources"}:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery manifest is invalid")
+    design_digest = value["design_sha256"]
+    log_digest = value["log_sha256"]
+    sources = value["sources"]
+    if (
+        not isinstance(design_digest, str)
+        or _SHA256.fullmatch(design_digest) is None
+        or not isinstance(log_digest, str)
+        or _SHA256.fullmatch(log_digest) is None
+        or not isinstance(sources, list)
+        or len(sources) != len(source_set.ordered_source_files)
+    ):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery manifest members are invalid")
+
+    def regular_file(relative: str) -> Path:
+        if not _portable_file(relative):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery path is invalid")
+        candidate = gate / relative
+        current = gate
+        for component in Path(relative).parts:
+            current = current / component
+            if current.is_symlink():
+                _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery files must be physical")
+        try:
+            candidate.resolve().relative_to(gate.resolve())
+        except (OSError, RuntimeError, ValueError) as error:
+            _fail("RESTORE_VNEXT_GATE_INVALID", f"flattened delivery path escapes gate: {error}")
+        if not candidate.is_file():
+            _fail("RESTORE_VNEXT_GATE_INVALID", f"flattened delivery file is missing: {relative}")
+        return candidate
+
+    flat_root = gate / "src_flattened"
+    if flat_root.is_symlink() or not flat_root.is_dir():
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source directory is missing or not physical")
+
+    expected_flat_names: list[str] = []
+    expected_paths: list[str] = []
+    seen_names: set[str] = set()
+    for item, source in zip(sources, source_set.ordered_source_files):
+        if not isinstance(item, dict) or set(item) != {"source", "flat", "sha256"}:
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source manifest entry is invalid")
+        basename = Path(source).name
+        flat = f"src_flattened/{basename}"
+        digest = item["sha256"]
+        if (
+            item["source"] != source
+            or item["flat"] != flat
+            or not _portable_file(item["source"])
+            or not _portable_file(flat)
+            or not isinstance(digest, str)
+            or _SHA256.fullmatch(digest) is None
+            or basename in seen_names
+        ):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source manifest order or path is invalid")
+        seen_names.add(basename)
+        expected_flat_names.append(basename)
+        expected_paths.append(flat)
+        canonical = regular_file(source)
+        flat_path = regular_file(flat)
+        try:
+            canonical_bytes = canonical.read_bytes()
+            flat_bytes = flat_path.read_bytes()
+        except OSError as error:
+            _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
+        actual_digest = hashlib.sha256(canonical_bytes).hexdigest()
+        if (
+            flat_bytes != canonical_bytes
+            or actual_digest != digest
+            or hashlib.sha256(flat_bytes).hexdigest() != digest
+        ):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source content differs")
+
+    try:
+        actual_flat_names = sorted(path.name for path in flat_root.iterdir())
+    except OSError as error:
+        _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
+    if actual_flat_names != sorted(expected_flat_names):
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source inventory differs")
+    for child in flat_root.iterdir():
+        if child.is_symlink() or not child.is_file():
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened source entries must be regular files")
+
+    design_path = regular_file("design_flattened.f")
+    log_path = regular_file("src_flattened_log")
+    try:
+        design_bytes = design_path.read_bytes()
+        log_bytes = log_path.read_bytes()
+    except OSError as error:
+        _fail("RESTORE_VNEXT_GATE_INVALID", str(error))
+    if hashlib.sha256(design_bytes).hexdigest() != design_digest:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened design digest differs")
+    if hashlib.sha256(log_bytes).hexdigest() != log_digest:
+        _fail("RESTORE_VNEXT_GATE_INVALID", "flattened log digest differs")
+    return ("design_flattened.f", "src_flattened_log", *expected_paths)
+
+
 def _context_filelist_lines(
     source_set: SourceSet,
     *,
@@ -1038,8 +1142,17 @@ def _load_inputs(report_path: Path, gate_path: Path) -> tuple[dict[str, object],
     report = _read_json(report_path)
     expected_outer = {"format", "schema_version", "state", "source_set", "mapping", "mapping_execution", "metrics", "rate_metrics", "summary"}
     manifest_present = "delivery_filelists" in report
+    flattened_present = "flattened_delivery" in report
+    if flattened_present and not manifest_present:
+        _fail(
+            "RESTORE_VNEXT_GATE_INVALID",
+            "flattened delivery requires original filelist manifest",
+        )
+    optional_fields = ({"delivery_filelists"} if manifest_present else set()) | (
+        {"flattened_delivery"} if flattened_present else set()
+    )
     if (
-        set(report) != expected_outer | ({"delivery_filelists"} if manifest_present else set())
+        set(report) != expected_outer | optional_fields
         or report.get("format") != "rtl-obfuscation.orchestration-vnext"
         or report.get("schema_version") != 2
         or report.get("state") != "restored"
@@ -1055,7 +1168,23 @@ def _load_inputs(report_path: Path, gate_path: Path) -> tuple[dict[str, object],
         report.get("delivery_filelists"),
         manifest_present=manifest_present,
     )
-    _validate_gate_files(gate_path, files, report_path, nested_filelists)
+    if flattened_present:
+        flattened_files = _validate_flattened_delivery_manifest(
+            gate_path, source_set, report["flattened_delivery"]
+        )
+    else:
+        if any(
+            (gate_path / relative).exists() or (gate_path / relative).is_symlink()
+            for relative in ("src_flattened", "design_flattened.f", "src_flattened_log")
+        ):
+            _fail("RESTORE_VNEXT_GATE_INVALID", "flattened delivery artifacts require a manifest")
+        flattened_files = ()
+    _validate_gate_files(
+        gate_path,
+        files,
+        report_path,
+        (*nested_filelists, *flattened_files),
+    )
     gate_data = _read_files(gate_path, files)
     original_records = _parse_mapping_report(report["mapping"], source_set=source_set, source_data=None)
     execution = report.get("mapping_execution")

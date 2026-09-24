@@ -189,6 +189,15 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
   `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f` 同时在 gate 的原自然位置发布 export 子文件副本。
   原始 nested filelist 字节保存在 `.rtl_obfuscation/filelists/original`，`mapping.json` 的
   `delivery_filelists` 摘要用于 restore 核对原文路径 token 和交付文件。路径规则也适用于 `-v` 和 `+incdir+` 中的路径。
+- 公开 `--filelist` 另生成 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。
+  展平目录按递归 filelist 顺序复制每个显式 `.sv/.v` source unit（包括 `-v`）的 canonical gate 字节，
+  canonical gate 原路径保持不变；同名 basename 或 artifact 路径冲突会在发布前拒绝。
+  flat filelist 将 nested `-f` 就地展开，源码使用 `$OUT_FLAT/<basename>`，上下文和 include 目录使用
+  `$OUT/<source-root-relative-path>`，define 顺序保持不变。运行 Formal 时，将 `OUT` 设为 gate 目录、
+  `OUT_FLAT` 设为 `src_flattened/` 目录。CLI-only include-dir/define 不写进文件；已知需要的外部上下文、
+  找不到或无法证明的 include 会令 JSON 日志 `compile_ready=false` 并说明原因。
+  `compile_ready=true` 只表示未检测到此类风险，完整工程仍应实际编译或运行 Formal。
+  `mapping.json.flattened_delivery` 记录平面文件、filelist 和日志摘要，decrypt 会拒绝缺失、额外、symlink 或被改动的 flat 产物。
 
 include-only 物理依赖会复制到 gate，但不会新增 compile entry。`--input` 与
 `--source-root + --top` 没有原始 filelist，三份文件使用 canonical include/define/compile_order 视图。

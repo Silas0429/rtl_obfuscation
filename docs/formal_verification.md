@@ -45,6 +45,13 @@ Formal 输入必须满足：
   但不会增加 filelist 条目。CLI 另外提供的 include-dir / define
   不写入视图；本脚本没有对应的 `--include-dir` / `--define` 参数，需要使用分别补齐上下文的
   gold/gate 包装 filelist，或由下游 EDA 命令自行提供这些选项。
+- 显式 `--filelist` 还生成 `src_flattened/`（显式 source unit 的 canonical gate 字节副本）、`design_flattened.f`
+  和 `src_flattened_log`。flat filelist 将 nested `-f` 按有效顺序展开，source unit 用 `$OUT_FLAT/<basename>`，
+  context 和 include-dir 用 `$OUT/<source-root-relative-path>`，define 保留原有效顺序；运行时将 `OUT` 设为 gate
+  目录、`OUT_FLAT` 设为其 `src_flattened` 子目录。日志扫描 flat source 的 `` `include`` 并记录原目标、flat 目标和状态；
+  已知需要的 CLI-only include-dir/define 上下文或无法证明的 include 会令 `compile_ready=false`。
+  `compile_ready=true` 只代表扫描未发现迁移风险，不替代实际 compile/Formal。
+  `mapping.json.flattened_delivery` 保存 flat filelist、日志和源码副本摘要，restore 会审计文件内容和物理集合。
 - 三视图路径使用当前 filelist 语法的裸 token；为避免生成无法重放的路径，`--output-dir` 含空白时
   会在加密前拒绝。custom `--map` / `--metrics` 路径不受该 filelist 路径限制。
 
@@ -71,6 +78,23 @@ python scripts/formal_equivalence.py \
   --top <top_module> \
   --seq 5
 ```
+
+显式 filelist 的 flat view 可用同一 gold 输入单独验证：
+
+```sh
+OUT=<工作目录>/gate \
+OUT_FLAT=<工作目录>/gate/src_flattened \
+python scripts/formal_equivalence.py \
+  --gold-filelist <原始项目>/gold.f \
+  --gold-root <原始项目> \
+  --gate-filelist <工作目录>/gate/design_flattened.f \
+  --gate-root <工作目录>/gate \
+  --top <top_module> \
+  --seq 5
+```
+
+`gold.f` 应列出等价的 source、`-v`、include-dir 和 define 编译上下文。若 `src_flattened_log` 的
+`compile_ready` 为 false，应先按日志补齐或修正外部上下文，再把实际 Formal 结果作为验证结论。
 
 `--seq 5` 是默认的时序证明深度；如果项目需要更深的时序展开，可以改为更大的正整数。
 `--gold-root` 通常填写原始输入顶层 filelist 所在的项目目录；它只作为顶层相对 entry 的解析基准，

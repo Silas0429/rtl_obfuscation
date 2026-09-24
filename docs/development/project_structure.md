@@ -27,6 +27,7 @@ PySlang 是唯一语义权威。项目不再维护独立 SymbolGraph、RewritePo
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
 | `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate，并缓存已验证报告与后处理阶段事实 |
+| `rtl_obfuscator/flattened_delivery.py` | 从现有 SourceSet filelist entries 构建 compile-oriented flat filelist、显式源码副本和 include 风险 JSON；只写私有 gate staging |
 | `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；验证公开三视图及 nested filelist 闭包；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
 | `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、公开三视图、持久化运行记录和公共错误输出 |
@@ -103,6 +104,8 @@ CLI-only context 不注入。原始 nested filelist 字节另存于 `.rtl_obfusc
 顶层 `mapping.json.delivery_filelists` 按确定顺序记录原文相对路径和 SHA256，供 restore 严格检查 token、摘要和物理文件集合。
 `--input` 与 project-root 模式使用 canonical include/define/compile_order 三视图；include-only
 物理依赖仍进入 manifest/gate/restore，但不成为 compile entry。
+
+显式 public `--filelist` 还交付 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`：平面目录只复制显式 `.sv/.v` source unit，保留 canonical gate 的目录结构；flat filelist 在解析顺序上展开 nested `-f`，source path 指向 `$OUT_FLAT`，context、include-dir 和 define 使用 `$OUT` 或原值。include 日志按每个 flat source 记录原路径和展平后的目标；CLI-only context 不注入，无法证明时将 `compile_ready` 置为 false。`compile_ready=true` 只代表扫描未发现迁移风险。顶层 `mapping.json.flattened_delivery` 对 flat filelist、日志和每份平面源文件做摘要与物理文件集合审计，restore 对修改、缺失、额外项或 symlink fail closed。
 
 统计使用 `file_scope_vnext.py` 的有序物理范围：有 rewrite root 时，metrics 只统计 SourceSet
 已登记且落在 root 内的文件；`summary.files` 是统计范围文件数，`summary.physical_files` 是完整
