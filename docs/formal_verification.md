@@ -45,6 +45,13 @@ Formal 输入必须满足：
   这些规则覆盖 `-f`、`-v`、普通文件和 `+incdir+`。由 `` `include`` 发现但未显式列出的 header 仍随 gate 保留，
   但不会增加 filelist 条目。CLI 另外提供的 include-dir / define 不写入视图，
   Formal 调用时需另行传递对应 Yosys 选项。
+- 显式 `--filelist` 还生成 `src_flattened/`（显式 source unit 的 canonical gate 字节副本）、
+  `design_flattened.f` 和 `src_flattened_log`。flat filelist 将 nested `-f` 按有效顺序展开，source unit 使用
+  `$OUT_FLAT/<basename>`，context 和 include-dir 使用 `$OUT/<source-root-relative-path>`，define 保持原有效顺序；
+  Formal 时令 `OUT` 指向 gate 目录、`OUT_FLAT` 指向其中的 `src_flattened`。日志扫描 flat source 的 `` `include``，
+  并记录原目标、flat 目标和状态；需要 CLI-only context 或无法证明的 include 会令 `compile_ready=false`。
+  `compile_ready=true` 不替代实际 compile/Formal。`mapping.json.flattened_delivery` 保存 filelist、日志和源码副本摘要，
+  restore 审计其内容与物理文件集合。
 
 ## 多文件项目：推荐命令
 
@@ -71,6 +78,23 @@ python scripts/formal_equivalence.py \
 ```
 
 `--seq 5` 是默认的时序证明深度；如果项目需要更深的时序展开，可以改为更大的正整数。
+
+显式 filelist 的 flat view 可用等价的 gold 编译上下文单独验证：
+
+```sh
+OUT=<工作目录>/gate \
+OUT_FLAT=<工作目录>/gate/src_flattened \
+python scripts/formal_equivalence.py \
+  --gold-filelist <原始项目>/gold.f \
+  --gold-root <原始项目> \
+  --gate-filelist <工作目录>/gate/design_flattened.f \
+  --gate-root <工作目录>/gate \
+  --top <top_module> \
+  --seq 5
+```
+
+`gold.f` 应列出等价的 source、`-v`、include-dir 和 define 编译上下文。若 `src_flattened_log` 的
+`compile_ready` 为 false，应按日志补齐或修正外部上下文，再以实际 Formal 结果作为验证结论。
 
 ## 单文件：简化命令
 

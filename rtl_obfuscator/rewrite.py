@@ -21,6 +21,10 @@ import unicodedata
 
 from rtl_obfuscator import orchestration_vnext
 from rtl_obfuscator import restore_vnext
+from rtl_obfuscator.flattened_delivery import (
+    FlattenedDeliveryError,
+    build_flattened_delivery,
+)
 from rtl_obfuscator.category_registry_vnext import (
     CANONICAL_CATEGORIES,
     CategoryRegistryError,
@@ -1375,6 +1379,21 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
                 directory_aliases=filelist_views.directory_aliases,
                 physical_files=tuple(physical_files),
             )
+            try:
+                flattened_delivery = build_flattened_delivery(
+                    source_set,
+                    gate_dir,
+                    cli_defines=tuple(getattr(args, "defines", ()) or ()),
+                )
+            except FlattenedDeliveryError as error:
+                _cli_vnext_fail(
+                    "CLI_VNEXT_ORCHESTRATION_INVALID",
+                    f"flattened delivery failed: {error}",
+                )
+            except OSError as error:
+                _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+            report["flattened_delivery"] = flattened_delivery.manifest
+            _cli_vnext_write_json_atomic(staged_map, report)
         else:
             _cli_vnext_write_text_atomic(
                 gate_dir / "design.f",

@@ -32,6 +32,7 @@ value-reference/selection/member 根位置建映射；字段、索引表达式�
 | `rtl_obfuscator/mapping_vnext.py` | 消费 RenameIndex，生成 mapping schema 2 和 range/manifest 审计 |
 | `rtl_obfuscator/rewrite_vnext.py` | 一次性应用物理 ranges，生成 gate、严格编译并从 gate 恢复 |
 | `rtl_obfuscator/orchestration_vnext.py` | 串联 mapping、rewrite、restore、metrics 和 rate |
+| `rtl_obfuscator/flattened_delivery.py` | 从现有 SourceSet filelist entries 构建 compile-oriented flat filelist、显式源码副本和 include 风险 JSON；只写 private gate staging |
 | `rtl_obfuscator/restore_vnext.py` | 只使用持久化 schema 2 证据恢复；验证公开三视图 filelist；拒绝 schema 1 |
 | `rtl_obfuscator/formal_vnext.py` | 提供 Formal 相关的 PySlang/source-range 视图 |
 | `rtl_obfuscator/rewrite.py` | 共享 CLI 参数、三种输入模式检查、filelist-only `--rewrite-root`、持久化运行记录、公开三视图 filelist 和公共错误输出 |
@@ -89,6 +90,12 @@ reachable nested `-f` 仍按各自原始顺序镜像到 `.rtl_obfuscation/fileli
 CLI-only context 不注入。原始 nested filelist 字节另存于 `.rtl_obfuscation/filelists/original`，
 顶层 `mapping.json.delivery_filelists` 按确定顺序记录原文相对路径和 SHA256，供 restore 严格检查 token、摘要和物理文件集合。
 `--input` 与 project-root 模式因没有原始 filelist，仍使用 canonical 三视图。include-only 物理依赖仍只复制而不增加 filelist 条目。
+
+公开 `--filelist` 还生成 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。平面目录只复制显式
+`.sv/.v` source unit，保留 canonical gate 的原目录层级；flat filelist 按有效顺序展开 nested `-f`，source 使用
+`$OUT_FLAT`，context 与 include-dir 使用 `$OUT`。日志扫描每份 flat source 的 `` `include``，记录原目标、flat 目标与状态；
+CLI-only context 或无法证明的 include 会令 `compile_ready=false`。`compile_ready=true` 只表示扫描未发现迁移风险。
+顶层 `mapping.json.flattened_delivery` 对 flat filelist、日志和每份平面源文件做摘要和物理文件集合审计，restore 对篡改、缺失、额外项或 symlink fail closed。
 
 统计范围由 FAST 与 FULL 共用：提供 rewrite root 时取 SourceSet 已登记 physical files 与 rewrite roots 的有序交集；
 未提供时使用全部 physical files。该范围只影响 metrics、覆盖率、代码行数和加密率，完整 physical manifest、gate、

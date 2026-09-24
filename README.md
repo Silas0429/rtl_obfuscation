@@ -218,6 +218,15 @@ filelist 条目。mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
 semantic kind、物理 declaration/occurrences、action 和 reason。
 
+公开 `--filelist` 还交付 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。
+平面目录按递归 filelist 顺序复制每个显式 `.sv/.v` source unit（包括 `-v`）的 canonical gate 字节，
+原层级文件不变；同名 basename 或 flat artifact 路径冲突会在发布前拒绝。flat filelist 将 nested `-f`
+就地展开，源码路径写 `$OUT_FLAT/<basename>`，上下文和 include 目录写 `$OUT/<source-root-relative-path>`，
+define 顺序和值保持不变。运行 Formal 时，`OUT` 指向 gate 目录，`OUT_FLAT` 指向 gate 的 `src_flattened/`。
+`src_flattened_log` 记录 include 的原目标与平面目标；无法解析、目标变化或需要 CLI-only 编译上下文时，
+`compile_ready=false` 并附原因。`compile_ready=true` 只表示扫描没有发现迁移风险，实际工程仍需运行 compile 或 Formal。
+`mapping.json.flattened_delivery` 保存 filelist、日志和逐个平面源文件的摘要，decrypt 会拒绝缺失、额外、symlink 或被改动的 flat 产物。
+
 ```sh
 python rtl_decrypt.py \
   --map <gate>/mapping.json \
