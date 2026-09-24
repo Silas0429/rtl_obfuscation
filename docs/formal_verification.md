@@ -36,10 +36,14 @@ Formal 输入必须满足：
   `+define+NAME=VALUE` 会分别传给 gold/gate 的 Yosys `read_verilog`。
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
-- 公开 `--filelist` 生成的三份视图保留顶层与 nested `-f` 的原始顺序和结构：
-  `design.f` 指向当前 gate 绝对路径，`export_design.f` 使用 `$OUT`，
-  `original_design.f` 与顶层输入逐字节一致。由 `` `include`` 发现但未显式列出的 header 仍随
-  gate 保留，但不会增加 filelist 条目。CLI 另外提供的 include-dir / define 不写入视图，
+- 公开 `--filelist` 的 `original_design.f` 保留顶层输入逐字节内容，`design.f` 使用 gate 绝对路径。`export_design.f`
+  对含环境变量的路径 token 保留原文，交付后须在新环境中重设这些变量；无变量的绝对路径使用 `$OUT` 加原绝对路径，
+  并在 gate 内发布对应的普通物理文件或已登记的目录内物理依赖；无变量的相对路径继续使用 `$OUT` 加源码根相对路径。
+  reachable nested `-f` 结构和顺序保持不变；环境变量形式的 `-f` 在源码根相对位置另有 export 子文件副本。
+  原始 nested filelist 字节保存在 `.rtl_obfuscation/filelists/original`；`mapping.json.delivery_filelists` 记录
+  `original_design.f` 与这些快照的相对路径和 SHA256，restore 用它们验证原文 token、快照字节和物理文件集合。
+  这些规则覆盖 `-f`、`-v`、普通文件和 `+incdir+`。由 `` `include`` 发现但未显式列出的 header 仍随 gate 保留，
+  但不会增加 filelist 条目。CLI 另外提供的 include-dir / define 不写入视图，
   Formal 调用时需另行传递对应 Yosys 选项。
 
 ## 多文件项目：推荐命令

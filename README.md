@@ -200,15 +200,19 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 `mapping.json`、`metrics.json`、`mapping_table.csv` 和 `encryption_summary.txt`：
 
 - `design.f` 使用当前输出目录的绝对路径，可从任意工作目录直接使用；
-- `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
+- canonical 模式的 `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
 - `original_design.f` 与 `--filelist` 指定的顶层 filelist 逐字节一致，便于 gold/gate 对照。
 
 公开 `--filelist` 模式以原始顶层 filelist 和 nested `-f` 文本为模板：不增删条目、
-不改顺序、不丢弃 `-v` / `-f` / 注释 / 空行，只把 bare source/context、`-v`、
-`-f` 和 `+incdir+` 中的路径替换为 gate 绝对路径或 `$OUT` 路径。nested filelist 在
-`.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export` 中分别保留递归结构。
-CLI 单独提供的 `--include-dir` / `--define` 不会注入这三份 filelist；下游编译时仍需单独
-传入。`--input` 和 `--source-root + --top` 没有原始 filelist，仍生成 canonical 三视图。
+不改顺序、不丢弃 `-v` / `-f` / 注释 / 空行。`design.f` 将路径替换为 gate 绝对路径；
+在 `export_design.f` 中，含环境变量的路径 token 保留原文，须在新环境中重设对应变量；无变量的绝对路径
+写成 `$OUT` 加原绝对路径，并在 gate 内发布对应的普通物理副本；无变量的相对路径使用 `$OUT` 加源码根相对路径。
+这些规则适用于普通条目、`-v`、`-f` 和 `+incdir+`。reachable nested filelist 分别镜像到
+`.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f`
+还会在 gate 的原自然位置发布 export 子文件副本。原始 nested filelist 字节写入
+`.rtl_obfuscation/filelists/original`，`mapping.json.delivery_filelists` 记录原文路径与 SHA256，restore 据此审计 token、摘要和交付文件。
+CLI 单独提供的 `--include-dir` / `--define` 不会注入这三份 filelist；下游编译时仍需单独传入。
+`--input` 和 `--source-root + --top` 没有原始 filelist，仍生成 canonical 三视图。
 由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
 filelist 条目。mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
