@@ -53,3 +53,9 @@ conda run -n rtl_obfuscation python -c 'from pathlib import Path; p=Path("docs/t
 - review_request: self-gates are complete; after final `git diff --check HEAD` and READY status guard, Main Agent can independently rerun the five contract gates. No commit or push by this sub-agent.
 
 Main Agent 验收记录：2026-09-24 独立重跑五条门禁，依次 exit 0。T151 4/4，原始 RTL 对实际 FAST renamed flat gate 的 Formal `pass`（top `t149_top`，seq 5）；T150/T137/restore 14/14，包含 T137 固定功能负例；`py_compile`、`git diff --check HEAD` 和精确 `READY_FOR_REVIEW` 守卫均通过。展平 helper 与 main 已验收 T149 版本 SHA256 相同，审查白名单中的发布、manifest 和恢复审计改动，接受本任务。
+
+### T152 路由证据勘误
+
+T151 的合同、状态 `ACCEPTED` 和上述验收原文保留。T151 正例加密命令带有 `--top t149_top`；当前 FAST dispatch 要求 `SourceSet.top is None`，因此该测试验证的是 FAST 分支上的通用路径 filelist/flat 交付与 Formal，不是快速 dispatch。此前验收记录中的“实际 FAST renamed flat gate”措辞应按此修正理解。
+
+实际快速路径证据见 [`T152_actual_fast_flat_delivery_gate.md`](T152_actual_fast_flat_delivery_gate.md) 与冻结黑盒 `tests/test_t152_actual_fast_flat_delivery.py`：命令省略 `--top`，使用 filelist、`--rewrite-root`、仅 `signals` 且无 rate；报告断言 `source_set.top is None`，并验证 canonical/flat 字节一致、strict compile、restore 和 actual flat-gate Formal。独立结果：`T152_FAST_FLAT_FORMAL {"formal_equivalence":"pass","gate":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t152-fast-flat-m9k8se1e/gate","gold":"/var/folders/cp/bx46stb947z85y3_zdrnwxj40000gn/T/t152-fast-flat-m9k8se1e/project","seq":5,"top":"t130_top"}`。
