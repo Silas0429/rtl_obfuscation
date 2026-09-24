@@ -80,6 +80,9 @@ class FilelistPathViews:
     export: bytes
     design_nested: tuple[tuple[str, bytes], ...]
     export_nested: tuple[tuple[str, bytes], ...]
+    original_nested: tuple[tuple[str, bytes], ...]
+    file_aliases: tuple[tuple[str, str], ...]
+    directory_aliases: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -688,6 +691,11 @@ def render_filelist_path_views(
     environment_snapshot = dict(os.environ if environment is None else environment)
     design_documents: dict[str, bytes] = {}
     export_documents: dict[str, bytes] = {}
+    original_documents: dict[str, bytes] = {}
+    nested_discovery_order: list[str] = []
+    seen_nested: set[str] = set()
+    file_aliases: dict[str, str] = {}
+    directory_aliases: dict[str, str] = {}
     document_cache: dict[Path, tuple[bytes, bytes]] = {}
     active: tuple[Path, ...] = ()
 
@@ -695,6 +703,54 @@ def render_filelist_path_views(
         if export:
             return "$OUT" if relative == "." else f"$OUT/{relative}"
         return (output / relative).resolve().as_posix()
+
+    def absolute_export_relative(token: str) -> str:
+        if not token.startswith("/"):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT", "absolute filelist path is invalid", token
+            )
+        relative = posixpath.normpath(token.lstrip("/"))
+        if relative == ".." or relative.startswith("../"):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT", "absolute export path escapes output", token
+            )
+        return relative if relative != "." else "."
+
+    def absolute_export_token(token: str) -> str:
+        suffix = token.lstrip("/")
+        return "$OUT" if not suffix else f"$OUT/{suffix}"
+
+    def add_alias(
+        aliases: dict[str, str], alias: str, canonical: str, *, label: str
+    ) -> None:
+        if alias == canonical or alias == ".":
+            return
+        if not alias or any(part in {"", ".", ".."} for part in alias.split("/")):
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT", f"{label} path cannot be published", alias
+            )
+        previous = aliases.get(alias)
+        if previous is not None and previous != canonical:
+            raise SourceSetError(
+                "SOURCESET_INVALID_ARGUMENT", f"{label} path has conflicting targets", alias
+            )
+        aliases[alias] = canonical
+
+    def export_path_token(
+        raw: str, relative: str, *, kind: str
+    ) -> str:
+        if _ENVIRONMENT_VARIABLE.search(raw):
+            return raw
+        if Path(raw).is_absolute():
+            alias = absolute_export_relative(raw)
+            if kind == "directory":
+                add_alias(
+                    directory_aliases, alias, relative, label="absolute directory alias"
+                )
+            else:
+                add_alias(file_aliases, alias, relative, label="absolute file alias")
+            return absolute_export_token(raw)
+        return delivery_path(relative, export=True)
 
     def nested_delivery_path(relative: str, *, export: bool) -> str:
         prefix = ".rtl_obfuscation/filelists/export" if export else ".rtl_obfuscation/filelists/design"
@@ -738,8 +794,30 @@ def render_filelist_path_views(
             del child_relative_unused
             relative = _relative_to_root(root, child, label="nested filelist")
             visit(child, next_active)
+            if export:
+                if _ENVIRONMENT_VARIABLE.search(tokens[1]):
+                    add_alias(
+                        file_aliases,
+                        relative,
+                        f".rtl_obfuscation/filelists/export/{relative}",
+                        label="environment filelist alias",
+                    )
+                    replacement = tokens[1]
+                elif Path(tokens[1]).is_absolute():
+                    alias = absolute_export_relative(tokens[1])
+                    add_alias(
+                        file_aliases,
+                        alias,
+                        f".rtl_obfuscation/filelists/export/{relative}",
+                        label="absolute filelist alias",
+                    )
+                    replacement = absolute_export_token(tokens[1])
+                else:
+                    replacement = nested_delivery_path(relative, export=True)
+            else:
+                replacement = nested_delivery_path(relative, export=False)
             return replace_token(
-                content, 1, nested_delivery_path(relative, export=export)
+                content, 1, replacement
             )
 
         if text.startswith("+incdir+"):
@@ -754,9 +832,14 @@ def render_filelist_path_views(
                     "SOURCESET_INVALID_ARGUMENT", "include directory is invalid", text
                 )
             directories, _defines = context
-            replacement = "+incdir+" + "+".join(
-                delivery_path(relative, export=export) for relative in directories
-            )
+            raw_values = tokens[0][len("+incdir+") :].split("+")
+            replacements = [
+                export_path_token(raw, relative, kind="directory")
+                if export
+                else delivery_path(relative, export=False)
+                for raw, relative in zip(raw_values, directories)
+            ]
+            replacement = "+incdir+" + "+".join(replacements)
             return replace_token(content, 0, replacement)
 
         if text.startswith("+define+"):
@@ -780,9 +863,13 @@ def render_filelist_path_views(
             environment=environment_snapshot,
             base=canonical.parent,
         )
-        return replace_token(
-            content, token_index, delivery_path(relative, export=export)
+        raw = tokens[token_index]
+        replacement = (
+            export_path_token(raw, relative, kind="file")
+            if export
+            else delivery_path(relative, export=False)
         )
+        return replace_token(content, token_index, replacement)
 
     def render_document(
         canonical: Path, *, export: bool, next_active: tuple[Path, ...]
@@ -829,6 +916,15 @@ def render_filelist_path_views(
             )
         next_active = (*ancestors, canonical)
         relative = _relative_to_root(root, canonical, label="nested filelist")
+        if canonical != top and relative not in seen_nested:
+            seen_nested.add(relative)
+            nested_discovery_order.append(relative)
+            try:
+                original_documents[relative] = canonical.read_bytes()
+            except OSError as error:
+                raise SourceSetError(
+                    "SOURCESET_FILE_NOT_FOUND", "filelist cannot be read", str(canonical)
+                ) from error
         design = render_document(canonical, export=False, next_active=next_active)
         exported = render_document(canonical, export=True, next_active=next_active)
         document_cache[canonical] = (design, exported)
@@ -850,6 +946,12 @@ def render_filelist_path_views(
         export=exported,
         design_nested=tuple(design_documents.items()),
         export_nested=tuple(export_documents.items()),
+        original_nested=tuple(
+            (relative, original_documents[relative])
+            for relative in nested_discovery_order
+        ),
+        file_aliases=tuple(file_aliases.items()),
+        directory_aliases=tuple(directory_aliases.items()),
     )
 
 

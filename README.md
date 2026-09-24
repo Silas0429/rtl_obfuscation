@@ -183,8 +183,12 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 
 - `original_design.f` 是顶层输入 filelist 的逐字节副本；
 - `design.f` 保留原始行序、注释、空行、`-v`、`-f`、`+incdir+` 和 `+define+`，只把路径替换成 gate 绝对路径；
-- `export_design.f` 使用 `$OUT`，可在移动后的交付目录中编译；reachable nested filelist 分别镜像到
-  `.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`。
+- `export_design.f` 对含环境变量的路径 token 保留原文，用户在新环境中重设变量；无变量的绝对路径写成
+  `$OUT` 加原绝对路径，并在 gate 中发布对应的普通物理副本；无变量的相对路径使用 `$OUT` 加源码根相对路径。
+  reachable nested filelist 仍按原顺序分别写入 `.rtl_obfuscation/filelists/design` 和
+  `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f` 同时在 gate 的原自然位置发布 export 子文件副本。
+  原始 nested filelist 字节保存在 `.rtl_obfuscation/filelists/original`，`mapping.json` 的
+  `delivery_filelists` 摘要用于 restore 核对原文路径 token 和交付文件。路径规则也适用于 `-v` 和 `+incdir+` 中的路径。
 
 include-only 物理依赖会复制到 gate，但不会新增 compile entry。`--input` 与
 `--source-root + --top` 没有原始 filelist，三份文件使用 canonical include/define/compile_order 视图。

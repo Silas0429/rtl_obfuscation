@@ -1117,6 +1117,78 @@ def _cli_vnext_filelist(
     return "".join(f"{line}\n" for line in lines)
 
 
+def _cli_vnext_materialize_filelist_aliases(
+    gate_dir: Path,
+    *,
+    file_aliases: tuple[tuple[str, str], ...],
+    directory_aliases: tuple[tuple[str, str], ...],
+    physical_files: tuple[str, ...],
+) -> None:
+    """Publish only physical copies required by the public export view."""
+
+    aliases: dict[str, str] = {}
+
+    def add(alias: str, source: str) -> None:
+        if alias == source:
+            return
+        previous = aliases.get(alias)
+        if previous is not None and previous != source:
+            _cli_vnext_fail(
+                "CLI_VNEXT_ORCHESTRATION_INVALID",
+                f"filelist alias has conflicting targets: {alias}",
+            )
+        aliases[alias] = source
+
+    for alias, source in file_aliases:
+        add(alias, source)
+    directory_targets: list[tuple[str, str]] = []
+    for alias, source in directory_aliases:
+        if alias == source:
+            continue
+        directory_targets.append((alias, source))
+        for physical in physical_files:
+            if source == ".":
+                suffix = physical
+            elif physical.startswith(f"{source}/"):
+                suffix = physical[len(source) + 1 :]
+            else:
+                continue
+            add(f"{alias}/{suffix}" if suffix else alias, physical)
+
+    try:
+        for alias, source in aliases.items():
+            source_path = gate_dir / source
+            target_path = gate_dir / alias
+            if source_path.is_symlink() or not source_path.is_file():
+                _cli_vnext_fail(
+                    "CLI_VNEXT_ORCHESTRATION_INVALID",
+                    f"filelist alias source is not a regular file: {source}",
+                )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_path.exists() or target_path.is_symlink():
+                if (
+                    target_path.is_symlink()
+                    or not target_path.is_file()
+                    or target_path.read_bytes() != source_path.read_bytes()
+                ):
+                    _cli_vnext_fail(
+                        "CLI_VNEXT_ORCHESTRATION_INVALID",
+                        f"filelist alias collides with a different gate file: {alias}",
+                    )
+                continue
+            shutil.copy2(source_path, target_path)
+        for alias, _source in directory_targets:
+            directory = gate_dir / alias
+            if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
+                _cli_vnext_fail(
+                    "CLI_VNEXT_ORCHESTRATION_INVALID",
+                    f"filelist directory alias collides with a gate file: {alias}",
+                )
+            directory.mkdir(parents=True, exist_ok=True)
+    except (OSError, shutil.Error) as error:
+        _cli_vnext_fail("CLI_VNEXT_IO_ERROR", str(error))
+
+
 def _cli_vnext_remove(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
@@ -1258,6 +1330,21 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
             _cli_vnext_write_bytes_atomic(
                 gate_dir / "original_design.f", filelist_views.original
             )
+            original_filelists = [{
+                "path": "original_design.f",
+                "sha256": hashlib.sha256(filelist_views.original).hexdigest(),
+            }]
+            for relative, payload in filelist_views.original_nested:
+                snapshot_relative = f".rtl_obfuscation/filelists/original/{relative}"
+                _cli_vnext_write_bytes_atomic(
+                    gate_dir / snapshot_relative, payload
+                )
+                original_filelists.append({
+                    "path": snapshot_relative,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                })
+            report["delivery_filelists"] = {"originals": original_filelists}
+            _cli_vnext_write_json_atomic(staged_map, report)
             for relative, payload in filelist_views.design_nested:
                 _cli_vnext_write_bytes_atomic(
                     gate_dir / ".rtl_obfuscation/filelists/design" / relative,
@@ -1268,6 +1355,19 @@ def _encrypt_vnext(args: argparse.Namespace) -> dict[str, Any]:
                     gate_dir / ".rtl_obfuscation/filelists/export" / relative,
                     payload,
                 )
+            physical_files: list[str] = []
+            for relative in (
+                *source_set.ordered_source_files,
+                *source_set.included_files,
+            ):
+                if relative not in physical_files:
+                    physical_files.append(relative)
+            _cli_vnext_materialize_filelist_aliases(
+                gate_dir,
+                file_aliases=filelist_views.file_aliases,
+                directory_aliases=filelist_views.directory_aliases,
+                physical_files=tuple(physical_files),
+            )
         else:
             _cli_vnext_write_text_atomic(
                 gate_dir / "design.f",

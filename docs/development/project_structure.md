@@ -93,9 +93,14 @@ top、parse 和 semantic 诊断由 SourceCatalog 在后续阶段报告。Filelis
 observer 和单调时钟；成功运行把同源计时、启动命令、工作目录和最终总结写入
 `encryption_summary.txt`，其中总用时不包含最后总结文件写入本身。
 
-公开 `--filelist` 模式发布 `original_design.f`、绝对路径 `design.f` 和 `$OUT` 路径
-`export_design.f`；nested `-f` 只复制顶层闭包可达的结构到两套 `.rtl_obfuscation/filelists/*`
-镜像。原始行序、注释、空行、`-v`、`+incdir+` 与 `+define+` 保持不变，CLI-only context 不注入。
+公开 `--filelist` 模式发布逐字节原文 `original_design.f`、gate 绝对路径 `design.f` 和可搬迁的
+`export_design.f`。export 对含环境变量的路径 token 保留原文；无变量的绝对路径写作 `$OUT` 加原绝对路径，
+并在 gate 内复制对应的普通物理文件或已登记的目录内物理依赖；无变量的相对路径写作 `$OUT` 加源码根相对路径。reachable
+nested `-f` 仍按各自原始顺序镜像到 `.rtl_obfuscation/filelists/design` 与
+`.rtl_obfuscation/filelists/export`；环境变量形式的 `-f` 还会在源码根相对位置发布 export 子文件副本。
+这些路径规则覆盖 `-f`、`-v`、普通文件和 `+incdir+`。行序、注释、空白、换行符及 `+define+` 保持原样，
+CLI-only context 不注入。原始 nested filelist 字节另存于 `.rtl_obfuscation/filelists/original`，
+顶层 `mapping.json.delivery_filelists` 按确定顺序记录原文相对路径和 SHA256，供 restore 严格检查 token、摘要和物理文件集合。
 `--input` 与 project-root 模式使用 canonical include/define/compile_order 三视图；include-only
 物理依赖仍进入 manifest/gate/restore，但不成为 compile entry。
 

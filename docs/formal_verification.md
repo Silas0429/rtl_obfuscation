@@ -35,9 +35,14 @@ Formal 输入必须满足：
   `+incdir+A+B`、`+define+NAME=VALUE`，并递归处理 `-f`。
 - source unit 可以是小写 `.sv` 或 `.v`；被 source include 的物理 header 可以是 `.svh` 或 `.vh`。
   这些后缀仍按当前 SystemVerilog 语义模式解析，Formal 不提供 strict legacy-Verilog parser。
-- 公开 `--filelist` 的 `original_design.f` 保留顶层输入逐字节内容，`design.f` 使用 gate 绝对路径，
-  `export_design.f` 使用 `$OUT`；reachable nested `-f` 结构和顺序保持不变。由 `` `include`` 发现但未
-  显式列出的 header 仍随 gate 保留，但不会增加 filelist 条目。CLI 另外提供的 include-dir / define
+- 公开 `--filelist` 的 `original_design.f` 保留顶层输入逐字节内容，`design.f` 使用 gate 绝对路径。`export_design.f`
+  对含环境变量的路径 token 保留原文，交付后须在新环境中重设这些变量；无变量的绝对路径使用 `$OUT` 加原绝对路径，
+  并在 gate 内发布对应的普通物理文件或已登记的目录内物理依赖；无变量的相对路径继续使用 `$OUT` 加源码根相对路径。
+  reachable nested `-f` 结构和顺序保持不变；环境变量形式的 `-f` 在源码根相对位置另有 export 子文件副本。
+  原始 nested filelist 字节保存在 `.rtl_obfuscation/filelists/original`；`mapping.json.delivery_filelists` 记录
+  `original_design.f` 与这些快照的相对路径和 SHA256，restore 用它们验证原文 token、快照字节和物理文件集合。
+  这些规则覆盖 `-f`、`-v`、普通文件和 `+incdir+`。由 `` `include`` 发现但未显式列出的 header 仍随 gate 保留，
+  但不会增加 filelist 条目。CLI 另外提供的 include-dir / define
   不写入视图；本脚本没有对应的 `--include-dir` / `--define` 参数，需要使用分别补齐上下文的
   gold/gate 包装 filelist，或由下游 EDA 命令自行提供这些选项。
 - 三视图路径使用当前 filelist 语法的裸 token；为避免生成无法重放的路径，`--output-dir` 含空白时
