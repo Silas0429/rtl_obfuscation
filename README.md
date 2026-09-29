@@ -1,27 +1,140 @@
-# RTL Obfuscation
+# RTL 名称加密工具
 
-本项目使用 PySlang 的编译与 elaboration 结果识别 RTL 名称，并对有完整物理绑定证据的对象进行改名。
-实际工程请优先使用显式 filelist；工具不修改宏对象，也不会猜测 owner、scope 或源码 token。
+本项目依据 SystemVerilog 结构或语义及源码物理位置改写 RTL 名称，并交付可恢复的源码、filelist、映射和报告。
+真实工程使用显式 filelist；`.sv` 和 `.v` 都按 SystemVerilog 处理。当前有两种交付方案：
 
-## 3 分钟快速开始
+| 方案 | 分支 | 适用情况 | 处理范围 |
+| --- | --- | --- | --- |
+| 快速加密 | `delivery/fast-local-signals` | 大型工程先加密自有 RTL 中的局部信号 | 仅 `signals`；只检查白名单目录中 module 直接声明的信号及可证明的引用 |
+| 全量加密 | `main` | 需要四组名称的完整语义识别 | `signals`、`ports`、`interface`、`struct`；由 PySlang 编译和 elaboration 提供语义绑定 |
+
+“全量”表示选择全部四组，**不表示所有名称都会改写**。两种方案都保留无法安全证明的对象，
+都对完整 filelist 做输入检查、交付 gate、严格编译和逐字节恢复校验。`--rewrite-root` 限定允许改写的
+目录，目录外文件仍是编译上下文。快速路径跳过全量 SourceCatalog/语义改名索引，适合先处理局部信号。
+两条路径的识别依据不同，不应把两次运行的改名数量直接当作性能或覆盖率对比。
+
+## 服务器上使用（选择一个分支）
+
+以下示例在 Linux x86_64 服务器的仓库根目录执行。把队列、项目、filelist、自有 RTL 目录和输出目录
+换成自己的值。若已进入可用的服务器 shell，可从第 2 步开始。
+
+### 1. 进入交互式服务器（按集群配置调整）
 
 ```sh
-quick_work="$(mktemp -d /tmp/rtl-obfuscation-quick.XXXXXX)"
-python rtl_encrypt.py \
-  --filelist rtl_samples/example_fifo/design.f \
-  --top fifo_top \
-  --category signals \
-  --output-dir "$quick_work/gate"
-cat "$quick_work/gate/encryption_summary.txt"
-python rtl_decrypt.py \
-  --map "$quick_work/gate/mapping.json" \
-  --gate-dir "$quick_work/gate" \
-  --output-dir "$quick_work/restored"
+bsub \
+  -q inta \
+  -P ABC \
+  -Is \
+  -n 1 \
+  -R "span[hosts=1] rusage[mem=65536]" \
+  bash
 ```
 
-成功条件：命令退出码为 `0`，`summary.strict_compile_passed` 和
-`summary.restored_byte_identical` 均为 `true`。结果中的 `rename`、`preserve`、`unsupported`
-分别表示实际改名、按边界保留、因证据不足保留。
+### 2. 克隆仓库并切换分支
+
+```sh
+git clone https://gitlab.sunrise-ai.com/SenseGemini/RTL_ENDECRYPTOR.git
+cd RTL_ENDECRYPTOR
+git checkout delivery/fast-local-signals   # 快速加密；全量加密则改为 git checkout main
+git branch --show-current
+```
+
+两种方案是**两个分支**。切换分支后先确认 `git branch --show-current` 的输出，再运行该分支的命令。
+
+### 3. 准备 Python 环境
+
+```sh
+python3.11 --version
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --no-index --no-deps \
+  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+```
+
+仓库自带的 wheel 只适用于 CPython 3.11 / Linux x86_64；其他平台需安装匹配的 PySlang 11.x。
+已有提供 PySlang 的 Python 环境可直接使用。
+
+### 4. 配置输入与输出路径
+
+```sh
+export FILELIST=/absolute/path/to/project/design.f
+export REWRITE=/absolute/path/to/project/src
+export OUT=/absolute/path/to/output/gate
+```
+
+`FILELIST` 是原工程顶层 `.f` 文件的绝对路径；`REWRITE` 是自己拥有且允许改写的 RTL 目录，
+必须存在并命中至少一个 filelist 显式源码；`OUT` 是本次 gate 输出目录的绝对路径，
+**运行前不能存在**，但它的父目录必须存在。filelist 中用到的 `$NAME` / `${NAME}` 环境变量，
+也要在运行加密前设置。多块自有目录可重复传 `--rewrite-root`。
+
+### 5A. 快速加密：`delivery/fast-local-signals`
+
+```sh
+python rtl_encrypt.py \
+  --filelist "$FILELIST" \
+  --rewrite-root "$REWRITE" \
+  --category signals \
+  --output-dir "$OUT"
+```
+
+这一命令要保持 **只有 `signals`、不传 `--top`、不传 `--encryption-rate`**，才能进入快速路径。
+增加 `--top` 或加密率，或选择其他类别，会在该分支转入通用语义流程。快速路径主要处理
+module 内直接声明的 `logic`、`wire` 和部分简单命名类型变量；端口、function/task 局部变量、
+interface、struct 字段等不在快速改写范围。它仍会对完整 filelist 做一次预处理和语法解析。
+
+### 5B. 全量加密：`main`
+
+选择全量方案时切换到 `main`，仍可使用上面同一组环境变量：
+
+```sh
+git checkout main
+export OUT=/absolute/path/to/output/gate_full
+python rtl_encrypt.py \
+  --filelist "$FILELIST" \
+  --rewrite-root "$REWRITE" \
+  --category all \
+  --output-dir "$OUT"
+```
+
+`all` 展开为四组：`signals`、`ports`、`interface`、`struct`。这里不传 `--top`，以整份 filelist
+为候选范围；如只需指定顶层的层次闭包，可在 `main` 命令增加 `--top TOP`，但顶层对外端口等 ABI
+对象会按边界保留。上面给全量运行单独设置了 `gate_full`，避免覆盖快速运行的输出。
+
+### 6. 查看结果与恢复
+
+```sh
+cat "$OUT/encryption_summary.txt"
+python rtl_decrypt.py \
+  --map "$OUT/mapping.json" \
+  --gate-dir "$OUT" \
+  --output-dir "${OUT}_restored"
+```
+
+加密命令退出码为 `0` 后，检查 stdout JSON 中 `summary.strict_compile_passed` 和
+`summary.restored_byte_identical` 均为 `true`；`encryption_summary.txt` 给出改名和保留数量。
+`rename` 是决定改名的对象，`preserve` 是按安全边界保留的对象，`unsupported` 是当前证据不足的对象；
+不要仅凭命令成功推断每个信号都已改写。恢复目录 `${OUT}_restored` 也必须尚不存在。
+
+## 加密命令参数
+
+| 参数 | 含义与使用建议 |
+| --- | --- |
+| `--filelist FILE` | 真实工程首选输入；顶层 `.f` filelist，按原顺序读取源码、嵌套 `-f` 和编译上下文 |
+| `--rewrite-root DIR` | 仅 filelist 模式；允许改写的自有源码目录，可重复；目录外仍参加编译但保持只读 |
+| `--category NAME` | 必填，可重复；可选 `signals`、`ports`、`interface`、`struct`、`all`；`all` 展开四组 |
+| `--output-dir DIR` | gate 输出目录；父目录存在、目标目录在运行前不存在；filelist 输出路径避免空格 |
+| `--top TOP` | filelist 模式可选、project-root 模式必填；限制选中顶层闭包并保留顶层 ABI；快速路径不要传 |
+| `--encryption-rate RATE` | 可选目标行加密率，`0 < RATE <= 1`；快速路径不要传，选择后实际编辑数可能少于改名决策数 |
+| `--include-dir PATH` | 额外 include 搜索目录，可重复；CLI 参数不会写进交付 filelist |
+| `--define NAME[=VALUE]` | 额外预处理宏，可重复；CLI 参数不会写进交付 filelist |
+| `--name-length N` | 新名称长度，至少 4，默认 20 |
+| `--map PATH` | 自定义 `mapping.json` 路径；默认位于 gate 目录 |
+| `--metrics PATH` | 自定义 `metrics.json` 路径；默认位于 gate 目录 |
+| `--quiet` | 关闭 stderr 的进度和总结；stdout JSON 与失败诊断仍保留 |
+| `--input FILE` | 辅助单文件输入，与 `--filelist`、`--source-root` 互斥 |
+| `--source-root DIR` | 辅助 project-root 输入，须配 `--top`；与 `--filelist` 互斥 |
+
+以下章节说明 filelist 细节、输出文件和其他输入模式。
 
 ## 终端输出：stdout 是机器接口，stderr 是给人看的
 
@@ -41,11 +154,11 @@ python rtl_encrypt.py \
   --output-dir <尚不存在的输出目录> > summary.json
 ```
 
-进度按既有流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
-SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验。
-真实工程上编译与索引通常是主要耗时段，所以分阶段计时比只报总时间有用。
+进度按流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
+SourceSet、构建映射、写出加密结果、逐字节回填校验。全量路径还显示 PySlang 编译、elaboration
+与语义改名索引；快速路径显示对应的预处理、语法解析和局部改名阶段。
 
-编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
+全量路径的编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
 `compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
 成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行会把当前 Python
 executable、脚本、shell 已展开的完整 argv、工作目录以及这些计时行写入
@@ -70,19 +183,10 @@ executable、脚本、shell 已展开的完整 argv、工作目录以及这些�
 输入失败会指出位置：文件缺失给出解析后的绝对路径以及它来自哪个 filelist 的第几行；
 解析或 elaborate 错误给出 `文件:行:列`、诊断码和该行源码，并注明诊断总条数。
 
-## Filelist 模式（真实工程首选）
+## Filelist 模式细节
 
-```sh
-python rtl_encrypt.py \
-  --filelist design.f \
-  --top <可选的顶层模块名> \
-  --rewrite-root <允许改写的自有 RTL 目录> \
-  --category signals \
-  --output-dir <尚不存在的输出目录>
-```
-
-`--category` 必须显式提供，可重复使用，允许值只有：
-`signals`、`ports`、`interface`、`struct`、`all`。`all` 按固定顺序展开为四个核心组。
+上面的 FAST 和 FULL 命令都使用 filelist 模式。`--category` 可重复使用；`all` 按固定顺序
+展开为四个核心组。
 
 filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
 unit，当前语义与同位置的裸 `PATH` 完全相同，不用它判断供应商归属，也不提供仿真器的惰性
@@ -148,9 +252,9 @@ python rtl_encrypt.py \
 未提供时保持原有的全 filelist source 改写候选语义。`--rewrite-root` 是用户授权白名单，不会按目录名、版权头或
 `-v` 自动识别供应商代码；请指向真正拥有且允许改写的最小目录。
 
-#### filelist 的 signals 快速路径边界
+#### `delivery/fast-local-signals` 的 signals 快速路径边界
 
-当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
+仅在 `delivery/fast-local-signals` 分支，当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
 `signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
 快速路径。完整 filelist 只做一次预处理和语法解析，随后只在 rewrite-root 内显式 source unit
 的 `ModuleDeclaration` 中检查直接 `logic`/`wire` 或未限定的用户自定义命名类型 declarator（CST
@@ -160,7 +264,8 @@ value-expression CST 位置和唯一物理字节范围证明的同名引用才�
 `.` 左侧的根 identifier；字段名、索引表达式中的名字、`::` scope 和层次路径保持不改。
 ports、function/task locals、package/global、interface 对象、struct/union 类型定义与字段以及
 rewrite-root 外文件保持不改；直接 struct-typed module 变量的根名仍按上述规则处理。
-歧义对象以 `syntax_local_ambiguous` 保留。其他输入继续使用现有通用流程；快速路径自身遇到无法证明的
+歧义对象以 `syntax_local_ambiguous` 保留。`main` 分支没有此快速路由；该交付分支的其他输入
+继续使用通用流程。快速路径自身遇到无法证明的
 绑定或编译问题会原子失败，绝不静默回退慢路径。
 
 PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/
@@ -263,31 +368,6 @@ python rtl_decrypt.py \
 给某个语义引用或某个声明时才改名，否则保留所有拼写该名字的记录。它与具体语法形态无关，因此
 同时覆盖已知和未知的漏改面，代价是可改名的对象变少。这是有意的取舍：改得少但可证明正确，
 优于编译通过但功能错误。
-
-## 常用参数
-
-| 选项 | 说明 |
-| --- | --- |
-| `--include-dir PATH` | include 目录，可重复 |
-| `--rewrite-root DIR` | 仅 filelist 加密模式；允许改写的目录，可重复 |
-| `--define NAME[=VALUE]` | 预处理宏，可重复 |
-| `--category NAME` | 四组之一或 `all`，可重复且必填 |
-| `--name-length N` | 新名称长度，最小 4，默认 20 |
-| `--encryption-rate RATE` | 目标行加密率，`0 < RATE <= 1` |
-| `--map PATH` | 自定义 mapping 路径 |
-| `--metrics PATH` | 自定义 metrics 路径 |
-| `--quiet` | 不在 stderr 输出进度与加密总结；stdout 的 JSON 不受影响 |
-
-## 安装
-
-准备 Python 3.10+ 和 PySlang 11.x 后，在仓库根目录运行：
-
-```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --no-index --no-deps \
-  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-```
 
 更多开发者说明见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)、
 [Formal 流程](docs/formal_verification.md) 和 [开发文档索引](docs/development/README.md)。
