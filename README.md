@@ -1,24 +1,19 @@
-# RTL 名称加密工具
+# RTL 工程加密
 
-本项目依据 SystemVerilog 结构或语义及源码物理位置改写 RTL 名称，并交付可恢复的源码、filelist、映射和报告。
-真实工程使用显式 filelist；`.sv` 和 `.v` 都按 SystemVerilog 处理。当前有两种交付方案：
+本项目读取工程 filelist，加密 SystemVerilog RTL 中可安全改写的名称，并输出加密源码、编译 filelist、映射和恢复所需文件。实际使用时选择以下一个分支：
 
-| 方案 | 分支 | 适用情况 | 处理范围 |
-| --- | --- | --- | --- |
-| 快速加密 | `delivery/fast-local-signals` | 大型工程先加密自有 RTL 中的局部信号 | 仅 `signals`；只检查白名单目录中 module 直接声明的信号及可证明的引用 |
-| 全量加密 | `main` | 需要四组名称的完整语义识别 | `signals`、`ports`、`interface`、`struct`；由 PySlang 编译和 elaboration 提供语义绑定 |
+| 方案 | 分支 | 加密内容 |
+| --- | --- | --- |
+| 快速加密 | `delivery/fast-local-signals` | 仅处理自有 RTL 中 module 直接声明的局部 `signals` 及可确认的引用 |
+| 全量加密 | `main` | 以指定 `TOP` 为顶层，处理其层次闭包中的 `signals`、`ports`、`interface`、`struct` 四组 |
 
-“全量”表示选择全部四组，**不表示所有名称都会改写**。两种方案都保留无法安全证明的对象，
-都对完整 filelist 做输入检查、交付 gate、严格编译和逐字节恢复校验。`--rewrite-root` 限定允许改写的
-目录，目录外文件仍是编译上下文。快速路径跳过全量 SourceCatalog/语义改名索引，适合先处理局部信号。
-两条路径的识别依据不同，不应把两次运行的改名数量直接当作性能或覆盖率对比。
+“全量”指选择四组名称；遇到无法确认的引用、只读文件或顶层接口边界时，工具会保留相关名称，不保证全部改名。
 
-## 服务器上使用（选择一个分支）
+## 使用方法
 
-以下示例在 Linux x86_64 服务器的仓库根目录执行。把队列、项目、filelist、自有 RTL 目录和输出目录
-换成自己的值。若已进入可用的服务器 shell，可从第 2 步开始。
+### 1. 进入服务器
 
-### 1. 进入交互式服务器（按集群配置调整）
+如果已经在可运行的服务器环境中，从第 2 步开始。以下资源参数按所在集群调整：
 
 ```sh
 bsub \
@@ -30,42 +25,35 @@ bsub \
   bash
 ```
 
-### 2. 克隆仓库并切换分支
+### 2. 克隆仓库并选择分支
 
 ```sh
 git clone https://gitlab.sunrise-ai.com/SenseGemini/RTL_ENDECRYPTOR.git
 cd RTL_ENDECRYPTOR
-git checkout delivery/fast-local-signals   # 快速加密；全量加密则改为 git checkout main
-git branch --show-current
 ```
 
-两种方案是**两个分支**。切换分支后先确认 `git branch --show-current` 的输出，再运行该分支的命令。
+快速加密执行 `git checkout delivery/fast-local-signals`；全量加密执行 `git checkout main`。运行 `git branch --show-current` 确认当前分支。
 
 ### 3. 准备 Python 环境
 
+仓库内的 PySlang wheel 适用于 CPython 3.11、Linux x86_64：
+
 ```sh
-python3.11 --version
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --no-index --no-deps \
   wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 ```
 
-仓库自带的 wheel 只适用于 CPython 3.11 / Linux x86_64；其他平台需安装匹配的 PySlang 11.x。
-已有提供 PySlang 的 Python 环境可直接使用。
-
-### 4. 配置输入与输出路径
+### 4. 配置工程路径
 
 ```sh
 export FILELIST=/absolute/path/to/project/design.f
 export REWRITE=/absolute/path/to/project/src
-export OUT=/absolute/path/to/output/gate
+export OUT=/absolute/path/to/output/gate_fast
 ```
 
-`FILELIST` 是原工程顶层 `.f` 文件的绝对路径；`REWRITE` 是自己拥有且允许改写的 RTL 目录，
-必须存在并命中至少一个 filelist 显式源码；`OUT` 是本次 gate 输出目录的绝对路径，
-**运行前不能存在**，但它的父目录必须存在。filelist 中用到的 `$NAME` / `${NAME}` 环境变量，
-也要在运行加密前设置。多块自有目录可重复传 `--rewrite-root`。
+`FILELIST` 指向原工程顶层 `.f` 文件；`REWRITE` 指向允许改写的自有 RTL 目录。两者建议使用绝对路径。`OUT` 是加密输出目录：父目录必须存在，`OUT` 本身在运行前不能存在。若 filelist 中使用了 `$NAME` 或 `${NAME}`，也要提前设置相应环境变量。
 
 ### 5A. 快速加密：`delivery/fast-local-signals`
 
@@ -77,30 +65,26 @@ python rtl_encrypt.py \
   --output-dir "$OUT"
 ```
 
-这一命令要保持 **只有 `signals`、不传 `--top`、不传 `--encryption-rate`**，才能进入快速路径。
-增加 `--top` 或加密率，或选择其他类别，会在该分支转入通用语义流程。快速路径主要处理
-module 内直接声明的 `logic`、`wire` 和部分简单命名类型变量；端口、function/task 局部变量、
-interface、struct 字段等不在快速改写范围。它仍会对完整 filelist 做一次预处理和语法解析。
+快速路径要求只选择 `signals`，并且**不传 `--top` 或 `--encryption-rate`**。改成其他组合会离开快速路径。
 
 ### 5B. 全量加密：`main`
 
-选择全量方案时切换到 `main`，仍可使用上面同一组环境变量：
+全量教程必须指定顶层模块。若已按第 2 步切到 `main`，只需设置 `TOP` 和新的 `OUT`：
 
 ```sh
-git checkout main
+export TOP=AIClusterWrapper
 export OUT=/absolute/path/to/output/gate_full
 python rtl_encrypt.py \
   --filelist "$FILELIST" \
   --rewrite-root "$REWRITE" \
+  --top "$TOP" \
   --category all \
   --output-dir "$OUT"
 ```
 
-`all` 展开为四组：`signals`、`ports`、`interface`、`struct`。这里不传 `--top`，以整份 filelist
-为候选范围；如只需指定顶层的层次闭包，可在 `main` 命令增加 `--top TOP`，但顶层对外端口等 ABI
-对象会按边界保留。上面给全量运行单独设置了 `gate_full`，避免覆盖快速运行的输出。
+把 `AIClusterWrapper` 换成工程的顶层 module 名。`all` 选择四组名称；`--top` 让工具按该顶层的层次闭包处理，并保留顶层对外接口边界。
 
-### 6. 查看结果与恢复
+### 6. 检查结果与恢复
 
 ```sh
 cat "$OUT/encryption_summary.txt"
@@ -110,264 +94,16 @@ python rtl_decrypt.py \
   --output-dir "${OUT}_restored"
 ```
 
-加密命令退出码为 `0` 后，检查 stdout JSON 中 `summary.strict_compile_passed` 和
-`summary.restored_byte_identical` 均为 `true`；`encryption_summary.txt` 给出改名和保留数量。
-`rename` 是决定改名的对象，`preserve` 是按安全边界保留的对象，`unsupported` 是当前证据不足的对象；
-不要仅凭命令成功推断每个信号都已改写。恢复目录 `${OUT}_restored` 也必须尚不存在。
+加密成功时退出码为 `0`，stdout JSON 中的 `summary.strict_compile_passed` 和 `summary.restored_byte_identical` 应为 `true`。`encryption_summary.txt` 汇总改名、保留和不支持对象数；`$OUT/design.f` 是加密后的编译 filelist。恢复目录 `${OUT}_restored` 在运行前也不能存在。
 
 ## 加密命令参数
 
-| 参数 | 含义与使用建议 |
+| 参数 | 含义 |
 | --- | --- |
-| `--filelist FILE` | 真实工程首选输入；顶层 `.f` filelist，按原顺序读取源码、嵌套 `-f` 和编译上下文 |
-| `--rewrite-root DIR` | 仅 filelist 模式；允许改写的自有源码目录，可重复；目录外仍参加编译但保持只读 |
-| `--category NAME` | 必填，可重复；可选 `signals`、`ports`、`interface`、`struct`、`all`；`all` 展开四组 |
-| `--output-dir DIR` | gate 输出目录；父目录存在、目标目录在运行前不存在；filelist 输出路径避免空格 |
-| `--top TOP` | filelist 模式可选、project-root 模式必填；限制选中顶层闭包并保留顶层 ABI；快速路径不要传 |
-| `--encryption-rate RATE` | 可选目标行加密率，`0 < RATE <= 1`；快速路径不要传，选择后实际编辑数可能少于改名决策数 |
-| `--include-dir PATH` | 额外 include 搜索目录，可重复；CLI 参数不会写进交付 filelist |
-| `--define NAME[=VALUE]` | 额外预处理宏，可重复；CLI 参数不会写进交付 filelist |
-| `--name-length N` | 新名称长度，至少 4，默认 20 |
-| `--map PATH` | 自定义 `mapping.json` 路径；默认位于 gate 目录 |
-| `--metrics PATH` | 自定义 `metrics.json` 路径；默认位于 gate 目录 |
-| `--quiet` | 关闭 stderr 的进度和总结；stdout JSON 与失败诊断仍保留 |
-| `--input FILE` | 辅助单文件输入，与 `--filelist`、`--source-root` 互斥 |
-| `--source-root DIR` | 辅助 project-root 输入，须配 `--top`；与 `--filelist` 互斥 |
+| `--filelist "$FILELIST"` | 按原工程 filelist 读取源码和编译上下文 |
+| `--rewrite-root "$REWRITE"` | 只允许改写此目录中的自有源码；多个自有目录可重复传入此参数 |
+| `--top "$TOP"` | 全量教程必用：指定顶层模块，限定处理的层次闭包；快速路径不传 |
+| `--category signals` / `--category all` | 前者选择快速局部信号；后者选择全量四组名称 |
+| `--output-dir "$OUT"` | 写入新的输出目录；目录在运行前不能存在 |
 
-以下章节说明 filelist 细节、输出文件和其他输入模式。
-
-## 终端输出：stdout 是机器接口，stderr 是给人看的
-
-两个流分工固定，互不影响：
-
-| 流 | 内容 |
-| --- | --- |
-| stdout | 一行 JSON，`format=rtl-obfuscation.cli-vnext`、`schema_version=2`，供脚本解析 |
-| stderr | 各阶段的实时进度与累计用时，以及结束时的加密总结 |
-
-所以运行时终端同时看到进度和总结；只想看总结就把 stdout 重定向到文件：
-
-```sh
-python rtl_encrypt.py \
-  --filelist design.f \
-  --category all \
-  --output-dir <尚不存在的输出目录> > summary.json
-```
-
-进度按流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
-SourceSet、构建映射、写出加密结果、逐字节回填校验。全量路径还显示 PySlang 编译、elaboration
-与语义改名索引；快速路径显示对应的预处理、语法解析和局部改名阶段。
-
-全量路径的编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
-`compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
-成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行会把当前 Python
-executable、脚本、shell 已展开的完整 argv、工作目录以及这些计时行写入
-`encryption_summary.txt`；计时行与 stderr 逐行逐字符同源。`--quiet` 仅压制 stderr，不关闭
-持久化记录。失败或被 SIGKILL 的运行仍不会发布半成品 summary。
-
-加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
-总文件数 / 加密文件数 / 文件覆盖率，以及
-改名对象数(rename) / 保留对象数(preserve) / 不支持对象数(unsupported) / 实际修改对象数。
-其中**加密文件数**和**实际修改对象数**指真正落地了编辑的文件数与记录数：`rename` 是决策数，
-`实际修改对象数` 是字节确实被改写的记录数，使用 `--encryption-rate` 时前者会大于后者。
-分母为 0 时相应比率显示 `n/a`。
-
-提供 `--rewrite-root` 时，上述统计范围是 SourceSet 已登记的物理文件与 rewrite-root 的有序交集；未登记或目录外
-文件不会进入覆盖率、代码行数或加密率分母。物理 manifest、gate、strict compile 和 decrypt 仍覆盖完整 filelist
-物理文件集合。FAST 与 FULL 共用这一范围定义；恢复后的执行事实、指标和报告只构建一次。该统计范围修正不等于
-优化 FAST 的 RenameIndex 前端耗时。
-
-`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON，也不会让失败变安静：
-失败仍然打印错误码、`message` 和位置。
-
-输入失败会指出位置：文件缺失给出解析后的绝对路径以及它来自哪个 filelist 的第几行；
-解析或 elaborate 错误给出 `文件:行:列`、诊断码和该行源码，并注明诊断总条数。
-
-## Filelist 模式细节
-
-上面的 FAST 和 FULL 命令都使用 filelist 模式。`--category` 可重复使用；`all` 按固定顺序
-展开为四个核心组。
-
-filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
-unit，当前语义与同位置的裸 `PATH` 完全相同，不用它判断供应商归属，也不提供仿真器的惰性
-library search。被 include 的 `.svh/.vh`、显式列出的 `.h`，以及由已列源码通过当前目录或
-`+incdir+` 的字面量路径直接或递归唯一解析到的普通文件，都是只读物理依赖；任意后缀只有在这种
-bounded literal include closure 中成为 include-only physical dependency，不是 standalone suffix，不能作为
-裸 filelist 或 `-v` entry。include-only 文件会按规范化路径去重并进入 manifest、gate 和 restore，但不作为独立
-source unit 进入 `design.f`；同名 include 同时命中多个候选时拒绝猜测。
-
-显式 filelist 还可用裸路径列出 `.vic`
-compilation-unit 参数上下文；显式列出后，source/header 可 `` `include`` 同一规范化完整路径，但不能
-仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
-自动发现。`-f` 嵌套 filelist、
-`+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
-`--source-root`；源码根目录由 filelist 和 include 路径自动推导。filelist 不提供引号或反斜杠转义层，
-因此未转义且含空白字符的 `+incdir+` 路径会在 SourceSet 阶段直接拒绝。
-
-宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
-直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
-保留对应对象，不发布不确定的 gate。宏计算出的 include 不自动登记；若 PySlang parse 实际打开未登记的
-真实 source/include buffer，工具会在 SourceCatalog 全树遍历或 FAST 改名索引开始前带路径拒绝。
-
-### 需要补依赖时用包装 filelist，原始 filelist 一行不动
-
-原始 filelist 缺少若干必需文件时不必修改它：新建一个包装 filelist，用 `-f` 引用原始文件再补上
-缺的条目即可。`-f` 递归、`-v PATH`、`+incdir+`、`+define+`、`$NAME`/`${NAME}` 和 `//` 注释都已支持。
-
-```sh
-cat > "$PROJ/wrapper.f" <<'EOF'
-// 原始 filelist 不修改
--f $PROJ/original.f
-$PROJ/rtl/extra_assert.sv
-$PROJ/rtl/extra_if.sv
-EOF
-python rtl_encrypt.py --filelist "$PROJ/wrapper.f" --category all --output-dir <输出目录>
-```
-
-一个坑：自动推导源码根目录时会把 **filelist 自身所在目录**算进公共路径，所以包装文件应放在
-`$PROJ` 内（例如与原始 filelist 同目录）。放在 `$PROJ` 之外会让推导出的源码根目录上移一层，
-改变输出里的相对路径；确实无法写入 `$PROJ` 时改用 project-root 模式的 `--source-root` 显式指定。
-
-当 filelist 同时引用多个物理根时，源码根可能是 `/`；这只是 gate 中 root-relative 路径的边界。
-此时尚不存在的输出目录和报告路径只会避开 filelist 实际列出的源码、头文件和上下文文件，仍须满足
-父目录存在且目标本身不存在。
-
-### 混合工程用 `--rewrite-root` 限定改写目录
-
-真实 filelist 同时带有自有 RTL 和外部模型时，推荐可重复提供 `--rewrite-root DIR`。只有位于至少一个目录内的
-显式 source unit 才可以改写；目录外文件仍参与 PySlang 编译和绑定，但对应记录以
-`outside_rewrite_root` 保留。多个目录取并集，相对路径按当前调用目录解析；目录必须存在、位于推导后的
-SourceSet root 中，并命中至少一个 filelist 显式 source。该参数仅属于 filelist 加密模式。
-
-```sh
-python rtl_encrypt.py \
-  --filelist design.f \
-  --top TOP \
-  --rewrite-root "$PROJ/rtl" \
-  --rewrite-root "$PROJ/owned_ip" \
-  --category all \
-  --output-dir <输出目录>
-```
-
-未提供时保持原有的全 filelist source 改写候选语义。`--rewrite-root` 是用户授权白名单，不会按目录名、版权头或
-`-v` 自动识别供应商代码；请指向真正拥有且允许改写的最小目录。
-
-#### `delivery/fast-local-signals` 的 signals 快速路径边界
-
-仅在 `delivery/fast-local-signals` 分支，当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
-`signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
-快速路径。完整 filelist 只做一次预处理和语法解析，随后只在 rewrite-root 内显式 source unit
-的 `ModuleDeclaration` 中检查直接 `logic`/`wire` 或未限定的用户自定义命名类型 declarator（CST
-`NamedType.name` 必须是简单 `IdentifierName`，例如 `word_t`；不支持 `pkg::RspCmd_t`）；只有能由
-value-expression CST 位置和唯一物理字节范围证明的同名引用才改写。除了裸 value reference，
-还允许改写 element/bit/part/indexed selection 的根 identifier，以及 `signal.field` 中
-`.` 左侧的根 identifier；字段名、索引表达式中的名字、`::` scope 和层次路径保持不改。
-ports、function/task locals、package/global、interface 对象、struct/union 类型定义与字段以及
-rewrite-root 外文件保持不改；直接 struct-typed module 变量的根名仍按上述规则处理。
-歧义对象以 `syntax_local_ambiguous` 保留。`main` 分支没有此快速路由；该交付分支的其他输入
-继续使用通用流程。快速路径自身遇到无法证明的
-绑定或编译问题会原子失败，绝不静默回退慢路径。
-
-PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/
-`endprotect` 和四个 fault directive）会报可恢复诊断。工具只在诊断能精确回到预期物理字节、
-`protect/endprotect` 正确配对时允许继续，并把产生诊断的整个文件以 `readonly_vendor_model` 保留。普通未知宏、
-带参数 directive、未配对 protect 或其他解析/语义错误仍会停止；这不是完整的供应商语法兼容层。
-
-## 四个核心加密组
-
-| 类别 | 内容 |
-| --- | --- |
-| `signals` | module 内部的 Variable/Net，不包含端口、parameter、interface 成员和 struct 字段 |
-| `ports` | module 的 source-backed 端口；selected top 的对外 ABI 保留 |
-| `interface` | interface 类型、source-backed 标量/数组实例、成员和 modport；数组 element 只是语义 alias |
-| `struct` | 物理 `typedef struct/union` 类型及其字段；隐式 conversion 不伪造 occurrence |
-
-无法从 PySlang semantic target 证明唯一物理 declaration/occurrence 时安全保留对应对象或核心组。
-合法的 PySlang 编译不等于每个 semantic node 都有可改写的物理 token。
-
-## 三种输入模式
-
-| 模式 | 参数 |
-| --- | --- |
-| 单文件 | 仅 `--input FILE` |
-| filelist | `--filelist FILE`，`--top` 可选；`--rewrite-root DIR` 可重复 |
-| project-root | `--source-root DIR --top TOP` |
-
-三种模式严格互斥：单文件不能附带 `--source-root`、`--top` 或 `--rewrite-root`；filelist 不能附带
-`--source-root`；project-root 和 decrypt 不接受 `--rewrite-root`。输入模式错误会在输出创建前报告
-稳定错误码和具体 detail/message。
-
-project-root 是辅助入口，会从源码根目录发现依赖；单文件用于快速试用。两者不改变四组识别规则。
-
-## 输出、恢复和 schema
-
-输出目录包含完整物理层级下的加密 RTL / 只读依赖、三份等价编译上下文 filelist、
-`mapping.json`、`metrics.json`、`mapping_table.csv` 和 `encryption_summary.txt`：
-
-- `design.f` 使用当前输出目录的绝对路径，可从任意工作目录直接使用；
-- canonical 模式的 `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
-- `original_design.f` 与 `--filelist` 指定的顶层 filelist 逐字节一致，便于 gold/gate 对照。
-
-公开 `--filelist` 模式以原始顶层 filelist 和 nested `-f` 文本为模板：不增删条目、
-不改顺序、不丢弃 `-v` / `-f` / 注释 / 空行。`design.f` 将路径替换为 gate 绝对路径；
-在 `export_design.f` 中，含环境变量的路径 token 保留原文，须在新环境中重设对应变量；无变量的绝对路径
-写成 `$OUT` 加原绝对路径，并在 gate 内发布对应的普通物理副本；无变量的相对路径使用 `$OUT` 加源码根相对路径。
-这些规则适用于普通条目、`-v`、`-f` 和 `+incdir+`。reachable nested filelist 分别镜像到
-`.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f`
-还会在 gate 的原自然位置发布 export 子文件副本。原始 nested filelist 字节写入
-`.rtl_obfuscation/filelists/original`，`mapping.json.delivery_filelists` 记录原文路径与 SHA256，restore 据此审计 token、摘要和交付文件。
-CLI 单独提供的 `--include-dir` / `--define` 不会注入这三份 filelist；下游编译时仍需单独传入。
-`--input` 和 `--source-root + --top` 没有原始 filelist，仍生成 canonical 三视图。
-由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
-filelist 条目。mapping 使用
-`format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
-semantic kind、物理 declaration/occurrences、action 和 reason。
-
-公开 `--filelist` 还交付 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。
-平面目录按递归 filelist 顺序复制每个显式 `.sv/.v` source unit（包括 `-v`）的 canonical gate 字节，
-原层级文件不变；同名 basename 或 flat artifact 路径冲突会在发布前拒绝。flat filelist 将 nested `-f`
-就地展开，源码路径写 `$OUT_FLAT/<basename>`，上下文和 include 目录写 `$OUT/<source-root-relative-path>`，
-define 顺序和值保持不变。运行 Formal 时，`OUT` 指向 gate 目录，`OUT_FLAT` 指向 gate 的 `src_flattened/`。
-`src_flattened_log` 记录 include 的原目标与平面目标；无法解析、目标变化或需要 CLI-only 编译上下文时，
-`compile_ready=false` 并附原因。`compile_ready=true` 只表示扫描没有发现迁移风险，实际工程仍需运行 compile 或 Formal。
-`mapping.json.flattened_delivery` 保存 filelist、日志和逐个平面源文件的摘要，decrypt 会拒绝缺失、额外、symlink 或被改动的 flat 产物。
-
-```sh
-python rtl_decrypt.py \
-  --map <gate>/mapping.json \
-  --gate-dir <gate> \
-  --output-dir <尚不存在的恢复目录>
-```
-
-恢复只依赖本次 gate 的 mapping 和物理文件。schema 1 不兼容读取，错误码为
-`RESTORE_MAPPING_VERSION_UNSUPPORTED`。
-
-`PASS_FULL` 表示本次选中对象全部改名；存在明确边界或安全保留时为 `PASS_PARTIAL`；验证或绑定失败为
-`REFUSED_ATOMIC`，不会发布半成品。
-
-保留记录的 `reason` 说明为什么该对象没有改名。常见值：
-
-| `reason` | 含义 |
-| --- | --- |
-| `selected_top_boundary` | selected top 的 ABI 对象按边界保留 |
-| `outside_top_closure` | 对象不在 selected top 的层次闭包内 |
-| `macro_origin_conflict` | 一个物理 token 被多个符号共享，来源无法唯一确定 |
-| `hierarchical_prefix_unsupported` | 该对象需要层次引用前缀改写，当前不支持 |
-| `source_binding_incomplete` | 该记录缺少完整的声明与引用绑定证据 |
-| `unelaborated_reference` | 旧名还写在未被 elaborate 的源码里，那里的引用语义不可见 |
-| `incomplete_name_coverage` | 源码里还有拼写该旧名的 token 无法归属给任何引用或声明 |
-| `readonly_vendor_model` | 该记录跨入产生精确供应商兼容诊断的只读文件 |
-| `outside_rewrite_root` | 该记录的声明或引用不在任一授权改写目录中 |
-| `readonly_include_file` | 该记录跨入只作为 include 物理依赖的文件 |
-
-`unelaborated_reference` 覆盖只在未选中 generate 分支或从未 elaborate 的设计单元里出现的引用。
-那些 token 物理存在但不产生任何语义引用，严格编译也不报错，所以只改声明会把旧名留在加密结果里
-变成隐式 net。工具选择保留该符号：宁可少改，不可改错。
-
-`incomplete_name_coverage` 是改名的通用前置条件：只有当源码里拼写该旧名的每一个 token 都能归属
-给某个语义引用或某个声明时才改名，否则保留所有拼写该名字的记录。它与具体语法形态无关，因此
-同时覆盖已知和未知的漏改面，代价是可改名的对象变少。这是有意的取舍：改得少但可证明正确，
-优于编译通过但功能错误。
-
-更多开发者说明见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)、
-[Formal 流程](docs/formal_verification.md) 和 [开发文档索引](docs/development/README.md)。
+更多加密边界见 [可加密名称类别](docs/systemverilog_renaming_table.md)，验证方法见 [Formal 验证说明](docs/formal_verification.md)。
