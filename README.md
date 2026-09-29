@@ -1,27 +1,140 @@
-# RTL Obfuscation
+# RTL 名称加密工具
 
-本项目使用 PySlang 的编译与 elaboration 结果识别 RTL 名称，并对有完整物理绑定证据的对象进行改名。
-实际工程请优先使用显式 filelist；工具不修改宏对象，也不会猜测 owner、scope 或源码 token。
+本项目依据 SystemVerilog 结构或语义及源码物理位置改写 RTL 名称，并交付可恢复的源码、filelist、映射和报告。
+真实工程使用显式 filelist；`.sv` 和 `.v` 都按 SystemVerilog 处理。当前有两种交付方案：
 
-## 3 分钟快速开始
+| 方案 | 分支 | 适用情况 | 处理范围 |
+| --- | --- | --- | --- |
+| 快速加密 | `delivery/fast-local-signals` | 大型工程先加密自有 RTL 中的局部信号 | 仅 `signals`；只检查白名单目录中 module 直接声明的信号及可证明的引用 |
+| 全量加密 | `main` | 需要四组名称的完整语义识别 | `signals`、`ports`、`interface`、`struct`；由 PySlang 编译和 elaboration 提供语义绑定 |
+
+“全量”表示选择全部四组，**不表示所有名称都会改写**。两种方案都保留无法安全证明的对象，
+都对完整 filelist 做输入检查、交付 gate、严格编译和逐字节恢复校验。`--rewrite-root` 限定允许改写的
+目录，目录外文件仍是编译上下文。快速路径跳过全量 SourceCatalog/语义改名索引，适合先处理局部信号。
+两条路径的识别依据不同，不应把两次运行的改名数量直接当作性能或覆盖率对比。
+
+## 服务器上使用（选择一个分支）
+
+以下示例在 Linux x86_64 服务器的仓库根目录执行。把队列、项目、filelist、自有 RTL 目录和输出目录
+换成自己的值。若已进入可用的服务器 shell，可从第 2 步开始。
+
+### 1. 进入交互式服务器（按集群配置调整）
 
 ```sh
-quick_work="$(mktemp -d /tmp/rtl-obfuscation-quick.XXXXXX)"
-python rtl_encrypt.py \
-  --filelist rtl_samples/example_fifo/design.f \
-  --top fifo_top \
-  --category signals \
-  --output-dir "$quick_work/gate"
-cat "$quick_work/gate/encryption_summary.txt"
-python rtl_decrypt.py \
-  --map "$quick_work/gate/mapping.json" \
-  --gate-dir "$quick_work/gate" \
-  --output-dir "$quick_work/restored"
+bsub \
+  -q inta \
+  -P ABC \
+  -Is \
+  -n 1 \
+  -R "span[hosts=1] rusage[mem=65536]" \
+  bash
 ```
 
-成功条件：命令退出码为 `0`，`summary.strict_compile_passed` 和
-`summary.restored_byte_identical` 均为 `true`。结果中的 `rename`、`preserve`、`unsupported`
-分别表示实际改名、按边界保留、因证据不足保留。
+### 2. 克隆仓库并切换分支
+
+```sh
+git clone https://gitlab.sunrise-ai.com/SenseGemini/RTL_ENDECRYPTOR.git
+cd RTL_ENDECRYPTOR
+git checkout delivery/fast-local-signals   # 快速加密；全量加密则改为 git checkout main
+git branch --show-current
+```
+
+两种方案是**两个分支**。切换分支后先确认 `git branch --show-current` 的输出，再运行该分支的命令。
+
+### 3. 准备 Python 环境
+
+```sh
+python3.11 --version
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --no-index --no-deps \
+  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+```
+
+仓库自带的 wheel 只适用于 CPython 3.11 / Linux x86_64；其他平台需安装匹配的 PySlang 11.x。
+已有提供 PySlang 的 Python 环境可直接使用。
+
+### 4. 配置输入与输出路径
+
+```sh
+export FILELIST=/absolute/path/to/project/design.f
+export REWRITE=/absolute/path/to/project/src
+export OUT=/absolute/path/to/output/gate
+```
+
+`FILELIST` 是原工程顶层 `.f` 文件的绝对路径；`REWRITE` 是自己拥有且允许改写的 RTL 目录，
+必须存在并命中至少一个 filelist 显式源码；`OUT` 是本次 gate 输出目录的绝对路径，
+**运行前不能存在**，但它的父目录必须存在。filelist 中用到的 `$NAME` / `${NAME}` 环境变量，
+也要在运行加密前设置。多块自有目录可重复传 `--rewrite-root`。
+
+### 5A. 快速加密：`delivery/fast-local-signals`
+
+```sh
+python rtl_encrypt.py \
+  --filelist "$FILELIST" \
+  --rewrite-root "$REWRITE" \
+  --category signals \
+  --output-dir "$OUT"
+```
+
+这一命令要保持 **只有 `signals`、不传 `--top`、不传 `--encryption-rate`**，才能进入快速路径。
+增加 `--top` 或加密率，或选择其他类别，会在该分支转入通用语义流程。快速路径主要处理
+module 内直接声明的 `logic`、`wire` 和部分简单命名类型变量；端口、function/task 局部变量、
+interface、struct 字段等不在快速改写范围。它仍会对完整 filelist 做一次预处理和语法解析。
+
+### 5B. 全量加密：`main`
+
+选择全量方案时切换到 `main`，仍可使用上面同一组环境变量：
+
+```sh
+git checkout main
+export OUT=/absolute/path/to/output/gate_full
+python rtl_encrypt.py \
+  --filelist "$FILELIST" \
+  --rewrite-root "$REWRITE" \
+  --category all \
+  --output-dir "$OUT"
+```
+
+`all` 展开为四组：`signals`、`ports`、`interface`、`struct`。这里不传 `--top`，以整份 filelist
+为候选范围；如只需指定顶层的层次闭包，可在 `main` 命令增加 `--top TOP`，但顶层对外端口等 ABI
+对象会按边界保留。上面给全量运行单独设置了 `gate_full`，避免覆盖快速运行的输出。
+
+### 6. 查看结果与恢复
+
+```sh
+cat "$OUT/encryption_summary.txt"
+python rtl_decrypt.py \
+  --map "$OUT/mapping.json" \
+  --gate-dir "$OUT" \
+  --output-dir "${OUT}_restored"
+```
+
+加密命令退出码为 `0` 后，检查 stdout JSON 中 `summary.strict_compile_passed` 和
+`summary.restored_byte_identical` 均为 `true`；`encryption_summary.txt` 给出改名和保留数量。
+`rename` 是决定改名的对象，`preserve` 是按安全边界保留的对象，`unsupported` 是当前证据不足的对象；
+不要仅凭命令成功推断每个信号都已改写。恢复目录 `${OUT}_restored` 也必须尚不存在。
+
+## 加密命令参数
+
+| 参数 | 含义与使用建议 |
+| --- | --- |
+| `--filelist FILE` | 真实工程首选输入；顶层 `.f` filelist，按原顺序读取源码、嵌套 `-f` 和编译上下文 |
+| `--rewrite-root DIR` | 仅 filelist 模式；允许改写的自有源码目录，可重复；目录外仍参加编译但保持只读 |
+| `--category NAME` | 必填，可重复；可选 `signals`、`ports`、`interface`、`struct`、`all`；`all` 展开四组 |
+| `--output-dir DIR` | gate 输出目录；父目录存在、目标目录在运行前不存在；filelist 输出路径避免空格 |
+| `--top TOP` | filelist 模式可选、project-root 模式必填；限制选中顶层闭包并保留顶层 ABI；快速路径不要传 |
+| `--encryption-rate RATE` | 可选目标行加密率，`0 < RATE <= 1`；快速路径不要传，选择后实际编辑数可能少于改名决策数 |
+| `--include-dir PATH` | 额外 include 搜索目录，可重复；CLI 参数不会写进交付 filelist |
+| `--define NAME[=VALUE]` | 额外预处理宏，可重复；CLI 参数不会写进交付 filelist |
+| `--name-length N` | 新名称长度，至少 4，默认 20 |
+| `--map PATH` | 自定义 `mapping.json` 路径；默认位于 gate 目录 |
+| `--metrics PATH` | 自定义 `metrics.json` 路径；默认位于 gate 目录 |
+| `--quiet` | 关闭 stderr 的进度和总结；stdout JSON 与失败诊断仍保留 |
+| `--input FILE` | 辅助单文件输入，与 `--filelist`、`--source-root` 互斥 |
+| `--source-root DIR` | 辅助 project-root 输入，须配 `--top`；与 `--filelist` 互斥 |
+
+以下章节说明 filelist 细节、输出文件和其他输入模式。
 
 ## 终端输出：stdout 是机器接口，stderr 是给人看的
 
@@ -41,44 +154,39 @@ python rtl_encrypt.py \
   --output-dir <尚不存在的输出目录> > summary.json
 ```
 
-进度按既有流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
-SourceSet、PySlang 编译与 elaborate、构建改名索引、生成映射、写出加密结果、逐字节回填校验，
-以及 restore 后的执行审计、指标计算、报告组装、原子发布和清理。
-真实工程上编译与索引通常是主要耗时段，所以分阶段计时比只报总时间有用。
+进度按流水线阶段输出，每个阶段给出开始与完成时的累计秒数：读取 filelist / 组装
+SourceSet、构建映射、写出加密结果、逐字节回填校验。全量路径还显示 PySlang 编译、elaboration
+与语义改名索引；快速路径显示对应的预处理、语法解析和局部改名阶段。
 
-编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
+全量路径的编译和改名索引阶段还会在 stderr 中显示固定的粗粒度子阶段 ID（例如
 `compile.parse`、`compile.elaborate`、`rename_index.name_completeness`），每个 ID 都有
-成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行还会把同一批计时行、
-启动命令和工作目录写入 `encryption_summary.txt`；总结中的总用时不包含最后写入总结文件本身的耗时。
+成对的开始 / 完成行和本阶段耗时，便于长期比较不同工程的热点。成功运行会把当前 Python
+executable、脚本、shell 已展开的完整 argv、工作目录以及这些计时行写入
+`encryption_summary.txt`；计时行与 stderr 逐行逐字符同源。`--quiet` 仅压制 stderr，不关闭
+持久化记录。失败或被 SIGKILL 的运行仍不会发布半成品 summary。
 
 加密总结包含用时、加密类型数与类型、总代码行数 / 实际加密行数 / 加密率、
-统计范围文件数 / 交付物理文件数 / 加密文件数 / 文件覆盖率，以及
+总文件数 / 加密文件数 / 文件覆盖率，以及
 改名对象数(rename) / 保留对象数(preserve) / 不支持对象数(unsupported) / 实际修改对象数。
-当使用 `--rewrite-root` 时，统计范围只包含 SourceSet 已登记且位于 root 内的物理文件；
-`summary.files` 和 metrics 行数按该范围计算，`summary.physical_files` 始终表示完整交付集合。
 其中**加密文件数**和**实际修改对象数**指真正落地了编辑的文件数与记录数：`rename` 是决策数，
 `实际修改对象数` 是字节确实被改写的记录数，使用 `--encryption-rate` 时前者会大于后者。
 分母为 0 时相应比率显示 `n/a`。
 
-`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON 或成功运行记录，也不会让失败变安静：
+提供 `--rewrite-root` 时，上述统计范围是 SourceSet 已登记的物理文件与 rewrite-root 的有序交集；未登记或目录外
+文件不会进入覆盖率、代码行数或加密率分母。物理 manifest、gate、strict compile 和 decrypt 仍覆盖完整 filelist
+物理文件集合。FAST 与 FULL 共用这一范围定义；恢复后的执行事实、指标和报告只构建一次。该统计范围修正不等于
+优化 FAST 的 RenameIndex 前端耗时。
+
+`--quiet` 只关闭 stderr 上的进度与总结，不影响 stdout 的 JSON，也不会让失败变安静：
 失败仍然打印错误码、`message` 和位置。
 
 输入失败会指出位置：文件缺失给出解析后的绝对路径以及它来自哪个 filelist 的第几行；
 解析或 elaborate 错误给出 `文件:行:列`、诊断码和该行源码，并注明诊断总条数。
 
-## Filelist 模式（真实工程首选）
+## Filelist 模式细节
 
-```sh
-python rtl_encrypt.py \
-  --filelist design.f \
-  --top <可选的顶层模块名> \
-  --rewrite-root <允许改写的自有 RTL 目录> \
-  --category signals \
-  --output-dir <尚不存在的输出目录>
-```
-
-`--category` 必须显式提供，可重复使用，允许值只有：
-`signals`、`ports`、`interface`、`struct`、`all`。`all` 按固定顺序展开为四个核心组。
+上面的 FAST 和 FULL 命令都使用 filelist 模式。`--category` 可重复使用；`all` 按固定顺序
+展开为四个核心组。
 
 filelist 中的 `.sv/.v` 是 source unit；`-v PATH` 也可在当前位置显式加入一个 `.sv/.v` source
 unit，当前语义与同位置的裸 `PATH` 完全相同，不用它判断供应商归属，也不提供仿真器的惰性
@@ -93,14 +201,13 @@ compilation-unit 参数上下文；显式列出后，source/header 可 `` `inclu
 仅靠 include 隐式发现 `.vic`。`.vic` 不进入 rename target，也不支持 `-v`、`--input` 或 project-root
 自动发现。`-f` 嵌套 filelist、
 `+incdir+`、`+define+`、`$NAME` 和 `${NAME}` 按出现顺序处理。filelist 模式禁止同时提供
-`--source-root`；源码根目录由 filelist 和 include 路径自动推导。当前 filelist 语法没有引号或反斜杠
-转义层；原值或环境变量展开后含空白的 `+incdir+` token 会 fail-closed 拒绝。CLI 单独提供的
-`--include-dir` / `--define` 不会注入交付 filelist 视图，下游编译时仍须另行传入。
+`--source-root`；源码根目录由 filelist 和 include 路径自动推导。filelist 不提供引号或反斜杠转义层，
+因此未转义且含空白字符的 `+incdir+` 路径会在 SourceSet 阶段直接拒绝。
 
 宏定义名、形式参数名、调用名和预处理结构不进入 mapping。宏正文或实参中的 token 只有在 PySlang
 直接绑定到某个选中 RTL symbol 且能唯一对应物理 token 时，才作为该 symbol 的 occurrence；冲突时
 保留对应对象，不发布不确定的 gate。宏计算出的 include 不自动登记；若 PySlang parse 实际打开未登记的
-真实 source/include buffer，工具会在 SourceCatalog 全树遍历前带路径拒绝。
+真实 source/include buffer，工具会在 SourceCatalog 全树遍历或 FAST 改名索引开始前带路径拒绝。
 
 ### 需要补依赖时用包装 filelist，原始 filelist 一行不动
 
@@ -145,6 +252,22 @@ python rtl_encrypt.py \
 未提供时保持原有的全 filelist source 改写候选语义。`--rewrite-root` 是用户授权白名单，不会按目录名、版权头或
 `-v` 自动识别供应商代码；请指向真正拥有且允许改写的最小目录。
 
+#### `delivery/fast-local-signals` 的 signals 快速路径边界
+
+仅在 `delivery/fast-local-signals` 分支，当输入是显式 `--filelist`、至少提供一个 `--rewrite-root`、规范化后的类别只有
+`signals`、省略 `--top` 且未设置 `--encryption-rate` 时，工具使用 module-local signals
+快速路径。完整 filelist 只做一次预处理和语法解析，随后只在 rewrite-root 内显式 source unit
+的 `ModuleDeclaration` 中检查直接 `logic`/`wire` 或未限定的用户自定义命名类型 declarator（CST
+`NamedType.name` 必须是简单 `IdentifierName`，例如 `word_t`；不支持 `pkg::RspCmd_t`）；只有能由
+value-expression CST 位置和唯一物理字节范围证明的同名引用才改写。除了裸 value reference，
+还允许改写 element/bit/part/indexed selection 的根 identifier，以及 `signal.field` 中
+`.` 左侧的根 identifier；字段名、索引表达式中的名字、`::` scope 和层次路径保持不改。
+ports、function/task locals、package/global、interface 对象、struct/union 类型定义与字段以及
+rewrite-root 外文件保持不改；直接 struct-typed module 变量的根名仍按上述规则处理。
+歧义对象以 `syntax_local_ambiguous` 保留。`main` 分支没有此快速路由；该交付分支的其他输入
+继续使用通用流程。快速路径自身遇到无法证明的
+绑定或编译问题会原子失败，绝不静默回退慢路径。
+
 PySlang 11.0.0 对已确认的 edge-sensitive `ifnone` 及六个 legacy directive（`protect`/
 `endprotect` 和四个 fault directive）会报可恢复诊断。工具只在诊断能精确回到预期物理字节、
 `protect/endprotect` 正确配对时允许继续，并把产生诊断的整个文件以 `readonly_vendor_model` 保留。普通未知宏、
@@ -178,34 +301,36 @@ project-root 是辅助入口，会从源码根目录发现依赖；单文件用�
 
 ## 输出、恢复和 schema
 
-输出目录包含加密 RTL、三份编译上下文 filelist、`mapping.json`、`metrics.json`、
-`mapping_table.csv` 和 `encryption_summary.txt`。显式 `--filelist` 模式下：
+输出目录包含完整物理层级下的加密 RTL / 只读依赖、三份等价编译上下文 filelist、
+`mapping.json`、`metrics.json`、`mapping_table.csv` 和 `encryption_summary.txt`：
 
-- `original_design.f` 是顶层输入 filelist 的逐字节副本；
-- `design.f` 保留原始行序、注释、空行、`-v`、`-f`、`+incdir+` 和 `+define+`，只把路径替换成 gate 绝对路径；
-- `export_design.f` 对含环境变量的路径 token 保留原文，用户在新环境中重设变量；无变量的绝对路径写成
-  `$OUT` 加原绝对路径，并在 gate 中发布对应的普通物理副本；无变量的相对路径使用 `$OUT` 加源码根相对路径。
-  reachable nested filelist 仍按原顺序分别写入 `.rtl_obfuscation/filelists/design` 和
-  `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f` 同时在 gate 的原自然位置发布 export 子文件副本。
-  原始 nested filelist 字节保存在 `.rtl_obfuscation/filelists/original`，`mapping.json` 的
-  `delivery_filelists` 摘要用于 restore 核对原文路径 token 和交付文件。路径规则也适用于 `-v` 和 `+incdir+` 中的路径。
-- 公开 `--filelist` 另生成 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。
-  展平目录按递归 filelist 顺序复制每个显式 `.sv/.v` source unit（包括 `-v`）的 canonical gate 字节，
-  canonical gate 原路径保持不变；同名 basename 或 artifact 路径冲突会在发布前拒绝。
-  flat filelist 将 nested `-f` 就地展开，源码使用 `$OUT_FLAT/<basename>`，上下文和 include 目录使用
-  `$OUT/<source-root-relative-path>`，define 顺序保持不变。运行 Formal 时，将 `OUT` 设为 gate 目录、
-  `OUT_FLAT` 设为 `src_flattened/` 目录。CLI-only include-dir/define 不写进文件；已知需要的外部上下文、
-  找不到或无法证明的 include 会令 JSON 日志 `compile_ready=false` 并说明原因。
-  `compile_ready=true` 只表示未检测到此类风险，完整工程仍应实际编译或运行 Formal。
-  `mapping.json.flattened_delivery` 记录平面文件、filelist 和日志摘要，decrypt 会拒绝缺失、额外、symlink 或被改动的 flat 产物。
+- `design.f` 使用当前输出目录的绝对路径，可从任意工作目录直接使用；
+- canonical 模式的 `export_design.f` 使用 `$OUT/<相对路径>`，移动整个交付目录后先把 `OUT` 设为新 gate 根；
+- `original_design.f` 与 `--filelist` 指定的顶层 filelist 逐字节一致，便于 gold/gate 对照。
 
-include-only 物理依赖会复制到 gate，但不会新增 compile entry。`--input` 与
-`--source-root + --top` 没有原始 filelist，三份文件使用 canonical include/define/compile_order 视图。
-由于当前 filelist 语法不提供引号/转义层，`--output-dir` 的绝对路径含空白时会在发布前拒绝；custom
-`--map` / `--metrics` 路径仍可含空白。
-mapping 使用
+公开 `--filelist` 模式以原始顶层 filelist 和 nested `-f` 文本为模板：不增删条目、
+不改顺序、不丢弃 `-v` / `-f` / 注释 / 空行。`design.f` 将路径替换为 gate 绝对路径；
+在 `export_design.f` 中，含环境变量的路径 token 保留原文，须在新环境中重设对应变量；无变量的绝对路径
+写成 `$OUT` 加原绝对路径，并在 gate 内发布对应的普通物理副本；无变量的相对路径使用 `$OUT` 加源码根相对路径。
+这些规则适用于普通条目、`-v`、`-f` 和 `+incdir+`。reachable nested filelist 分别镜像到
+`.rtl_obfuscation/filelists/design` 和 `.rtl_obfuscation/filelists/export`；环境变量形式的 `-f`
+还会在 gate 的原自然位置发布 export 子文件副本。原始 nested filelist 字节写入
+`.rtl_obfuscation/filelists/original`，`mapping.json.delivery_filelists` 记录原文路径与 SHA256，restore 据此审计 token、摘要和交付文件。
+CLI 单独提供的 `--include-dir` / `--define` 不会注入这三份 filelist；下游编译时仍需单独传入。
+`--input` 和 `--source-root + --top` 没有原始 filelist，仍生成 canonical 三视图。
+由 literal include closure 发现的 include-only 文件会复制，但不会被错误地添加为独立
+filelist 条目。mapping 使用
 `format=rtl-obfuscation.mapping`、`schema_version=2`；每条记录包含 category、kind、
 semantic kind、物理 declaration/occurrences、action 和 reason。
+
+公开 `--filelist` 还交付 `src_flattened/`、`design_flattened.f` 和 `src_flattened_log`。
+平面目录按递归 filelist 顺序复制每个显式 `.sv/.v` source unit（包括 `-v`）的 canonical gate 字节，
+原层级文件不变；同名 basename 或 flat artifact 路径冲突会在发布前拒绝。flat filelist 将 nested `-f`
+就地展开，源码路径写 `$OUT_FLAT/<basename>`，上下文和 include 目录写 `$OUT/<source-root-relative-path>`，
+define 顺序和值保持不变。运行 Formal 时，`OUT` 指向 gate 目录，`OUT_FLAT` 指向 gate 的 `src_flattened/`。
+`src_flattened_log` 记录 include 的原目标与平面目标；无法解析、目标变化或需要 CLI-only 编译上下文时，
+`compile_ready=false` 并附原因。`compile_ready=true` 只表示扫描没有发现迁移风险，实际工程仍需运行 compile 或 Formal。
+`mapping.json.flattened_delivery` 保存 filelist、日志和逐个平面源文件的摘要，decrypt 会拒绝缺失、额外、symlink 或被改动的 flat 产物。
 
 ```sh
 python rtl_decrypt.py \
@@ -243,31 +368,6 @@ python rtl_decrypt.py \
 给某个语义引用或某个声明时才改名，否则保留所有拼写该名字的记录。它与具体语法形态无关，因此
 同时覆盖已知和未知的漏改面，代价是可改名的对象变少。这是有意的取舍：改得少但可证明正确，
 优于编译通过但功能错误。
-
-## 常用参数
-
-| 选项 | 说明 |
-| --- | --- |
-| `--include-dir PATH` | include 目录，可重复 |
-| `--rewrite-root DIR` | 仅 filelist 加密模式；允许改写的目录，可重复 |
-| `--define NAME[=VALUE]` | 预处理宏，可重复 |
-| `--category NAME` | 四组之一或 `all`，可重复且必填 |
-| `--name-length N` | 新名称长度，最小 4，默认 20 |
-| `--encryption-rate RATE` | 目标行加密率，`0 < RATE <= 1` |
-| `--map PATH` | 自定义 mapping 路径 |
-| `--metrics PATH` | 自定义 metrics 路径 |
-| `--quiet` | 不在 stderr 输出进度与加密总结；stdout 的 JSON 不受影响 |
-
-## 安装
-
-准备 Python 3.10+ 和 PySlang 11.x 后，在仓库根目录运行：
-
-```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --no-index --no-deps \
-  wheel/pyslang-11.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-```
 
 更多开发者说明见 [SystemVerilog 可加密类型表](docs/systemverilog_renaming_table.md)、
 [Formal 流程](docs/formal_verification.md) 和 [开发文档索引](docs/development/README.md)。
